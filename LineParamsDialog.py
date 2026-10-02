@@ -9,6 +9,8 @@ from PySide2.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout,
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
 from PySide2.QtCore import Qt, QRectF
+# 数据流引擎的公共词汇：SOURCE_KEY = 全局图像源，AUTO_SOURCE = 图像源"自动"
+from NodeRegistry import SOURCE_KEY, AUTO_SOURCE
 
 # ===== 用于在弹窗中显示图片并绘制框选的画布 =====
 class ROISelectGraphicsView(QGraphicsView):
@@ -233,9 +235,12 @@ class LineParamsDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0) # 去除布局的四周内边距
 
         # 通过findChild函数来获取 UI 内部的控件引用，即获取各控件的名字 Name
-        # 获取下拉框
+        # 获取下拉框：图像源（数据流引擎里"这个节点从谁的图像输出开始算"）
         self.input_source = self.ui.findChild(QComboBox, "input_source")
-        self.input_source.addItem("0 图像源1.图像") # 设置下拉框的第一条内容
+        self._populate_input_source()
+        if self.input_source:
+            # 换图像源就立刻记到节点上，免得用户直接点 × 关窗口时绑定丢了
+            self.input_source.currentIndexChanged.connect(self._on_input_source_changed)
 
         # 获取 "绘制" 和 "继承" 两个单选框
         self.roi_draw = self.ui.findChild(QRadioButton, "roi_draw")
@@ -321,6 +326,82 @@ class LineParamsDialog(QDialog):
             self.update_result_count(self.main_window.last_detected_data)
 
 
+    # ------------------------------------------------------------------
+    # 图像源（数据流引擎的输入绑定）
+    # ------------------------------------------------------------------
+    def _candidate_sources(self):
+        """
+        列出可以当图像源的上游方框：直接或间接连到当前节点的所有方框。
+        返回顺序是先直接上游、再往上一层，最可能用到的一般排在最前面。
+        """
+        if self.node is None or self.main_window is None:
+            return []
+        edges = getattr(self.main_window, 'flow_edges', None) or []
+
+        # 先把连线整理成 {下游节点: [上游节点, ...]}
+        parents = {}
+        for edge in edges:
+            parents.setdefault(edge.end_node, []).append(edge.start_node)
+
+        candidates = []
+        seen = {self.node}
+        queue = list(parents.get(self.node, []))
+        while queue:
+            upstream = queue.pop(0)
+            if upstream in seen:
+                # 已经找过了（也顺便挡住了连线成环时的无限循环）
+                continue
+            seen.add(upstream)
+            candidates.append(upstream)
+            queue.extend(parents.get(upstream, []))
+        return candidates
+
+    def _populate_input_source(self):
+        """
+        填"图像源"下拉框：
+            第 1 项：自动（沿连线继承上游的图像输出）—— 数据流引擎的默认行为
+            第 2 项：全局图像源（原图）        —— 想让这个模块只看原图就选它，
+                                                以前"每个节点都从原图算"的独立模式靠它实现
+            后面：  每一个上游节点的图像输出   —— 多上游时手动指定用谁的图
+        最后按节点上已经保存的绑定，把下拉框选中项恢复回来。
+        """
+        if not self.input_source:
+            return
+        self.input_source.clear()
+        self.input_source.addItem("自动（继承上游图像）", AUTO_SOURCE)
+        self.input_source.addItem("全局图像源（原图）", SOURCE_KEY)
+        for upstream in self._candidate_sources():
+            self.input_source.addItem("节点：{0}".format(upstream.name), upstream)
+
+        # 找回原来选中的那一项：
+        # 不直接用 Qt 的 findData()，因为它比对的是 QVariant，装 Python 对象时不可靠；
+        # 这里自己遍历：字符串按值比，节点对象按身份（is）比。
+        binding = getattr(self.node, 'input_source', None) if self.node is not None else None
+        index = 0
+        if binding is not None:
+            for i in range(self.input_source.count()):
+                data = self.input_source.itemData(i)
+                if data is binding or (isinstance(data, str) and data == binding):
+                    index = i
+                    break
+        # 没绑过（None）或者绑定的节点已经不在了，就回到第 0 项"自动"
+        self.input_source.setCurrentIndex(index)
+
+    def _on_input_source_changed(self, _index):
+        """下拉框一改就写回节点（这个绑定不是"运行参数"，不跟图片走）"""
+        self._save_input_source()
+
+    def _save_input_source(self):
+        """把下拉框当前的图像源绑定写到节点上"""
+        if self.node is None or not self.input_source:
+            return
+        binding = self.input_source.currentData()
+        if isinstance(binding, str) and binding == AUTO_SOURCE:
+            # 自动：清掉绑定，引擎会沿连线去找上游
+            self.node.input_source = None
+        else:
+            self.node.input_source = binding
+
     def _load_params(self):
         """从 node.params 加载参数到 UI 控件，并使用当前图像尺寸作为默认值"""
         if self.node:
@@ -361,6 +442,12 @@ class LineParamsDialog(QDialog):
             saved_shape = params.get("roi_shape", "矩形")
             self.shape_combo.setCurrentText(saved_shape)
 
+            # 读取并恢复"ROI创建"的选择：绘制 = 手动画 ROI；继承 = 用上游结果的包围盒当 ROI
+            if params.get("roi_inherit", False):
+                self.roi_inherit.setChecked(True)
+            else:
+                self.roi_draw.setChecked(True)
+
             # 加载运行参数到界面
             self.spin_canny_low.setValue(params.get("canny_low", 50))
             self.spin_canny_high.setValue(params.get("canny_high", 150))
@@ -380,6 +467,12 @@ class LineParamsDialog(QDialog):
 
             # 保存当前选择的形状
             self.node.params["roi_shape"] = self.shape_combo.currentText()
+
+            # 保存"ROI创建"的选择（继承 = 用上游结果的包围盒当 ROI，也就是"结果数据流"）
+            self.node.params["roi_inherit"] = self.roi_inherit.isChecked()
+
+            # 顺手把图像源绑定也存一次（正常情况下下拉框一变就已经存过了）
+            self._save_input_source()
 
             # 保存运行参数
             self.node.params["canny_low"] = self.spin_canny_low.value()
@@ -427,14 +520,12 @@ class LineParamsDialog(QDialog):
             return False
 
         if self.main_window:
-            # 静态图片单步执行
+            # 静态图片单步执行：统一交给主窗口的 _execute_static 处理
+            # （计算 -> 显示 -> 写结果缓存 -> 更新日志，全项目只有这一条执行路径，
+            #  所以从配置窗口点"执行"和从主界面点"单步执行"，结果完全一致）
             if self.main_window.current_static_image is not None:
-                # 复制图片副本处理
-                work_frame = self.main_window.current_static_image.copy()
-                # 调用单步执行管道_run_flow_pipeline_step，传入配置窗口绑定的节点 self.node，接收检测到的直线 data
-                work_frame, data = self.main_window._run_flow_pipeline_step(work_frame, self.node) # noqa
-                # 显示图像渲染结果
-                self.main_window._display_image(work_frame) # noqa
+                data = self.main_window._execute_static(
+                    self.main_window.current_static_image, "step", self.node)  # noqa
                 # 更新检查到的直线的数量
                 self.update_result_count(data)
                 # 执行成功，用于判断ROI区域是否数值为 0，如果不为 0 然后点击"确定"按钮则关闭窗口
@@ -464,24 +555,13 @@ class LineParamsDialog(QDialog):
             return
 
         if self.main_window:
-            # 静态图片连续执行
+            # 静态图片连续执行：同样统一走 _execute_static
+            # （它会跑完整个流程图、显示结果、写结果缓存、刷新日志表格）
             if self.main_window.current_static_image is not None:
-                '''
-                # 这一行代码没有接收data，所以将这一行换成下面的四行代码，用来接收data，渲染图像，
-                # 整体和上面的on_step_click函数相似
-                # 复用主窗口原有的完整执行函数
-                self.main_window._process_and_display_frame(self.main_window.current_static_image) # noqa
-                '''
-                # 复制图片副本处理# 复制图片副本处理
-                work_frame = self.main_window.current_static_image.copy()
-                # 调用连续执行管道_run_flow_pipeline，传入配置窗口绑定的节点 self.node，接收检测到的直线 data,和日志exec_info
-                work_frame, data, exec_info  = self.main_window._run_flow_pipeline(work_frame)  # noqa
-                # 显示图像渲染结果
-                self.main_window._display_image(work_frame) # noqa
+                data = self.main_window._execute_static(
+                    self.main_window.current_static_image, "continuous")  # noqa
                 # 更新检查到的直线的数量
                 self.update_result_count(data)
-                # 刷新日志表格
-                self.main_window._update_execution_log(exec_info)  # noqa
 
             # 视频/摄像头连续执行
             elif self.main_window.cap is not None:
@@ -679,6 +759,17 @@ if __name__ == '__main__':
         @staticmethod
         def _display_image(img):
             print(f"[Mock主窗口] 显示图片，尺寸: {img.shape}")
+
+        @staticmethod
+        def _execute_static(frame, mode, node=None):
+            # 配置窗口的"执行 / 连续执行"现在统一走主窗口的 _execute_static
+            node_name = node.name if node is not None else "-"
+            print(f"[Mock主窗口] _execute_static，模式: {mode}，节点: {node_name}")
+            return []  # 模拟返回检测结果数据
+
+        @staticmethod
+        def _update_execution_log(exec_info):
+            print(f"[Mock主窗口] 刷新执行日志，共 {len(exec_info)} 行")
 
         @staticmethod
         def _run_flow_pipeline_step(frame, node):

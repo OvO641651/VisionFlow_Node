@@ -1,4 +1,4 @@
-import numpy as np
+from collections import deque  # 拓扑排序要用到的队列（数据流引擎按连线顺序执行）
 from PySide2 import QtWidgets
 from PySide2.QtWidgets import (
     QApplication, QMessageBox, QDialog, QFileDialog
@@ -19,6 +19,7 @@ from LineParamsDialog import LineParamsDialog
 from CircleParamsDialog import CircleParamsDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
+from NodeRegistry import SOURCE_KEY, get_spec, result_bbox
 
 
 uiloader = QUiLoader()
@@ -53,6 +54,13 @@ class MainWindow:
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
         # 切换回某张图片时，如果这里存着它上一次的结果，就直接显示出来，不用再点执行按钮
         self.result_cache = {}
+
+        # 执行日志表格的"节流"状态：
+        # 视频模式下 update_frame 每 30ms 跑一次，而真刷一次表格要清空行、再为每个
+        # 单元格 new 一个 QTableWidgetItem，每帧重建会明显拖慢画面。
+        # 这里记住"上一次真正刷进表格的内容"和刷新时刻。
+        self._exec_log_signature = None
+        self._exec_log_flush_time = 0.0
 
         # 初始化选中节点变量，用来显示当前单击选中的节点
         self.selected_node = None
@@ -164,10 +172,13 @@ class MainWindow:
         # 使用 QTableWidget 表格控件来显示运行日志，控件名字 Name 为 execution_log
         self.execution_log = self.main_window.findChild(QtWidgets.QTableWidget, "execution_log")
         if self.execution_log:
-            # 4个头标题
-            self.execution_log.setColumnCount(4)
-            # 4个头标题名称，在ui文件里面已经设置，但是在这里用代码设置更直观
-            self.execution_log.setHorizontalHeaderLabels(["执行序号", "执行时间", "模块", "结果数据"])
+            # 5个头标题
+            self.execution_log.setColumnCount(5)
+            # 5个头标题名称，在ui文件里面已经设置，但是在这里用代码设置更直观
+            # 多出来的"图像源"一列是数据流引擎的"体检表"：
+            # 每个节点这一步是从哪一份图像开始算的，一眼就能看出来
+            self.execution_log.setHorizontalHeaderLabels(
+                ["执行序号", "执行时间", "模块", "图像源", "结果数据"])
             # 设置只读，不能修改内容
             self.execution_log.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             # 隐藏最左侧的垂直表头（行号）
@@ -404,16 +415,22 @@ class MainWindow:
         self._save_node_params(self.flow_nodes, self.current_image_key)
 
         # 2、再按新图片取参数（这张图片没设置过就会是空，各处自动用默认值）
-        self._load_node_params(self.flow_nodes, new_key)
+        #    注意：如果之前还没有关联任何图片 / 视频（current_image_key 是 None），
+        #    说明用户是在"还没开图"的时候就把参数设好了（比如先双击节点调好 ROI 再打开图片），
+        #    这份参数要留给新图片当初始值，不能在这里清掉——否则刚设好的 ROI 会凭空消失。
+        if self.current_image_key is not None:
+            self._load_node_params(self.flow_nodes, new_key)
 
         self.current_image_key = new_key
 
-    def _result_cache_key(self, image_key):
+    def _result_cache_key(self, image_key, mode):
         """
-        检测结果缓存的键 = 图片 × 流程图页面。
-        这样同一张图片在不同流程图页面上的执行结果也是各自独立的，互不串味。
+        检测结果缓存的键 = 图片 × 流程图页面 × 执行方式。
+        这样同一张图片在不同流程图页面上的执行结果各自独立，
+        并且**单步执行的结果不会把整流程执行的结果覆盖掉**。
+        :param mode: "step" 单步执行；"continuous" 连续执行
         """
-        return (image_key, self.flow_page_mgr.page_key()) # type:ignore
+        return (image_key, self.flow_page_mgr.page_key(), mode) # type:ignore
 
     def _show_static_image(self, frame):
         """
@@ -438,8 +455,11 @@ class MainWindow:
         # 传 id(frame) 作为图片标识，保证每张图片的缩放互相独立
         image_key = id(frame)
 
-        # 取"这张图片 × 这一页流程图"上一次的执行结果
-        cached = self.result_cache.get(self._result_cache_key(image_key))
+        # 取"这张图片 × 这一页流程图"上一次的执行结果：
+        # 优先取连续执行（整条流程，画面和日志表最完整），没有连续结果时才取单步执行的
+        cached = self.result_cache.get(self._result_cache_key(image_key, "continuous"))
+        if cached is None:
+            cached = self.result_cache.get(self._result_cache_key(image_key, "step"))
         if cached is not None:
             # 有缓存：直接显示上次画好检测结果的那张图
             self._display_image(cached["frame"], image_key)
@@ -472,25 +492,25 @@ class MainWindow:
 
         # 复制图像处理，防止污染原图
         work_frame = frame.copy()
-        # 单步执行不产生执行日志，这里先占位为 None
-        exec_info = None
 
         if mode == "continuous":
             # 调用连续执行_run_flow_pipeline，接收返回的 data 和日志 exec_info
             work_frame, data, exec_info = self._run_flow_pipeline(work_frame)
-            # 更新执行日志表格
-            self._update_execution_log(exec_info)
         else:
             # 调用单步执行_run_flow_pipeline_step，只执行 node 这一个节点
-            work_frame, data = self._run_flow_pipeline_step(work_frame, node)
+            # （单步执行现在也会返回一行日志，否则"画面有结果、日志表却是空的"）
+            work_frame, data, exec_info = self._run_flow_pipeline_step(work_frame, node)
+
+        # 更新执行日志表格：单步 / 连续都走这里
+        self._update_execution_log(exec_info)
 
         # 显示处理后的图像；传 id(frame) 让每张图片的缩放互相独立
         self._display_image(work_frame, id(frame))
 
-        # 把这次的结果缓存到"这张图片 × 这一页流程图"名下
+        # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
         # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
         # work_frame 本来就是 frame 的独立副本，直接存起来即可。
-        self.result_cache[self._result_cache_key(id(frame))] = {
+        self.result_cache[self._result_cache_key(id(frame), mode)] = {
             "frame": work_frame,
             "data": data,
             "exec_info": exec_info,
@@ -620,12 +640,13 @@ class MainWindow:
         # 根据模式选择执行管道
         if self.video_processing_mode == "step" and self.video_step_node:
             # 处于单步执行模式且指定了目标节点
-            work_frame, data = self._run_flow_pipeline_step(work_frame, self.video_step_node)
+            work_frame, data, exec_info = self._run_flow_pipeline_step(work_frame, self.video_step_node)
         else:
             # 处于连续执行模式（或未指定节点），执行完整流程图，解包三个值
             work_frame, data, exec_info = self._run_flow_pipeline(work_frame)
-            # 更新日志
-            self._update_execution_log(exec_info)
+
+        # 更新日志：视频是每 30ms 一帧，用"节流版"，内容没变就完全不重画表格
+        self._update_execution_log_throttled(exec_info)
 
         # 调用通用处理与显示函数
         # 处理图片可以只使用_process_and_display_frame()函数，使用这个函数处理视频会默认按流程图整个流程进行处理
@@ -640,212 +661,312 @@ class MainWindow:
             self.current_dialog.update_result_count(data)
 
 
-    def _process_single_node(self, img, clean_img, node):
+    # ==================================================================================
+    # 数据流引擎（数据层 / 渲染层分离）
+    #
+    # 和以前"每个节点都从最初那份 clean_img 切一块"相比，这里改了两件事：
+    #
+    #   1、数据层与渲染层彻底分开
+    #      · 数据层：out_images —— 每个节点执行完都留下一份"图像输出"，下游按
+    #        "图像源"绑定去取；只有处理类算子（灰度）会产出和输入不同的图像；
+    #      · 渲染层：_render_display() 最后统一把结果和 ROI 框画在一份副本上，
+    #        画出来的绿线 / 红圆永远不会回流，所以"直线→圆"时圆看不见直线画的线。
+    #
+    #   2、影响必须由算子声明
+    #      · 检测类算子的输出图像 = 输入图像（原样透传，连副本都不建）；
+    #      · 检测类想影响下游，唯一合法通道是"ROI 继承"：下游把 ROI创建 选成继承，
+    #        引擎用 NodeRegistry.result_bbox() 把上游结果算成包围盒，当作下游的 ROI。
+    # ==================================================================================
+
+    def _build_execution_order(self, nodes, edges):
         """
-        处理单个节点的通用检测逻辑
-        :param img: 当前处理的图像
-        :param clean_img: 原始图像副本，用于算法切片
-        :param node: 当前要执行的节点
-        :return: (处理后的图像, ROI信息元组)
-                 ROI信息: (roi_x, roi_y, roi_w, roi_h, hide_roi)
-                 如果 ROI 尺寸为0，返回 (img, None)
+        按连线做拓扑排序（Kahn 算法），顺便整理出每个节点的上游列表。
+
+        为什么不能再用原来的"队列广度优先"：
+            广度优先在多上游时会乱序。比如连线是 A→D、B→C、C→D，
+            队列里 D 可能排在 C 前面，D 执行时上游 C 还没算，数据流就取不到输入图像。
+
+        :param nodes: 这一页流程图上的所有方框
+        :param edges: 这一页流程图上的所有连线
+        :return: (order, parents, skipped)
+                 order   本次要执行的节点，父节点一定排在子节点前面
+                 parents {节点: [上游节点, ...]}
+                 skipped 不参与执行的节点（孤立的，或者落在环里的）
+        """
+        children = {node: [] for node in nodes}
+        parents = {node: [] for node in nodes}
+        in_degree = {node: 0 for node in nodes}
+
+        for edge in edges:
+            start = edge.start_node
+            end = edge.end_node
+            if start not in children or end not in in_degree:
+                # 连线的某一端已经不在这一页的方框表里（理论上不会发生）
+                continue
+            children[start].append(end)
+            parents[end].append(start)
+            in_degree[end] += 1
+
+        # 起点 = 没有上游、并且有下游。孤零零一个方框不执行（沿用 2026.6.28 定下的约定）
+        queue = deque([node for node in nodes if in_degree[node] == 0 and children[node]])
+        order = []
+        while queue:
+            node = queue.popleft()
+            order.append(node)
+            for child in children[node]:
+                in_degree[child] -= 1
+                if in_degree[child] == 0:
+                    # 它的上游全都排好队了，这才轮到它
+                    queue.append(child)
+
+        done = set(order)
+        skipped = [node for node in nodes if node not in done]
+        return order, parents, skipped
+
+    def _resolve_input(self, node, parents, out_images):
+        """
+        决定这个节点从哪一份图像开始算（数据流引擎的"图像源"绑定）。
+
+        优先级：节点上手动绑定的图像源 > 自动（取最后一个上游）。
+        "自动"里的"最后一个"是按连线顺序取的，是确定的，所以同一张流程图每次跑结果一致。
+
+        :param out_images: {图像源标识: 图像输出}，本轮已经产出的图像
+        :return: (源标识, 给日志看的来源说明)
+                 源标识是 NodeRegistry.SOURCE_KEY（全局图像源）或者某个上游节点对象
+        """
+        binding = getattr(node, 'input_source', None)
+        if isinstance(binding, str) and binding == SOURCE_KEY:
+            # 绑的是"全局图像源"
+            return SOURCE_KEY, "全局图像源"
+
+        if binding is not None and binding in out_images:
+            return binding, "节点：{0}".format(binding.name)
+
+        note = ""
+        if binding is not None:
+            # 绑定的节点本轮没执行（被删掉了 / 不属于这一页），退回自动
+            note = "（原绑定已失效，自动回退）"
+
+        if parents:
+            source = parents[-1]
+            label = "节点：{0}".format(source.name)
+            if len(parents) > 1:
+                label += "（多上游，自动取最后一个）"
+            return source, label + note
+        return SOURCE_KEY, "全局图像源" + note
+
+    def _resolve_roi(self, node, img_shape, in_results):
+        """
+        算出这个节点真正要处理的 ROI，两种来源：
+
+            1、ROI创建 = "继承"：把上游结果（直线端点 / 圆心半径）算成包围盒，
+               再向外扩 roi_margin 像素（默认 20）。这就是"结果数据流"，
+               也是检测类算子影响下游的唯一合法方式；
+            2、其余情况：用参数里的 roi_x / roi_y / roi_w / roi_h
+               （这张图片还没设置过时，默认就是整幅图），并统一裁剪到图像范围内。
+
+        :return: (roi_x, roi_y, roi_w, roi_h, roi_shape, inherited)
+                 inherited=True 表示这块 ROI 是从上游结果继承来的
         """
         params = node.params
-        roi_shape = params.get("roi_shape", "矩形") # 标记当前绘制ROI区域的形状
-        roi_x = params.get("roi_x", 0)
-        roi_y = params.get("roi_y", 0)
-        roi_w = params.get("roi_w", img.shape[1])
-        roi_h = params.get("roi_h", img.shape[0])
+        roi_shape = params.get("roi_shape", "矩形")
+        img_h = img_shape[0]
+        img_w = img_shape[1]
 
-        # 隐藏 ROI
-        hide_roi = params.get("hide_roi", False)
+        if params.get("roi_inherit", False):
+            bbox = result_bbox(in_results)
+            if bbox is not None:
+                margin = int(params.get("roi_margin", 20))
+                left = max(0, int(round(bbox[0])) - margin)
+                top = max(0, int(round(bbox[1])) - margin)
+                right = min(img_w, int(round(bbox[0] + bbox[2])) + margin)
+                bottom = min(img_h, int(round(bbox[1] + bbox[3])) + margin)
+                if right > left and bottom > top:
+                    return left, top, right - left, bottom - top, roi_shape, True
+            # 上游一个结果都没有（或者上游是处理类算子，本来就没有结果）：
+            # 自动退回参数里的 ROI，免得整个节点因为 ROI 尺寸为 0 被跳过
 
-        # 截取 ROI 区域的图像
-        roi_img = clean_img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w].copy()
+        roi_x = int(params.get("roi_x", 0))
+        roi_y = int(params.get("roi_y", 0))
+        roi_w = int(params.get("roi_w", img_w))
+        roi_h = int(params.get("roi_h", img_h))
 
-        # 复制纯净的切片，用于计算“新增像素”，即检测出来的 直线 或者 圆 等
-        roi_img_original = roi_img.copy()
+        # 统一裁剪到图像范围内（这里必须裁）：
+        # numpy 的切片越界时不会报错，而是"静默变空"——一张 0 像素的空图丢给
+        # cv2.cvtColor / Canny / HoughCircles 会直接抛异常。
+        # 老代码是靠 roi_img.size == 0 兜住的，现在从源头裁掉，
+        # 顺便让日志和黄色 ROI 框显示的就是真正参与计算的那块区域（所见即所算）。
+        roi_x = max(0, min(roi_x, img_w))
+        roi_y = max(0, min(roi_y, img_h))
+        roi_w = max(0, min(roi_w, img_w - roi_x))
+        roi_h = max(0, min(roi_h, img_h - roi_y))
+        return roi_x, roi_y, roi_w, roi_h, roi_shape, False
 
-        data = []  # 初始化数据列表，用来输出检测到的直线/圆的数量
+    def _execute_node(self, node, in_img, in_results):
+        """
+        执行一个节点（节点契约的执行侧）。
 
-        if roi_img.size == 0:
-            return img, None, []  # 跳过尺寸为0的异常情况
+        :param in_img: 数据层输入图像（按"图像源"绑定取到的那一份）
+        :param in_results: 输入源那个节点的结果数据，供"ROI 继承"用
+        :return: (out_img, results, roi_info, spec)
+                 out_img  这个节点的图像输出，会被下游当成图像源；
+                          检测类算子是原样透传（同一个对象，不复制）
+                 results  这个节点产出的结果数据（原图坐标）
+                 roi_info (x, y, w, h, hide, shape, inherited)
+                 spec     节点能力声明；None 表示这个模块还没实现
+        """
+        spec = get_spec(node.name)
+        roi_x, roi_y, roi_w, roi_h, roi_shape, inherited = self._resolve_roi(
+            node, in_img.shape, in_results)
+        hide_roi = node.params.get("hide_roi", False)
+        roi_info = (roi_x, roi_y, roi_w, roi_h, hide_roi, roi_shape, inherited)
 
-        processed_roi = None
+        if roi_w <= 0 or roi_h <= 0 or spec is None:
+            # roi_w / roi_h 为 0 时跳过：_resolve_roi() 已经把 ROI 裁进图像范围了，
+            # 所以"整块 ROI 落在图外"或"参数里填了 0"都会走到这里，图像原样往下传；
+            # spec 为 None（人脸、颜色这些还没实现的模块）也一样透传，
+            # 日志里如实写"模块未实现"，不再假装"执行成功"。
+            return in_img, [], roi_info, spec
 
-        # 具体的检测逻辑
-        if node.name == "直线":
-            # 提取运行参数并传给检测算法
-            canny_low = params.get("canny_low", 50)
-            canny_high = params.get("canny_high", 150)
-            hough_threshold = params.get("hough_threshold", 100)
-            min_line_length = params.get("min_line_length", 100.0)
-            max_line_gap = params.get("max_line_gap", 10.0)
+        out_img, results = spec.run(self.detector, in_img, (roi_x, roi_y, roi_w, roi_h), node.params)
+        if out_img is None:
+            # 万一某个算子忘了返回图像，就当它不改图像，保证下游还有图可用
+            out_img = in_img
+        return out_img, results, roi_info, spec
 
-            processed_roi, data = self.detector.line_detector(
-                roi_img,
-                roi_offset_x=roi_x,
-                roi_offset_y=roi_y,
-                canny_low=canny_low,
-                canny_high=canny_high,
-                threshold=hough_threshold,
-                min_line_length=min_line_length,
-                max_line_gap=max_line_gap
-            )
+    def _format_result_text(self, node, results, roi_info, spec):
+        """执行日志"结果数据"那一列的文案：由节点注册表提供，新增算子不用改这里"""
+        if roi_info[2] <= 0 or roi_info[3] <= 0:
+            return "ROI 尺寸为 0，已跳过（图像原样传给下游）"
+        if spec is None:
+            return "模块未实现，图像原样传给下游"
+        return spec.format_result(results)
 
-        elif node.name == "圆":
-            # 提取运行参数并传给圆的检测算法
-            dp = params.get("dp", 1.0)
-            min_dist = params.get("min_dist", 150.0)
-            param1 = params.get("param1", 100.0)
-            param2 = params.get("param2", 80.0)
-            min_radius = params.get("min_radius", 20)
-            max_radius = params.get("max_radius", 0)
-            processed_roi, data = self.detector.circle_detector(
-                roi_img,
-                roi_offset_x=roi_x,
-                roi_offset_y=roi_y,
-                dp=dp,
-                min_dist=min_dist,
-                param1=param1,
-                param2=param2,
-                min_radius=min_radius,
-                max_radius=max_radius
-            )
+    def _render_display(self, base_img, executed):
+        """
+        渲染层：把数据层的图像复制一份，再按执行顺序把各节点的结果和 ROI 框画上去。
 
-        elif node.name == "灰度":
-            # 传入纯净层切片 和 显示层切片
-            clean_roi = clean_img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
-            display_roi = img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
-            # 调用 Detector 封装好的灰度处理方法
-            processed_roi = self.detector.gray_with_preserve_lines(clean_roi, display_roi)
-            if processed_roi is not None:
-                img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w] = processed_roi
-            return img, (roi_x, roi_y, roi_w, roi_h, hide_roi, roi_shape), data
-        # 后续可加入人脸、颜色等
+        这里画的所有东西都只活在这张显示图上，永远不会回流到数据层，
+        所以下一个节点执行时看不到上一个节点画的绿线 / 红圆。
 
-        if processed_roi is not None:
-            # 目标显示区域
-            target_roi = img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w]
-            # 利用差值掩码，仅将新变化的像素叠加到显示层
-            diff_mask = np.sum(np.abs(roi_img.astype(np.int16)
-                                      - roi_img_original.astype(np.int16)), axis=2) > 0
-            # 将画出的元素替换到原图中
-            target_roi[diff_mask] = roi_img[diff_mask]
-            # 将处理后的子图贴回原图
-            img[roi_y:roi_y + roi_h, roi_x:roi_x + roi_w] = target_roi
+        :param base_img: 数据层底图（取最后一个执行节点的图像输出）
+        :param executed: [(节点, 结果, roi_info, spec), ...]，按执行顺序
+        :return: 可以直接显示的图像
+        """
+        display = base_img.copy()
+        rois_to_draw = []
 
-        # 把 roi_shape 作为一个 6 元素元组返回，由于输出检测到的直线/圆的数量
-        return img, (roi_x, roi_y, roi_w, roi_h, hide_roi, roi_shape), data
+        for node, results, roi_info, spec in executed:
+            if results and spec is not None and spec.draw is not None:
+                # 检测类算子的结果画到显示层
+                spec.draw(display, results, node.params)
+            rois_to_draw.append(roi_info)
+
+        # 结果全部画完之后再统一画 ROI 框，避免黄框被后面的算法当成图像内容
+        for rx, ry, rw, rh, hide, roi_shape, inherited in rois_to_draw:
+            if hide:
+                continue
+            # 继承来的 ROI 用洋红色，和手动画的黄色区分开，一眼能看出这块是从上游结果来的
+            color = (255, 0, 255) if inherited else (0, 255, 255)
+            if roi_shape == "圆":
+                cv2.circle(display, (rx + rw // 2, ry + rh // 2), rw // 2, color, 2)
+            else:
+                cv2.rectangle(display, (rx, ry), (rx + rw, ry + rh), color, 2)
+
+        return display
 
 
     def _run_flow_pipeline(self, frame):
-        """按流程图节点顺序执行检测"""
-        from collections import deque  # 构造有向图，把无序的方框和连线转化成计算机能理解的有向图结构。
+        """
+        连续执行：按连线做拓扑排序，让图像数据顺着连线在各模块之间流动。
 
-        img = frame.copy()
-        all_data = []  # 汇总数据列表
-        clean_img = frame.copy() # 干净的图片副本
+        数据层：out_images[图像源] —— 每个节点执行完都会留下一份"图像输出"，
+                下游节点的"图像源"绑定到谁，就取谁那一份；
+                全局图像源（NodeRegistry.SOURCE_KEY）就是最初那一帧的副本。
+        渲染层：_render_display() 最后统一画，不参与任何算法。
 
-        # 没有节点 or 没有连线
-        if not self.flow_nodes or not self.flow_edges:
-            return img, all_data, []
+        :param frame: OpenCV BGR 原图（内部只用副本，不会污染原图）
+        :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
+        """
+        img = frame.copy()              # 全局图像源（数据层的起点）
+        out_images = {SOURCE_KEY: img}  # {图像源标识: 图像输出}
+        results_of = {}                 # {节点: 它产出的结果数据}
+        executed = []                   # [(节点, 结果, roi_info, spec), ...]，按执行顺序
+        all_data = []                   # 所有节点结果汇总（给结果计数用）
+        exec_info = []                  # 执行日志
 
-        # 建立图结构和入度统计
-        # in_degree入度表：记录每个方框被多少条线指向。如果一个方框被3条线指向，它的入度就是 3；如果没有任何线指向它，入度就是 0。
-        in_degree = {node: 0 for node in self.flow_nodes}
-        # graph出边表：记录每个方框连着哪些方框。如果“直线”连向“圆”，那么graph["直线"]列表中就会包含"圆"对象。
-        graph = {node: [] for node in self.flow_nodes}
-        for edge in self.flow_edges:
-            if edge.end_node not in graph[edge.start_node]:
-                graph[edge.start_node].append(edge)
-            in_degree[edge.end_node] += 1
+        if not self.flow_nodes:
+            # 画布上一个方框都没有，没什么可执行的
+            return img, all_data, exec_info
 
-        # 找出哪些是流程图的真正起点
-        # in_degree[node] == 0 代表没有方框指向它（位于最顶端）
-        # len(graph[node]) > 0 有线连向下一个方框
-        queue = deque([node for node in self.flow_nodes if in_degree[node] == 0
-                       and
-                       len(graph[node]) > 0])
-        executed = set()
+        # 1、拓扑排序：父节点一定排在子节点前面
+        order, parents, skipped = self._build_execution_order(self.flow_nodes, self.flow_edges)
+        if not order:
+            # 有方框，但一条能跑的链路都没有：给一行提示，而不是静默什么都不做
+            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
+                              "没有可执行的流程：请先用连线把模块连起来"))
+            return img, all_data, exec_info
 
-        # 记录所有需要绘制的黄框参数列表
-        rois_to_draw = []
-
-        # 执行日志列表
-        exec_info = []
-        # 每个节点计数
         seq = 1
+        for node in order:
+            # 2、按"图像源"绑定取本节点的输入（数据层）
+            source_key, source_label = self._resolve_input(node, parents[node], out_images)
+            in_img = out_images.get(source_key)
+            if in_img is None:
+                # 绑定的图像源这一轮不存在，退回全局图像源
+                source_key = SOURCE_KEY
+                source_label = "全局图像源（回退）"
+                in_img = out_images[SOURCE_KEY]
+            in_results = results_of.get(source_key)
 
-        while queue:
-            node = queue.popleft() # 取出起点
-            if node in executed:
-                continue
-            executed.add(node) # 用来记录哪些方框已经执行过了。如果发现已经执行过，就跳过，防止多分支循环导致的重复执行。
+            # 3、执行节点；它的图像输出挂到 out_images 上，供下游当图像源
+            out_img, results, roi_info, spec = self._execute_node(node, in_img, in_results)
+            out_images[node] = out_img
+            results_of[node] = results
+            executed.append((node, results, roi_info, spec))
 
-            # 调用 _process_single_node() 方法进行检测逻辑
-            img, roi_info, data= self._process_single_node(img, clean_img, node)
-            if roi_info is not None:
-                rois_to_draw.append(roi_info)
-
-            if data:  # 如果有数据，添加进总列表
-                all_data.extend(data)
-
-
-            # 无论有无数据都记录日志
-            if node.name == "直线":
-                result_text = f"检测到{len(data)}条直线"
-            elif node.name == "圆":
-                result_text = f"检测到{len(data)}个圆"
-            elif node.name == "灰度":
-                result_text = "执行成功"
-            else:
-                result_text = f"执行成功（{len(data)}条结果）"
-            time_str = time.strftime("%H:%M:%S")
-            exec_info.append((seq, time_str, node.name, result_text))
+            # 4、汇总结果 + 记一行日志（图像源也记下来，方便排查数据流走向）
+            if results:
+                all_data.extend(results)
+            exec_info.append((seq, time.strftime("%H:%M:%S"), node.name, source_label,
+                              self._format_result_text(node, results, roi_info, spec)))
             seq += 1
 
+        if skipped:
+            # 孤立方框、或者连线成环的方框：如实告诉用户它们没有执行
+            names = "、".join(node.name for node in skipped)
+            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
+                              "以下节点未执行（没有连线，或者连线成环）：" + names))
 
-            # 将所有的后继节点加入队列
-            for edge in graph[node]:
-                if edge.end_node not in executed:
-                    queue.append(edge.end_node)
-
-        # 在所有的算法执行完之后，统一在原图上绘制黄框
-        for rx, ry, rw, rh, hide, roi_shape in rois_to_draw:
-            if not hide:
-                if roi_shape == "圆":
-                    # 绘制黄色的圆形框
-                    cv2.circle(img, (rx + rw // 2, ry + rh // 2), rw // 2, (0, 255, 255), 2)
-                else:
-                    # 绘制黄色的矩形框
-                    cv2.rectangle(img, (rx, ry), (rx + rw, ry + rh), (0, 255, 255), 2)
-
-        # 返回三个值
-        return img, all_data, exec_info
+        # 5、渲染层：用最后一个执行节点的图像输出当底图，统一画结果和 ROI 框
+        display = self._render_display(out_images[order[-1]], executed)
+        return display, all_data, exec_info
 
 
     def _run_flow_pipeline_step(self, frame, target_node):
-        """专门用于单步执行：仅对一个节点做 ROI 裁剪和处理"""
+        """
+        单步执行：只从全局图像源跑选中的这一个节点，不跑流程图上其它的模块
+        （沿用 2026.7.25 定下的规则："不管流程图中其他的流程，只执行选中的节点"）。
+
+        所以如果这个节点开了"ROI 继承"，单步执行时上游没有结果可用，
+        _resolve_roi() 会自动退回参数里手画的 ROI。
+
+        :param frame: OpenCV BGR 原图
+        :param target_node: 要执行的节点
+        :return: (显示用图像, 这个节点的结果数据, 一行执行日志)
+        """
         img = frame.copy()
-        clean_img = frame.copy() # 干净的图片副本
+        if target_node is None:
+            return img, [], []
 
-        # 调用 _process_single_node() 方法进行检测逻辑
-        img, roi_info, data= self._process_single_node(img, clean_img, target_node)
+        out_img, results, roi_info, spec = self._execute_node(target_node, img, None)
+        display = self._render_display(out_img, [(target_node, results, roi_info, spec)])
 
-        # 针对单步执行，画黄框的动作需要立刻在这里完成
-        if roi_info is not None:
-            # 解包 6 个参数
-            rx, ry, rw, rh, hide, roi_shape = roi_info
-            if not hide:
-                if roi_shape == "圆":
-                    # 绘制黄色的圆形 ROI 框
-                    cv2.circle(img, (rx + rw // 2, ry + rh // 2), rw // 2, (0, 255, 255), 2)
-                else:
-                    # 绘制黄色的矩形 ROI 框
-                    cv2.rectangle(img, (rx, ry), (rx + rw, ry + rh), (0, 255, 255), 2)
-
-        return img, data
+        # 单步执行也产出一行日志：否则切图回来会出现"画面有结果、日志表却是空的"，
+        # 缓存里的（画面 + 结果数据 + 日志）三者就对不上了。
+        exec_info = [(1, time.strftime("%H:%M:%S"), target_node.name, "全局图像源（单步）",
+                      self._format_result_text(target_node, results, roi_info, spec))]
+        return display, results, exec_info
 
 
 
@@ -1237,25 +1358,65 @@ class MainWindow:
         """
         用表格显示执行日志，刷新 execution_log 表格内容。
         该函数接收一个执行记录列表，将其清空并重新填充到 QTableWidget 中，实现执行日志的实时更新。
-        :param exec_info: 执行记录列表，每个元素为 (序号, 时间字符串, 模块名, 结果描述)
+        :param exec_info: 执行记录列表，每个元素为 (序号, 时间字符串, 模块名, 图像源, 结果描述)；
+                          "提示"行用的是 ("-", 时间, "提示", "-", 文字)
         """
         if not self.execution_log:
             # 如果控件不存在
             return
         # 根据执行记录的数量设置表格的行数，自动清空旧数据并调整表格高度
         self.execution_log.setRowCount(len(exec_info))
-        # 遍历每一条执行记录，row 为行号（从 0 开始），seq序号, time_str时间, module模式, result结果 为解包后的四个字段
-        for row, (seq, time_str, module, result) in enumerate(exec_info):
-            # 将四个字段转换为字符串列表，准备填充到表格的四个列中
-            values = [str(seq), time_str, module, result]
+        # 遍历每一条执行记录，row 为行号（从 0 开始）
+        for row, info in enumerate(exec_info):
+            info = tuple(info)
+            if len(info) == 4:
+                # 兼容老格式 (序号, 时间, 模块, 结果)，图像源补一个占位
+                seq, time_str, module, result = info
+                source = "-"
+            else:
+                # 新格式：(序号, 时间, 模块, 图像源, 结果)
+                seq, time_str, module, source, result = info[:5]
 
-            # 遍历当前行的每一列，col 为列号（0~3）
+            # 将五个字段转换为字符串列表，准备填充到表格的五个列中
+            values = [str(seq), time_str, module, source, result]
+
+            # 遍历当前行的每一列，col 为列号（0~4）
             for col, text in enumerate(values):
                 # 创建一个新的表格项，存储该单元格的文本内容
                 item = QtWidgets.QTableWidgetItem(text)
                 # 将表格项放入指定行和列的单元格中
                 # 如果该单元格已有内容，会自动替换；如果之前没有，会创建新单元格
                 self.execution_log.setItem(row, col, item)
+
+
+    def _update_execution_log_throttled(self, exec_info):
+        """
+        执行日志的"节流版"刷新，专供视频 / 摄像头路径使用（静态图片仍走立刻刷新的版本）。
+
+        为什么需要：
+            update_frame 由定时器每 30ms 调一次，而真刷一次表格要清空行、再为每个
+            单元格 new 一个 QTableWidgetItem。视频下每帧重建一次表格会明显拖慢画面。
+        策略：
+            · 内容和上一次真正刷进去的完全一样 -> 直接返回，一格都不动（视频里最常见）；
+            · 内容变了 -> 最多每 0.2 秒刷一次，把高频变化攒一攒。
+        """
+        if not self.execution_log:
+            return
+
+        # 把日志列表转成可比较的"签名"（里面都是元组，直接 tuple 化）
+        signature = tuple(tuple(row) for row in exec_info)
+        if signature == self._exec_log_signature:
+            # 和表格里已经显示的内容一模一样，不用重画
+            return
+
+        now = time.time()
+        if now - self._exec_log_flush_time < 0.2:
+            # 内容在变但太频繁（比如视频里每帧结果都不同），先攒着，≥0.2 秒后再刷
+            return
+
+        self._update_execution_log(exec_info)
+        self._exec_log_signature = signature
+        self._exec_log_flush_time = now
 
 
     def _on_gallery_image_selected(self, img_bgr):
@@ -1297,7 +1458,9 @@ class MainWindow:
 
         # 3、新页面里每个节点，按"当前图片"取回它自己的参数
         #    （同一张图片在不同流程图页面上的 ROI / 算法参数也是各自独立的）
-        self._load_node_params(new_page["nodes"], self.current_image_key)
+        #    同样地：还没关联任何图片/视频时不取参数，免得把刚设好的参数清掉
+        if self.current_image_key is not None:
+            self._load_node_params(new_page["nodes"], self.current_image_key)
 
         # 4、刷新底部"当前选中节点"的文字，再重新显示当前图片：
         #    会取"这一页 × 这张图片"缓存的结果，没有缓存就显示原图

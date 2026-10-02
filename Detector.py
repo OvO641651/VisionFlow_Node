@@ -13,6 +13,23 @@ class DetectorShape:
         data = []
         return img, data
 
+    def gray_bgr(self, img):
+        """
+        灰度化的"数据层"版本：始终返回 3 通道 BGR 图。
+
+        数据流引擎里灰度是"处理类"算子，它的输出图像要交给下游模块继续算，
+        而下游的 cv2.line / cv2.circle / HoughCircles 都要求 3 通道，
+        所以这里不能像 gray() 那样返回单通道，必须先灰度再补回 3 通道。
+        图像内容没有颜色了，但通道数保持和彩色图一致，下游不会报错。
+        """
+        if img is None or img.size == 0:
+            return img
+        if len(img.shape) == 2:
+            # 本来就是单通道，补成 3 通道即可
+            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
     def gray_with_preserve_lines(self, clean_roi, display_roi):
         """
         :param clean_roi: 纯净层 ROI 图像 (BGR 3通道，没有任何划痕)

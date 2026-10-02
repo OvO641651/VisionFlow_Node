@@ -114,6 +114,13 @@ class CircleParamsDialog(LineParamsDialog):
 
         saved_shape = params.get("roi_shape", "矩形")
         self.shape_combo.setCurrentText(saved_shape)
+
+        # 恢复"ROI创建"的选择（绘制 / 继承），对应数据流引擎的"ROI 继承"
+        if params.get("roi_inherit", False):
+            self.roi_inherit.setChecked(True)
+        else:
+            self.roi_draw.setChecked(True)
+
         if self.cb_hide_roi:
             self.cb_hide_roi.setChecked(params.get("hide_roi", False))
 
@@ -136,6 +143,13 @@ class CircleParamsDialog(LineParamsDialog):
         self.node.params["roi_w"] = self.spin_roi_w.value()
         self.node.params["roi_h"] = self.spin_roi_h.value()
         self.node.params["roi_shape"] = self.shape_combo.currentText()
+
+        # 保存"ROI创建"的选择（继承 = 用上游结果的包围盒当 ROI）
+        self.node.params["roi_inherit"] = self.roi_inherit.isChecked()
+
+        # 图像源绑定也顺手存一次（数据流引擎里这个节点从谁的图像输出开始算）
+        self._save_input_source()
+
         if self.cb_hide_roi:
             self.node.params["hide_roi"] = self.cb_hide_roi.isChecked()
 
