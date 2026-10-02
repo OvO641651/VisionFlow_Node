@@ -246,11 +246,6 @@
               </item>
              </layout>
             </widget>
-            <widget class="QWidget" name="tab">
-             <attribute name="title">
-              <string>Video2</string>
-             </attribute>
-            </widget>
            </widget>
           </item>
           <item>
@@ -282,7 +277,7 @@
               <item>
                <widget class="QTableWidget" name="execution_log">
                 <property name="columnCount">
-                 <number>4</number>
+                 <number>5</number>
                 </property>
                 <column>
                  <property name="text">
@@ -301,22 +296,17 @@
                 </column>
                 <column>
                  <property name="text">
+                  <string>图像源</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
                   <string>结果数据</string>
                  </property>
                 </column>
                </widget>
               </item>
              </layout>
-            </widget>
-            <widget class="QWidget" name="tab_3">
-             <attribute name="title">
-              <string>历史结果</string>
-             </attribute>
-            </widget>
-            <widget class="QWidget" name="tab_5">
-             <attribute name="title">
-              <string>帮助</string>
-             </attribute>
             </widget>
            </widget>
           </item>
@@ -378,21 +368,12 @@
      <string>设置</string>
     </property>
     <addaction name="action"/>
-    <addaction name="action1"/>
    </widget>
    <addaction name="menu"/>
   </widget>
   <action name="action">
    <property name="text">
     <string>摄像头设置</string>
-   </property>
-   <property name="font">
-    <font/>
-   </property>
-  </action>
-  <action name="action1">
-   <property name="text">
-    <string>1</string>
    </property>
    <property name="font">
     <font/>

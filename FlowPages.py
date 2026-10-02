@@ -222,7 +222,7 @@ class FlowPageManager(QObject):
         #    所以这一段把 switching 置上，让调用方忽略这次信号、也不会下标错位
         self.switching = True
         try:
-            deleted_page["view"].scene.clear()
+            deleted_page["view"].flow_scene.clear()
             deleted_page["nodes"] = []
             deleted_page["edges"] = []
             if deleted_page in self.pages:

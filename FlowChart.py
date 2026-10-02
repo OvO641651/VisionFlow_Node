@@ -181,14 +181,16 @@ class FlowchartView(QGraphicsView):
         self.main_window = main_window # 主窗口
         self.setAcceptDrops(True) # 允许在画布内进行拖拽
         self.setDragMode(QGraphicsView.ScrollHandDrag) # 设置鼠标在空白处按住左键拖动时的行为
-        self.scene = QGraphicsScene() # 创建一个画布，专门用来存放方框（NodeItem）和连线（EdgeItem）。
-        self.setScene(self.scene) # 讲画布放到场景视图里面
+        # 注意：这个属性不能叫 self.scene——QGraphicsView 自己有个 scene() 方法，
+        # 用同名属性会把它遮蔽掉，Python 侧就再也调不到 scene() 了
+        self.flow_scene = QGraphicsScene() # 创建一个画布，专门用来存放方框（NodeItem）和连线（EdgeItem）。
+        self.setScene(self.flow_scene) # 讲画布放到场景视图里面
 
         self._start_node = None # 开始节点
         self._temp_line = None # 灰线
 
         # 监听场景中选中节点的变化，用来在main.ui中显示当前选中(单击)的节点
-        self.scene.selectionChanged.connect(self.on_selection_changed) # type:ignore
+        self.flow_scene.selectionChanged.connect(self.on_selection_changed) # type:ignore
 
 
     def dragEnterEvent(self, event):
@@ -352,7 +354,7 @@ class FlowchartView(QGraphicsView):
         self._start_node = node # 开始点
         start_pos = node.get_output_pos() # 获取开始位置蓝点的位置
         # 把一条虚线画到画布上，一开始时头尾的坐标都为(start_pos.x,start_pos.y)，gray灰色，线厚为2，DashLine虚线
-        self._temp_line = self.scene.addLine(
+        self._temp_line = self.flow_scene.addLine(
             start_pos.x(), start_pos.y(),
             start_pos.x(), start_pos.y(),
             QPen(Qt.gray, 2, Qt.DashLine)
@@ -372,7 +374,7 @@ class FlowchartView(QGraphicsView):
         """负责把当前的连线状态彻底清空，恢复到“没有拉线”的初始状态"""
         if self._temp_line:
             # 去除灰色虚线
-            self.scene.removeItem(self._temp_line)
+            self.flow_scene.removeItem(self._temp_line)
             self._temp_line = None
         self._start_node = None
         self.setDragMode(QGraphicsView.ScrollHandDrag) # 连线结束，回复可以拖到背景画布的功能
@@ -381,7 +383,7 @@ class FlowchartView(QGraphicsView):
         """当场景中的选中节点发生变化时触发"""
         # 捕捉可能抛出的 RuntimeError，防止关闭窗口时因底层对象已销毁而崩溃
         try:
-            selected_items = self.scene.selectedItems()
+            selected_items = self.flow_scene.selectedItems()
         except RuntimeError:
             # 如果场景已经被销毁，直接忽略此次信号并返回
             return
@@ -402,7 +404,6 @@ class FlowchartView(QGraphicsView):
 class FlowChartWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.abc = 1
         self.setWindowTitle("流程图测试窗口")
         self.resize(800, 500)
 
@@ -441,7 +442,7 @@ class FlowChartWindow(QMainWindow):
     def add_flow_node(self, name, pos):
         # 添加节点时，绑定信号并更新连线逻辑
         node = NodeItem(name, pos) # 创建节点方框
-        self.view.scene.addItem(node) # 添加到画布view中
+        self.view.flow_scene.addItem(node) # 添加到画布view中
 
         # 给这个节点绑上连线刷新信号
         node.positionChanged.connect(self.update_all_edges) # type:ignore
@@ -450,7 +451,7 @@ class FlowChartWindow(QMainWindow):
             prev_node = self.flow_nodes[-1]
             # 自动连线：前一个节点的输出 -> 当前节点的输入
             edge = EdgeItem(prev_node.get_output_pos(), node.get_input_pos()) # 连线
-            self.view.scene.addItem(edge) # 添加到画布view中
+            self.view.flow_scene.addItem(edge) # 添加到画布view中
             self.flow_edges.append(edge) # 添加到列表flow_edges[]中，方便管理
         '''
         self.flow_nodes.append(node) # 添加到flow_nodes[]中，方便管理
@@ -465,7 +466,7 @@ class FlowChartWindow(QMainWindow):
                 # 防止重连，即相同的起点和相同的终点
                 return
         edge = EdgeItem(start_node, end_node) # 实例化EdgeItem类对象
-        self.view.scene.addItem(edge) # 添加到画布里面
+        self.view.flow_scene.addItem(edge) # 添加到画布里面
         self.flow_edges.append(edge) # 添加到列表里面记录
         self.update_all_edges() # 刷新一次画面，刷新出曲线
 
@@ -481,55 +482,11 @@ class FlowChartWindow(QMainWindow):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             # 遍历刚才找出来的待删除连线列表
-            self.view.scene.removeItem(edge) # 从画布上擦除这条线的图像
+            self.view.flow_scene.removeItem(edge) # 从画布上擦除这条线的图像
             self.flow_edges.remove(edge) # 从数据列表里清空这条线的记录
-        self.view.scene.removeItem(node_to_delete) # 把这个方块本身从画布上彻底抹去
+        self.view.flow_scene.removeItem(node_to_delete) # 把这个方块本身从画布上彻底抹去
         self.flow_nodes.remove(node_to_delete) # 从列表中移除节点记录
         self.update_all_edges() # 刷新画面
-
-
-        '''
-        """删除节点方框，并重新整理方框的连接曲线"""        
-        if node_to_delete not in self.flow_nodes:
-            return
-        idx = self.flow_nodes.index(node_to_delete) # 流程图节点序号
-        n = len(self.flow_nodes) # 流程图节点列表长度
-        # 从画布中移除节点
-        self.view.scene.removeItem(node_to_delete)
-        # 根据节点位置处理列表和连线
-        if n == 1:
-            # 只有一个节点，清空所有列表
-            self.flow_nodes.clear()
-            for e in self.flow_edges:
-                self.view.scene.removeItem(e)
-            self.flow_edges.clear()
-        elif idx == 0:
-            # 删除头部节点
-            self.flow_nodes.pop(0)
-            e = self.flow_edges.pop(0)
-            self.view.scene.removeItem(e)
-        elif idx == n - 1:
-            # 删除尾部节点
-            self.flow_nodes.pop()
-            e = self.flow_edges.pop()
-            self.view.scene.removeItem(e)
-        else:
-            # 删除中间节点
-            self.flow_nodes.pop(idx)
-            # 弹出与它相关的两条连线
-            e1 = self.flow_edges.pop(idx - 1)
-            e2 = self.flow_edges.pop(idx - 1)
-            self.view.scene.removeItem(e1)
-            self.view.scene.removeItem(e2)
-            # 将它的前一个和后一个节点重新连接起来
-            prev_node = self.flow_nodes[idx - 1]
-            next_node = self.flow_nodes[idx]
-            new_edge = EdgeItem(prev_node.get_output_pos(), next_node.get_input_pos())
-            self.view.scene.addItem(new_edge)
-            self.flow_edges.insert(idx - 1, new_edge)
-        # 触发全局面板更新
-        self.update_all_edges()
-        '''
 
 
     def _on_tree_double_click(self, item, column):
@@ -568,29 +525,17 @@ class FlowChartWindow(QMainWindow):
             # 遍历所有已存在的连线
             edge.update_positions() # 命令这条连线执行自身的刷新方法
 
-        '''        
-        # 如果有节点，根据现有的连线列表更新它们的端点坐标
-        for i, edge in enumerate(self.flow_edges):
-            start_node = self.flow_nodes[i] # 开始start节点
-            end_node = self.flow_nodes[i + 1] # 结束end节点
-            new_start = start_node.get_output_pos() # 获取开始节点
-            new_end = end_node.get_input_pos() # 获取结束节点
-            edge.update_positions(new_start, new_end) # 更新位置
-        '''
-
     def delete_edge(self, edge_to_delete):
         """删除连接曲线"""
         if edge_to_delete not in self.flow_edges:
             # 判断要删除的曲线线是否还在当前的连线列表中
             return
-        self.view.scene.removeItem(edge_to_delete) # 在画布上删除
+        self.view.flow_scene.removeItem(edge_to_delete) # 在画布上删除
         self.flow_edges.remove(edge_to_delete) # 在列表中删除
         self.update_all_edges() # 刷新画面
 
     def on_node_double_clicked(self, node):
-        """独立测试窗口双击方框回调"""
-        # 既然是在独立测试中使用，我们可以打印出节点名称来验证
-        self.abc = 1
+        """独立测试窗口双击方框回调：直接在控制台打印节点名"""
         print(f"FlowChartWindow 双击了方框: {node.name}")
 
     def on_node_selected(self, node):
@@ -599,52 +544,6 @@ class FlowChartWindow(QMainWindow):
             self.statusBar().showMessage(f"当前选中节点：{node.name}")
         else:
             self.statusBar().showMessage("当前选中节点：无")
-
-
-
-        """
-        '''只有两个方框的测试场景，测试NodeItem类和EdgeItem类'''
-        # 创建图形场景（画布）
-        self.scene = QGraphicsScene()
-        # 创建一个图形视图（显示画布的窗口），并将场景设置进去
-        self.view = QGraphicsView(self.scene)
-        self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate) # 每次刷新时全屏更新，防止有拖尾残影
-        self.setCentralWidget(self.view)
-        # 创建两个方框
-        self.node1 = NodeItem('直线', QPointF(10, 10))
-        self.node2 = NodeItem('圆线', QPointF(100, 100))
-        self.scene.addItem(self.node1)  # 将节点添加到场景中
-        self.scene.addItem(self.node2)  # 将节点添加到场景中
-
-        '''
-        # 创建贝塞尔曲线连接两个方框，node1的终点连接node2的起点
-        # 直接创建会导致方框移动的时候线在原来的地方部分，变成一个固定的直线
-        # 将创建曲线封装成update_edge()函数，移动方框时会自动刷新曲线的位置
-        node_end = self.node1.get_output_pos()
-        node_start = self.node2.get_input_pos()
-        edge = EdgeItem(node_start,node_end)
-        self.scene.addItem(edge)
-        '''
-
-        # 创建连线
-        self.edge = EdgeItem(QPointF(0, 0), QPointF(0, 0)) # 创建曲线，起点(0,0)，终点(0,0)
-        self.scene.addItem(self.edge) # 将曲线绘制到画布中
-
-        # 绑定更新函数，信号槽绑定
-        self.node1.positionChanged.connect(self.update_edge) # type:ignore
-        self.node2.positionChanged.connect(self.update_edge) # type:ignore
-
-        # 保证程序刚打开时连线能立刻对齐
-        QTimer.singleShot(0, self.update_edge)
-
-    # 连线的更新槽函数
-    def update_edge(self):
-        # 实时获取两个方框最新的端口位置
-        new_start = self.node1.get_output_pos()
-        new_end = self.node2.get_input_pos()
-        # 让连线更新过去
-        self.edge.update_positions(new_start, new_end)
-        """
 
 
 def main():

@@ -46,7 +46,7 @@ KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果
 class NodeSpec(object):
     """一个算子的能力声明"""
 
-    def __init__(self, name, kind, run, draw=None, format_result=None, result_bbox=None):
+    def __init__(self, name, kind, run, draw=None, format_result=None):
         """
         :param name: 算子名字（和左侧树、流程图上方框里的文字一致）
         :param kind: KIND_PROCESS 或 KIND_DETECT
@@ -54,18 +54,19 @@ class NodeSpec(object):
                     roi 是 (x, y, w, h)，都是原图坐标
         :param draw: draw(display_img, results, params)，只画显示层；处理类不需要
         :param format_result: format_result(results) -> str，执行日志"结果数据"那一列
-        :param result_bbox: 保留字段，具体包围盒计算统一走模块级的 result_bbox()
         """
         self.name = name
         self.kind = kind
         self.run = run
         self.draw = draw
         self.format_result = format_result
-        self.result_bbox = result_bbox
 
     @property
     def modifies_image(self):
-        """这个算子的输出图像会不会和输入不一样（处理类 = True）"""
+        """
+        这个算子的输出图像会不会和输入不一样（处理类 = True，检测类 = False）。
+        main.py 在多上游时用它挑"真正产出新图像"的那一支当默认图像源。
+        """
         return self.kind == KIND_PROCESS
 
 

@@ -22,11 +22,12 @@ class ROISelectGraphicsView(QGraphicsView):
         """
         super().__init__(parent)
         self.shape_type = shape_type
-        self.scene = QGraphicsScene(self) # 作为背景存放画面
-        self.setScene(self.scene)
+        # 属性不能叫 self.scene：会遮蔽 QGraphicsView.scene() 方法
+        self.roi_scene = QGraphicsScene(self) # 作为背景存放画面
+        self.setScene(self.roi_scene)
 
         # 将图片添加到场景中
-        self.pixmap_item = self.scene.addPixmap(pixmap)
+        self.pixmap_item = self.roi_scene.addPixmap(pixmap)
         # 设置场景大小和图片完全一致
         self.setSceneRect(0, 0, pixmap.width(), pixmap.height())
 
@@ -58,22 +59,22 @@ class ROISelectGraphicsView(QGraphicsView):
                 # 绘制并显示圆心点（绿色小实心圆）
                 if self.center_dot_item:
                     # 如果圆心点对象存在
-                    self.scene.removeItem(self.center_dot_item) # 清空原本的圆心点对象
+                    self.roi_scene.removeItem(self.center_dot_item) # 清空原本的圆心点对象
                 # 用来绘制圆，Ellipse：椭圆；中心为6的小圆心
                 self.center_dot_item = QGraphicsEllipseItem(self.center_point.x() - 3,
                                                             self.center_point.y() - 3,
                                                             6, 6)
                 self.center_dot_item.setBrush(QBrush(QColor(0, 255, 0)))  # 填充绿色
-                self.scene.addItem(self.center_dot_item) # 添加到画布中
+                self.roi_scene.addItem(self.center_dot_item) # 添加到画布中
 
             # 清除画布上已有的图形
             if self.shape_type == "矩形" and self.rect_item:
                 # 如果有矩形对象已经存在
-                self.scene.removeItem(self.rect_item) # 去除已有的矩形对象
+                self.roi_scene.removeItem(self.rect_item) # 去除已有的矩形对象
                 self.rect_item = None # 重置矩形对象的记录
             elif self.shape_type == "圆" and self.ellipse_item:
                 # 如果有圆形对象已经存在
-                self.scene.removeItem(self.ellipse_item) # 去除已有的圆形对象
+                self.roi_scene.removeItem(self.ellipse_item) # 去除已有的圆形对象
                 self.ellipse_item = None # 重置圆形对象的记录
 
 
@@ -94,7 +95,7 @@ class ROISelectGraphicsView(QGraphicsView):
                     # 画笔上原来没有矩形框
                     self.rect_item = QGraphicsRectItem(x, y, w, h) # 创建一个新的矩形图元对象
                     self.rect_item.setPen(QPen(QColor(0, 255, 0), 2, Qt.SolidLine)) # 设置矩形的画笔样式：绿色、线宽2、实线
-                    self.scene.addItem(self.rect_item) # 将绿框添加到场景画布中
+                    self.roi_scene.addItem(self.rect_item) # 将绿框添加到场景画布中
                 else:
                     # 矩形框已经存在
                     self.rect_item.setRect(x, y, w, h) # 直接更新它的坐标和宽高
@@ -117,7 +118,7 @@ class ROISelectGraphicsView(QGraphicsView):
                     # 实时绘制跟随鼠标拖拽的绿色大圆圈（ROI区域）
                     self.ellipse_item = QGraphicsEllipseItem(cx - r, cy - r, 2 * r, 2 * r)
                     self.ellipse_item.setPen(QPen(QColor(0, 255, 0), 2, Qt.SolidLine)) # 设置画笔
-                    self.scene.addItem(self.ellipse_item) # 添加到画布上
+                    self.roi_scene.addItem(self.ellipse_item) # 添加到画布上
                 else:
                     # 如果椭圆存在时
                     self.ellipse_item.setRect(cx - r, cy - r, 2 * r, 2 * r) # 绘制外界矩形
@@ -172,7 +173,7 @@ class ROISelectDialog(QDialog):
         self.setWindowTitle("ROI 框选工具") # ROI窗口名字
         self.setModal(True) # Modal模态窗口
 
-        # 将 OpenCV 的 BGR 图片转换为 Qt 的 QPixmap，参考main.py的_process_and_display_frame()函数
+        # 将 OpenCV 的 BGR 图片转换为 Qt 的 QPixmap（同 ImageGraphicsView.set_image 的做法）
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = img_rgb.shape
         bytes_per_line = ch * w
@@ -486,28 +487,6 @@ class LineParamsDialog(QDialog):
                 self.node.params["hide_roi"] = self.cb_hide_roi.isChecked()
 
 
-    '''
-    # 点击执行按钮时按流程图顺序执行
-    # 替换成了下面的on_step_click(),on_cont_click(),on_ok()三个函数
-    def on_run(self):
-        """点击执行：保存参数 -> 重新处理图像"""
-        self._update_params() # 保存参数，自动更新参数
-        # 触发主窗口重新渲染画面
-        if self.main_window:
-            # 静态图像时
-            if self.main_window.current_static_image is not None:
-                # 按流程图或树状图模式处理一帧图像，并渲染到 videoLabel
-                self.main_window._process_and_display_frame(self.main_window.current_static_image) # noqa
-            # 摄像头或者视频时
-            elif self.main_window.cap is not None:
-                self.main_window.update_frame() # 自动更新图像画面
-
-    def on_ok(self):
-        """点击确定：执行一次并关闭窗口"""
-        self.on_run() # 执行 on_run() 函数
-        self.accept() # 关闭对话款(窗口)
-    '''
-
     def on_step_click(self):
         """点击'执行'按钮时触发：实现单步执行（只执行当前节点）"""
         self._update_params()  # 先保存当前UI中的参数
@@ -728,13 +707,13 @@ if __name__ == '__main__':
     # 创建 Qt 应用
     app = QApplication(sys.argv)
 
-    # 读取测试图片
+    # 读取测试图片：读不到就用自动生成的测试图（黑图什么都测不出来）
     test_img_path  = 'image/lena.png'
     test_img  = cv2.imread(test_img_path )
     if test_img  is None:
-        print(f"找不到图片，请检查路径: {test_img_path }")
-        # 如果没找到图片，直接创建一个黑图以防报错退出
-        test_img  = np.zeros((512, 512, 3), dtype=np.uint8)
+        print(f"找不到图片，改用自动生成的测试图: {test_img_path }")
+        from Detector import make_test_image
+        test_img  = make_test_image()
 
     # 创建一个模拟的"主窗口"对象
     # 测试对话框需要访问 main_window.current_static_image，
@@ -748,10 +727,6 @@ if __name__ == '__main__':
 
         # 占位函数，防止调用时抛出 AttributeError
             # 添加 staticmethod 复制出现 "方法可能为 'static' 及未使用的形参" 的警告
-        @staticmethod
-        def _process_and_display_frame(frame):
-            print(f"[Mock主窗口] 执行连续执行 (调用 _process_and_display_frame),尺寸: {frame.shape}")
-
         @staticmethod
         def update_frame():
             print("[Mock主窗口] 执行视频帧更新 (调用 update_frame)")
@@ -773,13 +748,15 @@ if __name__ == '__main__':
 
         @staticmethod
         def _run_flow_pipeline_step(frame, node):
+            # 单步执行现在返回 (图, 数据, 一行日志)，和主窗口保持一致
             print(f"[Mock主窗口] 执行单步检测，节点名: {node.name}")
-            return frame, []  # 模拟返回数据
+            return frame, [], []
 
         @staticmethod
         def _run_flow_pipeline(frame):
+            # 连续执行返回 (图, 数据, 日志列表)
             print("[Mock主窗口] 执行完整流程图检测")
-            return frame, []  # 模拟返回数据
+            return frame, [], []
 
     mock_main_window = MockMainWindow(test_img )
 

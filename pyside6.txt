@@ -1845,6 +1845,161 @@ _execute_static() 的两个分支统一解包三个值并刷日志；update_fram
 · 批次5（架构）：拆分 MainWindow、算法线程化、缓存与内存上限、撤销/重做。
 
 
+2026.10.2 11:20
+存在问题：数据流引擎 + 批次1 之后，代码里还沉积着一批"历史遗留"：
+1、三引号包着的大段废弃实现（main.py 三处、FlowChart.py 两处、LineParamsDialog.py 一处），
+   其中还有在调用已经被删掉的 _process_and_display_frame()，看代码很容易被误导；
+2、调试残留：self.abc / print_aaa() / print(33) / DetectorShape.a；
+3、DetectorShape 里的 gray()（单通道灰度）和 gray_with_preserve_lines()（把画好的线再保回灰度图）
+   在"渲染层分离"之后已经没人调用了——渲染在显示层做，不需要再玩这些技巧；
+4、NodeRegistry 的 NodeSpec 里 result_bbox 构造参数没人用；kind / modifies_image 声明了却从没被读过
+   （属于"空声明"，不如让它真正干活）；
+5、main.ui：执行日志表还是 4 列（代码里早就改成 5 列了）、Video2 / 历史结果 / 帮助 三个空标签页、
+   顶部"菜单"按钮从来没接过槽、菜单里还挂着一个文字是"1"的无用菜单项；
+6、image/lena.png 在 5 处被硬编码，但工程里根本没有 image 目录（Detector.py 的 main() 会直接崩）；
+7、FlowchartView 和 ROISelectGraphicsView 都用 self.scene 当属性名，
+   把 QGraphicsView.scene() 这个方法遮蔽掉了（Python 侧再也调不到 scene()），
+   FlowPages.py / main.py 也跟着用 view.scene 访问画布。
+
+修改：
+一、删死代码与调试残留
+1、main.py 删除：
+   · __init__ 里"流程图只有单页面的形式"的三引号块（早被 FlowPageManager 取代）；
+   · open_file() 里"只处理一幅图片 或 一个视频的方式"的三引号块；
+   · _process_and_display_frame() 的三引号块（它调用的函数现在已经不存在了）；
+   · on_tree_item_clicked() / process_frame() 的"点击树控件执行检测"三引号块；
+   · add_flow_node() / add_edge() / delete_flow_node() / delete_edge() 里
+     4 处"如果当前有静态图片，立刻用更新后的流程图重绘"的注释块（功能已由 _execute_static 承担）；
+   · on_step_execute() / on_continuous_execute() 里两处旧实现注释块（里面是两返回值的旧写法）；
+   · self.abc = 1 / self.abc = 3、print_aaa()、以及树点击事件那几行注释。
+2、print(33) 改成给用户一句提示（灰度这类模块确实没有可配置参数），不再是调试输出：
+        else:
+            # 灰度这类模块没有可配置参数：给一句提示，而不是什么都不做
+            QMessageBox.information(self.main_window, "提示",
+                                    "“{0}”模块没有可配置的参数。".format(node.name))
+3、FlowChart.py 删除：FlowChartWindow.delete_flow_node() 里的旧实现块、
+   update_all_edges() 里的旧实现块、文件末尾"只有两个方框的测试场景"块；以及两处 self.abc = 1。
+4、LineParamsDialog.py 删除 on_run() / on_ok() 的旧实现注释块（里面调用了 _process_and_display_frame）。
+5、Detector.py 删除 gray()、gray_with_preserve_lines() 和 self.a = 1/2/3/4
+   （__init__ 整个删掉，DetectorShape() 直接用默认构造）。
+
+二、让 NodeSpec 的声明真正被使用
+1、NodeSpec 去掉没人用的 result_bbox 构造参数（包围盒统一走模块级的 result_bbox() 函数）。
+2、main.py 新增 _node_modifies_image()，并在 _resolve_input() 的"多上游自动选"里用上它：
+   优先挑"处理类"上游（只有它会产出新的图像数据，检测类的输出图像就是它的输入）：
+    def _node_modifies_image(self, node):
+        """这个节点会不会改写数据层图像？（读的是节点契约里的 kind 声明）"""
+        spec = get_spec(node.name)
+        return spec is not None and spec.modifies_image
+   ...
+            if len(parents) > 1:
+                image_parents = [p for p in parents if self._node_modifies_image(p)]
+                if image_parents:
+                    source = image_parents[-1]
+                    label = "节点：{0}（多上游，自动取最后一个改图的上游）".format(source.name)
+                else:
+                    label += "（多上游，自动取最后一个）"
+   效果：像"图像源 -> 灰度 -> 圆"和"直线 -> 圆"同时存在时，圆默认接在灰度后面，
+         而不是接到那条没改图的直线上（执行日志的"图像源"列会写明是哪种选择）。
+
+三、main.ui：日志表补第 5 列 + 清干净空壳
+1、execution_log 的 columnCount 4 -> 5，并在"模块"后面插入"图像源"这一列
+   （代码里 main.py 早就按 5 列写了，之前设计器和代码不一致）；
+2、删掉三个空标签页：内层 tabWidget 的 Video2、result_tab 的 历史结果 / 帮助；
+3、删掉菜单里那个文字是"1"的无用菜单项 action1；
+4、顶部"菜单"按钮接上槽（main.ui 里一直有这个按钮，但从来没接过）：
+        self.menu_button = self.main_window.findChild(QtWidgets.QPushButton, "menu_button")
+        ...
+        if self.menu_button:
+            # 点"菜单"按钮 = 把菜单栏里的菜单弹出来（效果和点菜单栏一样）
+            self.menu_button.clicked.connect(self._show_menubar_menu)
+    def _show_menubar_menu(self):
+        """点击顶部"菜单"按钮：把菜单栏里的菜单弹出来（效果和点菜单栏一样）"""
+        # 优先用 .ui 里那个 menubar 控件；万一 QUiLoader 没把它设成菜单栏，再退回 menuBar()
+        menubar = self.main_window.findChild(QtWidgets.QMenuBar, "menubar")
+        if menubar is None:
+            menubar = self.main_window.menuBar()
+        actions = menubar.actions() if menubar is not None else []
+        if not actions:
+            return
+        menu = actions[0].menu()
+        if menu is None:
+            return
+        menu.exec_(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
+
+四、scene 属性改名，别遮蔽 Qt 自己的方法
+问题：QGraphicsView 有个 scene() 方法，而 FlowchartView 里写了 self.scene = QGraphicsScene()，
+      属性把方法盖住了，Python 侧再调 scene() 就会报错。
+修改：
+1、FlowChart.py 的 FlowchartView：self.scene -> self.flow_scene
+   （内部 self.scene.addLine/removeItem/selectedItems 以及 FlowChartWindow 里的
+     self.view.scene.xxx 全部同步改名）
+        # 注意：这个属性不能叫 self.scene——QGraphicsView 自己有个 scene() 方法，
+        # 用同名属性会把它遮蔽掉，Python 侧就再也调不到 scene() 了
+        self.flow_scene = QGraphicsScene()
+        self.setScene(self.flow_scene)
+2、LineParamsDialog.py 的 ROISelectGraphicsView：self.scene -> self.roi_scene（同一类问题一起修）
+3、FlowPages.py / main.py 里访问画布的地方同步改成 view.flow_scene
+   （FlowPages._remove_page() 的 clear()、main.add_flow_node/add_edge/delete_flow_node/delete_edge、
+     on_node_selected() 里判断"这个节点是不是当前页的"）
+4、NodeItem / EdgeItem 里的 self.scene() 是 QGraphicsItem.scene()，本来就没被遮蔽，不用改。
+
+五、image/lena.png 硬编码改成容错
+1、main()：图标文件存在才设置，工程里没有 image 目录也能正常启动
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'image', 'lena.png')
+        if os.path.exists(icon_path):
+            app.setWindowIcon(QIcon(icon_path))
+2、Detector.py 新增 make_test_image()（黑底 + 白矩形 + 白圆 + 一条长横线），
+   main() 读不到 image/lena.png 就用它，不会再因为 img 是 None 而崩。
+3、LineParamsDialog / CircleParamsDialog 的独立测试兜底图，从"全黑图"改成 make_test_image()
+   （黑图什么都测不出来）；CircleParamsDialog 顺带删掉已经用不到的 import numpy as np。
+
+六、Mock 与独立测试同步
+LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
+· _run_flow_pipeline_step() / _run_flow_pipeline() 改成返回 3 个值（图, 数据, 日志）；
+· 补 _execute_static() / _update_execution_log() 两个桩；
+· 删掉已经不存在的 _process_and_display_frame() 桩。
+
+验证（2026.10.2 11:17）：
+1、py_compile：9 个源文件（main / NodeRegistry / LineParamsDialog / CircleParamsDialog / Detector /
+   FlowChart / FlowPages / ImageGraphicsView / ImageGalleryWidget）用项目解释器 3.8.10 编译，exit 0；
+2、main.ui 用 xml.etree 解析通过（XML well-formed OK）；
+3、9 个模块全部 import 成功（都加载了 .ui 之后 MainWindow 能正常构造）；
+4、无头冒烟测试 22 项全 PASS，关键几项：
+   · 执行日志表 5 列；内层 tabWidget 只剩 1 页；result_tab 只剩 1 页；menu_button 有槽函数
+   · QGraphicsView.scene() 恢复可用（view.scene() is view.flow_scene）；ROISelectGraphicsView 同理
+   · _process_and_display_frame / on_tree_item_clicked / process_frame / print_aaa / self.abc 都已不存在
+   · gray() / gray_with_preserve_lines() 已删除，gray_bgr() 仍返回 3 通道
+   · 回归：灰度->直线 拿到的仍是灰度图（清理没把数据流改坏）；越界 ROI 仍被裁成 0 尺寸
+   · 3.4 多上游自动挑了"最后一个改图的上游"（灰度），单上游时行为不变
+   · 删除连线 / 删除节点（含连带删连线）都正常，说明 flow_scene 改名没漏
+5、残留引用检查（grep 已删函数名与 self.scene / view.scene）无输出。
+
+后续待办：
+· 批次2（体验）：显示底图改成"点哪个节点看哪个节点的输出图"、多上游绑定再加显式提示、
+  roi_margin 加界面控件；
+· 批次4（功能）：方案持久化（JSON 保存/加载）、算子扩充（取反/滤波/二值化/边缘提取）、
+  独立的"图像源"节点、参数校验；
+· 批次5（架构）：拆分 MainWindow、算法线程化、缓存与内存上限、撤销/重做。
+
+
+2026.10.2 11:24
+存在问题：上一条（11:20 批次3）里，把双击灰度节点的调试输出 print(33) 改成了弹提示窗口
+          （提示"该模块没有可配置的参数"）。用户要求恢复成原来的"无反应"：
+          双击灰度这类没有参数窗口的模块时，不要弹任何提示。
+
+修改：main.py 的 on_node_double_clicked() 的 else 分支改回静默：
+        else:
+            # 灰度这类模块没有可配置的参数，双击保持"无反应"、不弹提示
+            pass
+      （保留 else 分支只是用来写明"为什么什么都不做"；既没有 print(33)，也不再弹 QMessageBox）
+
+验证（2026.10.2 11:24）：
+1、py_compile 九个源文件 exit 0；
+2、用 inspect.getsource() 读 on_node_double_clicked 的源码做断言：已无 QMessageBox.information，
+   且 else 分支是 pass —— 确认双击灰度是静默无反应，不会再弹窗。
+
+
 
 
 

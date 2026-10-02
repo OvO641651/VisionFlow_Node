@@ -1,6 +1,5 @@
 import sys
 import cv2
-import numpy as np
 from PySide2.QtWidgets import (QApplication, QSpinBox, QDoubleSpinBox, QLabel)
 
 # 继承直线检测的配置窗口
@@ -189,10 +188,6 @@ if __name__ == '__main__':
             self.video_step_node = None
 
         @staticmethod
-        def _process_and_display_frame(frame):
-            print(f"[Mock主窗口] 执行连续执行, 尺寸: {frame.shape}")
-
-        @staticmethod
         def update_frame():
             print("[Mock主窗口] 执行视频帧更新")
 
@@ -201,14 +196,27 @@ if __name__ == '__main__':
             print(f"[Mock主窗口] 显示图片, 尺寸: {img.shape}")
 
         @staticmethod
+        def _execute_static(frame, mode, node=None):
+            # 配置窗口的"执行 / 连续执行"现在统一走主窗口的 _execute_static
+            node_name = node.name if node is not None else "-"
+            print(f"[Mock主窗口] _execute_static，模式: {mode}，节点: {node_name}")
+            return []
+
+        @staticmethod
+        def _update_execution_log(exec_info):
+            print(f"[Mock主窗口] 刷新执行日志，共 {len(exec_info)} 行")
+
+        @staticmethod
         def _run_flow_pipeline_step(frame, node):
+            # 单步执行现在返回 (图, 数据, 一行日志)
             print(f"[Mock主窗口] 执行单步检测, 节点名: {node.name}")
-            return frame, []
+            return frame, [], []
 
         @staticmethod
         def _run_flow_pipeline(frame):
+            # 连续执行返回 (图, 数据, 日志列表)
             print("[Mock主窗口] 执行完整流程图检测")
-            return frame, []
+            return frame, [], []
 
     class MockNode:
         def __init__(self):
@@ -218,7 +226,9 @@ if __name__ == '__main__':
     test_img_path = 'image/lena.png'
     test_img = cv2.imread(test_img_path)
     if test_img is None:
-        test_img = np.zeros((512, 512, 3), dtype=np.uint8)
+        # 读不到就用自动生成的测试图（黑图什么都测不出来）
+        from Detector import make_test_image
+        test_img = make_test_image()
 
     mock_main_window = MockMainWindow(test_img)
     mock_node = MockNode()

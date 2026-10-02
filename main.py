@@ -29,7 +29,6 @@ class MainWindow:
     VIDEO_ROI_KEY = "video"
 
     def __init__(self):
-        self.abc = 1
         # 设置主窗口
         self.main_window = QUiLoader().load('main.ui')
         self.detector = DetectorShape()
@@ -95,6 +94,8 @@ class MainWindow:
         self.close_button = self.main_window.findChild(QtWidgets.QPushButton, "close_button")
         # 打开图片
         self.open_button = self.main_window.findChild(QtWidgets.QPushButton, "open_button")
+        # 顶部"菜单"按钮（main.ui 里一直有这个按钮，但从来没接过槽）
+        self.menu_button = self.main_window.findChild(QtWidgets.QPushButton, "menu_button")
         # 单步执行按钮 btn_step_execute
         self.btn_step = self.main_window.findChild(QtWidgets.QPushButton, "btn_step_execute")
         # 连续执行按钮 btn_continuous_execute
@@ -107,6 +108,9 @@ class MainWindow:
         self.open_button.clicked.connect(self.open_file) # 导入图片或者视频
         self.btn_step.clicked.connect(self.on_step_execute) # 单步执行
         self.btn_continuous.clicked.connect(self.on_continuous_execute) # 连续执行
+        if self.menu_button:
+            # 点"菜单"按钮 = 把菜单栏里的菜单弹出来（效果和点菜单栏一样）
+            self.menu_button.clicked.connect(self._show_menubar_menu)
 
 
         # 主窗口关闭后清空摄像头内存
@@ -117,10 +121,6 @@ class MainWindow:
 
         # 创建树控件
         self.tree = self.main_window.tree
-        # 树状图点击事件
-        # self.main_window.tree.itemClicked.connect(self.on_tree_item_clicked)
-        # 当前检测模式，用于点击树状图执行对应的检测
-        # self.detection_mode = None
         # 树控件 tree 绑定双击事件，双击实现在画布view中创建方框流程图
         self.main_window.tree.itemDoubleClicked.connect(self._on_tree_double_click)
 
@@ -136,26 +136,6 @@ class MainWindow:
         self.main_window.tree.setDragEnabled(True) # 拖动使能，可以拖动里面树枝控件
         self.main_window.tree.setDefaultDropAction(Qt.CopyAction) # 拖拽时的行为是“复制”，而不是“剪切”
 
-        '''
-        """流程图只有单页面的形式"""
-        # 获取 UI 中的 graphicsView，替换为 FlowchartView，相对于在用来的基础上创建一个新的 graphicsView，这个新的可以实现拖拽等功能
-        # 通过 findChild 找到被 tab 包裹的 flowView 控件
-        view_flow = self.main_window.findChild(QtWidgets.QGraphicsView, "flowView")
-        if view_flow:
-            # 直接获取父级布局
-            parent_layout = view_flow.parentWidget().layout()
-            if parent_layout:
-                # 实例化新的 FlowchartView，使用和旧控件相同的父容器
-                new_view = FlowchartView(view_flow.parentWidget(), main_window=self)
-                # 使用布局引擎的 replaceWidget 原地替换，拉伸比例、边距都会被完美继承
-                parent_layout.replaceWidget(view_flow, new_view)
-                # 彻底销毁旧控件，释放内存
-                view_flow.deleteLater()
-                # 保存新控件的引用，以便代码中后续使用
-                self.main_window.graphicsView = new_view
-                # 每次刷新时全屏更新，防止有拖尾残影
-                self.main_window.graphicsView.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        '''
         # 改为"浏览器式"多页面流程图
         """页面管理（标签页、添加/删除页面、每页自己的方框和连线）都封装在 FlowPages.py 的FlowPageManager 类里，
         这里只把控件和两个回调交给它。"""
@@ -194,10 +174,6 @@ class MainWindow:
             self.gallery_widget.image_selected.connect(self._on_gallery_image_selected)
 
 
-
-    def print_aaa(self):
-        self.abc = 2
-        print(111)
 
     def open_file(self):
         """点击打开按钮后弹出文件选择框，可以选择图片或者视频进行导入"""
@@ -305,57 +281,6 @@ class MainWindow:
 
         # 3、剩下的都是不支持的类型
         QMessageBox.warning(self.main_window, "错误", "不支持的文件格式")
-
-
-        '''
-        """只处理一幅图片 或 一个视频的方式"""
-        ext = file_paths.lower() # 将获得的绝对路径转换成小写 PNG->png
-        # endswith:检测后缀
-        if ext.endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-            # 处理单张图片
-            frame = cv2.imread(file_paths) # 读取图片
-            if frame is None:
-                # 如果读取图片失败，则弹出小窗口警告
-                QMessageBox.warning(self.main_window, "错误", "无法读取图片文件")
-                return
-
-            # 保存当前加载的静态图片
-            self.current_static_image = frame
-
-            # 单张图片不需要循环，直接处理并显示
-            self._process_and_display_frame(frame)
-
-            # 把读取到的图片加到图库里
-            if hasattr(self, 'gallery_widget'):
-                self.gallery_widget.add_image(frame)
-
-            # 如果此时刚好有配置窗口开着，通知它刷新尺寸为图片的实际大小
-            if self.current_dialog and self.current_dialog.isVisible():
-                self.current_dialog.refresh_size()
-
-        elif ext.endswith(('.mp4', '.avi', '.mkv')):
-            # 处理视频文件
-            cap = cv2.VideoCapture(file_paths)
-            if not cap.isOpened():
-                # 如果读取视频失败，则弹出小窗口警告
-                QMessageBox.warning(self.main_window, "错误", "无法打开视频文件")
-                return
-            self.cap = cap
-            self._is_video_file = True
-
-            # 启动定时器循环读取视频帧，每隔 30ms 自动执行一次 update_frame
-            if self.timer is not None:
-                # 清除旧的定时器
-                self.timer.stop()
-                self.timer = None
-            self.timer = QTimer() # 创建新的定时器
-            # 绑定处理函数
-            self.timer.timeout.connect(self.update_frame) # type:ignore
-            self.timer.start(30) # 30帧fps
-        else:
-            # 既不是图片也不是视频时，弹出小窗口警告
-            QMessageBox.warning(self.main_window, "错误", "不支持的文件格式")
-        '''
 
 
     def _get_node_params_store(self, node):
@@ -524,30 +449,6 @@ class MainWindow:
         return data
 
 
-    '''
-    """
-    使用_show_static_image()和_execute_static()函数代替_process_and_display_frame()函数
-    实现只有点过"单步执行"/"连续执行"之后才显示图像绘制结果的功能
-    """
-    def _process_and_display_frame(self, frame):
-        """按流程图或树状图模式处理一帧图像，并渲染到 graphicsView_video"""
-        # 与 update_frame 函数基本相同
-        # 根据 流程图 或 树状图点击模式 处理帧，如果不想要点击树状图也进行处理，则可以删除掉process_frame函数
-
-        # 拷贝一份图像，修复删除方框后对应的检测内容依然在图片上显示的bug
-        work_frame = frame.copy()
-
-        """通过 树状图 设置检测不同的内容"""
-        if self.flow_nodes:
-            # 三个值解包，忽略 exec_info
-            work_frame, data, _ = self._run_flow_pipeline(work_frame)
-        else:
-            work_frame, data = work_frame, []
-            # work_frame, data = self.process_frame(work_frame)
-
-        # 调用抽取出来的显示函数，也可以直接将该函数的内容放到这里
-        self._display_image(work_frame)
-        '''
 
     def _display_image(self, img, image_key=None):
         """
@@ -648,9 +549,7 @@ class MainWindow:
         # 更新日志：视频是每 30ms 一帧，用"节流版"，内容没变就完全不重画表格
         self._update_execution_log_throttled(exec_info)
 
-        # 调用通用处理与显示函数
-        # 处理图片可以只使用_process_and_display_frame()函数，使用这个函数处理视频会默认按流程图整个流程进行处理
-        # 但是处理视频得换成_display_image()函数
+        # 显示到画布（视频 / 摄像头帧不传 image_key，保持用户当前的缩放和平移不变）
         self._display_image(work_frame)
 
         # 保存消息，避免关闭摄像头/视频时数据消失
@@ -723,6 +622,14 @@ class MainWindow:
         skipped = [node for node in nodes if node not in done]
         return order, parents, skipped
 
+    def _node_modifies_image(self, node):
+        """
+        这个节点会不会改写数据层图像？
+        用来在多上游时挑出"真正产出新图像"的那一支（读的是节点契约里的 kind 声明）。
+        """
+        spec = get_spec(node.name)
+        return spec is not None and spec.modifies_image
+
     def _resolve_input(self, node, parents, out_images):
         """
         决定这个节点从哪一份图像开始算（数据流引擎的"图像源"绑定）。
@@ -751,7 +658,16 @@ class MainWindow:
             source = parents[-1]
             label = "节点：{0}".format(source.name)
             if len(parents) > 1:
-                label += "（多上游，自动取最后一个）"
+                # 多上游时优先挑"处理类"的上游：只有它会产出新的图像数据
+                # （检测类算子的输出图像就是它的输入，等于什么都没改）。
+                # 这样"图像源 -> 灰度 -> 圆"和"直线 -> 圆"同时存在时，
+                # 圆默认接在灰度后面，而不是接到那条没改图的直线上。
+                image_parents = [p for p in parents if self._node_modifies_image(p)]
+                if image_parents:
+                    source = image_parents[-1]
+                    label = "节点：{0}（多上游，自动取最后一个改图的上游）".format(source.name)
+                else:
+                    label += "（多上游，自动取最后一个）"
             return source, label + note
         return SOURCE_KEY, "全局图像源" + note
 
@@ -975,6 +891,20 @@ class MainWindow:
         self.close_camera()
         event.accept() # 允许窗口关闭
 
+    def _show_menubar_menu(self):
+        """点击顶部"菜单"按钮：把菜单栏里的菜单弹出来（效果和点菜单栏一样）"""
+        # 优先用 .ui 里那个 menubar 控件；万一 QUiLoader 没把它设成菜单栏，再退回 menuBar()
+        menubar = self.main_window.findChild(QtWidgets.QMenuBar, "menubar")
+        if menubar is None:
+            menubar = self.main_window.menuBar()
+        actions = menubar.actions() if menubar is not None else []
+        if not actions:
+            return
+        menu = actions[0].menu()
+        if menu is None:
+            return
+        menu.exec_(self.menu_button.mapToGlobal(self.menu_button.rect().bottomLeft()))
+
     def set_camera_id(self):
         """设置摄像头ID(数字)"""
         loader = QUiLoader()
@@ -1030,93 +960,15 @@ class MainWindow:
         # 模态显示（窗口打开后不能在动其他窗口），直到用户关闭
         dialog.exec_()
 
-    '''
-    # 不需要点击树控件执行对于的检测
-    def on_tree_item_clicked(self, item, column):
-        """
-        # 根据点击树状图的内容（如检测）切换到不同的模式
-        text = item.text(0)
-        if text == '直线':
-            self.detection_mode = 'line'
-        elif text == '圆':
-            self.detection_mode = 'circle'
-        else:
-            self.detection_mode = None
-        """
-        """
-        根据点击项的层级索引来切换检测模式。
-        索引路径：
-            (0, 0) -> 检测 -> 直线
-            (0, 1) -> 检测 -> 圆
-        其他任意项 -> 取消检测 None
-        """
-        # 获取当前项的 QModelIndex
-        index = self.tree.currentIndex()# 获取当前树控件的页面
-        if not index.isValid():
-            # 如果获取的页面是无效的则退出
-            self.detection_mode = None
-            return
-
-        # 构建从根到当前项的索引路径（元组形式）
-        path = []
-        while index.isValid():
-            # 将获取的项放到列表里面
-            path.insert(0, index.row())
-            index = index.parent()
-        # 转换成元组，元组创建后不可更改，防止出错，而且元组可以直接进行比较path_tuple == (0, 0)
-        path_tuple = tuple(path)
-
-        # 根据路径设置检测模式
-        if path_tuple == (0, 0):
-            self.detection_mode = 'line'
-        elif path_tuple == (0, 1):
-            self.detection_mode = 'circle'
-        elif path_tuple == (0, 2):
-            self.detection_mode = 'gray'
-        elif path_tuple == (1, 0):
-            print(11)
-
-        else:
-            self.detection_mode = None
-
-
-    def process_frame(self, frame):
-        """根据当前检测模式，对视频帧进行处理并返回结果"""
-        if self.detection_mode == 'line':
-            return self.detector.line_detector(frame)
-        elif self.detection_mode == 'circle':
-            return self.detector.circle_detector(frame)
-        elif self.detection_mode == 'gray':
-            return self.detector.gray(frame)
-        else:
-            # 无检测时返回原图（即正常播放视频）
-            return frame, [] # 需要返回两个值，第二个列表，保持和外面检测内容一样
-    '''
-
     def add_flow_node(self, name, pos):
         # 添加节点时，绑定信号并更新连线逻辑
         node = NodeItem(name, pos)  # 创建节点方框
-        self.main_window.graphicsView.scene.addItem(node)  # 添加到画布view中
+        self.main_window.graphicsView.flow_scene.addItem(node)  # 添加到画布view中
         # 给这个节点绑上连线刷新信号
         node.positionChanged.connect(self.update_all_edges)  # type:ignore
-        '''
-        if self.flow_nodes:
-            prev_node = self.flow_nodes[-1]
-            # 自动连线：前一个节点的输出 -> 当前节点的输入
-            edge = EdgeItem(prev_node.get_output_pos(), node.get_input_pos())  # 连线
-            self.main_window.graphicsView.scene.addItem(edge)  # 添加到画布view中
-            self.flow_edges.append(edge)  # 添加到列表flow_edges[]中，方便管理
-        '''
         self.flow_nodes.append(node)  # 添加到flow_nodes[]中，方便管理
         # 新节点加入后，立刻用延时器保证连线正确对齐
         #QTimer.singleShot(0, self.update_all_edges)
-
-        # 如果当前有静态图片，立刻用更新后的流程图重绘
-        '''
-        # 连线后不自动在图片中绘制结果，需要点击执行按钮后才能显示结果
-        if self.current_static_image is not None:
-            self._process_and_display_frame(self.current_static_image)
-        '''
 
         return node
 
@@ -1127,16 +979,9 @@ class MainWindow:
                 # 防止重连，即相同的起点和相同的终点
                 return
         edge = EdgeItem(start_node, end_node) # 实例化EdgeItem类对象
-        self.main_window.graphicsView.scene.addItem(edge) # 添加到画布里面
+        self.main_window.graphicsView.flow_scene.addItem(edge) # 添加到画布里面
         self.flow_edges.append(edge) # 添加到列表里面记录
         self.update_all_edges() # 刷新一次画面，刷新出曲线
-
-        # 如果当前有静态图片，立刻用更新后的流程图重绘
-        '''
-        # 连线后不自动在图片中绘制结果，需要点击执行按钮后才能显示结果
-        if self.current_static_image is not None:
-            self._process_and_display_frame(self.current_static_image)
-        '''
 
     def delete_flow_node(self, node_to_delete):
         """实现删除与需要删除的节点相连接的曲线"""
@@ -1150,18 +995,11 @@ class MainWindow:
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             # 遍历刚才找出来的待删除连线列表
-            self.main_window.graphicsView.scene.removeItem(edge) # 从画布上擦除这条线的图像
+            self.main_window.graphicsView.flow_scene.removeItem(edge) # 从画布上擦除这条线的图像
             self.flow_edges.remove(edge) # 从数据列表里清空这条线的记录
-        self.main_window.graphicsView.scene.removeItem(node_to_delete) # 把这个方块本身从画布上彻底抹去
+        self.main_window.graphicsView.flow_scene.removeItem(node_to_delete) # 把这个方块本身从画布上彻底抹去
         self.flow_nodes.remove(node_to_delete) # 从列表中移除节点记录
         self.update_all_edges() # 刷新画面
-
-        # 如果当前有静态图片，立刻用更新后的流程图重绘
-        '''
-        # 连线后不自动在图片中绘制结果，需要点击执行按钮后才能显示结果
-        if self.current_static_image is not None:
-            self._process_and_display_frame(self.current_static_image)
-        '''
 
     def update_all_edges(self):
         """可更新的边缘连接曲线，移动方框后曲线会跟着移动"""
@@ -1209,21 +1047,12 @@ class MainWindow:
         if edge_to_delete not in self.flow_edges:
             # 判断要删除的曲线线是否还在当前的连线列表中
             return
-        self.main_window.graphicsView.scene.removeItem(edge_to_delete) # 在画布上删除
+        self.main_window.graphicsView.flow_scene.removeItem(edge_to_delete) # 在画布上删除
         self.flow_edges.remove(edge_to_delete) # 在列表中删除
         self.update_all_edges() # 刷新画面
 
-        # 如果当前有静态图片，立刻用更新后的流程图重绘
-        '''
-        # 连线后不自动在图片中绘制结果，需要点击执行按钮后才能显示结果
-        if self.current_static_image is not None:
-            self._process_and_display_frame(self.current_static_image)
-        '''
-
     def on_node_double_clicked(self, node):
-        """双击流程图方框时触发的函数"""
-        self.abc = 3
-        """双击流程图方框时触发，弹出配置窗口"""
+        """双击流程图方框时触发：直线、圆各自弹出配置窗口"""
         # 双击直线检测节点弹出 LineParamsDialog 窗口
         if node.name == "直线":
             # 直接使用导入的 LineParamsDialog，传入 (父窗口, 节点对象, 主窗口)
@@ -1247,7 +1076,8 @@ class MainWindow:
 
 
         else:
-            print(33)
+            # 灰度这类模块没有可配置的参数，双击保持"无反应"、不弹提示
+            pass
 
     def _clear_current_dialog(self):
         """对话框关闭时，清除内部持有的引用"""
@@ -1265,7 +1095,7 @@ class MainWindow:
                 return
             if node is not None and mgr.current_page is not None:
                 # 只处理"当前页"画布上选中的节点
-                if node.scene() is not mgr.current_page["view"].scene:
+                if node.scene() is not mgr.current_page["view"].flow_scene:
                     return
 
         self.selected_node = node
@@ -1289,22 +1119,7 @@ class MainWindow:
 
         # 处理静态图片模式
         if self.current_static_image is not None:
-            '''
-            """这一部分内容均在_execute_static()函数中完成"""
-            # 复制图像处理，防止污染原图
-            work_frame = self.current_static_image.copy()
-            # 仅执行选中的这个节点，调用单步执行_run_flow_pipeline_step函数
-            work_frame, data = self._run_flow_pipeline_step(work_frame, self.selected_node)
-            # 显示处理后的图像
-            self._display_image(work_frame)
-
-            # 保存数据并同步窗口
-            self.last_detected_data = data  # 保存给以后打开的窗口使用
-            if self.current_dialog and self.current_dialog.isVisible():
-                self.current_dialog.update_result_count(data)
-            return
-            '''
-            # 仅执行选中的这个节点；计算、显示、保存数据都在 _execute_static 里完成
+            # 仅执行选中的这个节点；计算、显示、写缓存、保存数据都在 _execute_static 里完成
             self._execute_static(self.current_static_image, "step", self.selected_node)
             return
 
@@ -1324,23 +1139,6 @@ class MainWindow:
 
         # 静态图片模式：直接完整执行一次
         if self.current_static_image is not None:
-            '''      
-            """这一部分均在_execute_static()函数中执行"""
-            # 复用现有的完整图执行逻辑
-            # self._process_and_display_frame(self.current_static_image)
-            # 将上面的一行代码换成下面的一行
-            work_frame = self.current_static_image.copy()
-            # 调用连续执行_run_flow_pipeline函数，接收返回的 data，和日志 exec_info
-            work_frame, data, exec_info = self._run_flow_pipeline(work_frame)
-            # 更新日志
-            self._update_execution_log(exec_info)
-            self._display_image(work_frame)
-            # 保存数据并同步窗口
-            self.last_detected_data = data  # 保存给以后打开的窗口使用
-            if self.current_dialog and self.current_dialog.isVisible():
-                self.current_dialog.update_result_count(data)
-            return
-            '''
             # 计算、显示、刷新日志表格都在 _execute_static 里完成
             self._execute_static(self.current_static_image, "continuous")
             return
@@ -1478,7 +1276,12 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication([])
-    app.setWindowIcon(QIcon('image/lena.png'))#主窗口添加图标
+
+    # 主窗口图标：工程里没有 image/lena.png 也能正常启动（有就用它）
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'image', 'lena.png')
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     window = MainWindow()
 
     # 窗口启动时直接最大化
