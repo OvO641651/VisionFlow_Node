@@ -31,17 +31,22 @@ class FlowPageManager(QObject):
         通过 on_page_switched 回调交给调用方处理。
     """
 
-    def __init__(self, tab_widget, view_factory, on_page_switched=None, parent=None):
+    def __init__(self, tab_widget, view_factory, on_page_switched=None, parent=None,
+                 on_page_close_requested=None):
         """
         :param tab_widget: main.ui 里的 QTabWidget（控件名 flowWidget）。
         :param view_factory: 创建画布的函数，签名 view_factory(parent_widget) -> FlowchartView。
         :param on_page_switched: 换页后的回调，签名 on_page_switched(new_page, old_page)。
         :param parent: Qt 父对象。
+        :param on_page_close_requested: 关闭某一页之前的回调，签名
+               on_page_close_requested(page) -> bool；返回 False 表示"别关这一页"。
+               有未保存改动时，调用方可以在这里弹"是否保存"。
         """
         super().__init__(parent)
         self.tab_widget = tab_widget
         self.view_factory = view_factory
         self.on_page_switched = on_page_switched
+        self.on_page_close_requested = on_page_close_requested
 
         self.pages = []            # 每页一条记录，顺序和标签栏保持一致
         self._pages_by_key = {}    # {页面标识: 页面记录}；拖动标签换序后靠它认页，不会认错
@@ -166,6 +171,33 @@ class FlowPageManager(QObject):
         self.tab_widget.setCurrentIndex(index)
         return page
 
+    def append_pages(self, titles):
+        """
+        在最后追加 N 页（"打开方案"专用）：新页插在"+"标签前面，
+        已有的页面原样保留（画布、方框、连线、状态都不动）。
+
+        和 add_page() 的区别：不切换当前页、不触发换页回调；
+        建完之后由调用方自己决定要不要切到哪一页。
+
+        :param titles: 新页面的标题列表（顺序就是标签顺序）
+        :return: 新页面记录列表（顺序与 titles 一致）
+        """
+        new_pages = []
+        for title in titles or []:
+            page_widget = QWidget()
+            layout = QVBoxLayout(page_widget)
+            label = QLabel("未选中节点")
+            view = self._create_view(page_widget)
+            layout.addWidget(view)
+            layout.addWidget(label)
+            # 插在"+"标签前面；标题重名时自动加 (2)(3)…，避免出现两个一模一样的标签
+            self.tab_widget.insertTab(self._add_tab_index(), page_widget,
+                                      self._unique_title(str(title)))
+            new_pages.append(self._register_page(page_widget, view, label))
+        # 万一"+"标签被挤跑了，这里兜一下（正常情况下它本来就在最后）
+        self._ensure_add_tab_last()
+        return new_pages
+
     def delete_page(self, index=None):
         """右键菜单"删除页面"：先弹确认框，确认后再删；成功返回 True"""
         if index is None:
@@ -211,6 +243,12 @@ class FlowPageManager(QObject):
         deleted_page = self._page_at(index)
         if deleted_page is None:
             return False
+
+        # 这一页有未保存的改动时，先问调用方要不要处理（例如弹"是否保存方案"）；
+        # 回调返回 False 表示"取消关闭"，这里就原样返回、什么都不动。
+        if self.on_page_close_requested is not None:
+            if not self.on_page_close_requested(deleted_page):
+                return False
 
         # 1、如果删的正好是当前页，先切到别的页，避免把正在使用的画布删掉
         if deleted_page is self.current_page:
@@ -333,10 +371,36 @@ class FlowPageManager(QObject):
             return
         try:
             if 0 <= index < self.tab_widget.count():
+                if self.tab_widget.tabText(index) != new_title:
+                    # 改了页面名字也算这一页被改动过
+                    self.mark_dirty(self._page_at(index))
                 self.tab_widget.setTabText(index, new_title)
         except RuntimeError:
             # 标签控件也已经销毁，忽略即可
             pass
+
+    # ------------------------------------------------------------------
+    # "有没有未保存的改动"：关闭页面时用来提醒用户
+    # ------------------------------------------------------------------
+    def mark_dirty(self, page=None):
+        """把某一页（默认当前页）标记成"有改动" """
+        page = page or self.current_page
+        if page is not None:
+            page["dirty"] = True
+
+    def clear_dirty(self, page):
+        """某一页已经保存过（或者刚从文件里读进来）：清掉"有改动"标记"""
+        if page is not None:
+            page["dirty"] = False
+
+    def mark_all_clean(self):
+        """保存方案之后调用：所有页面都标记成"没有未保存的改动" """
+        for page in self.pages:
+            page["dirty"] = False
+
+    def has_dirty_pages(self):
+        """有没有任何一页存在未保存的改动"""
+        return any(page.get("dirty") for page in self.pages)
 
     # ------------------------------------------------------------------
     # 内部实现
@@ -351,6 +415,8 @@ class FlowPageManager(QObject):
             "nodes": [],             # 这一页的方框
             "edges": [],             # 这一页的连线
             "selected_node": None,   # 这一页当前选中的节点
+            "dirty": False,          # 有没有还没保存的改动（关闭这一页时提醒保存用）
+            "project_path": None,    # 这一页对应的方案文件（新建的页是 None → 保存时弹窗选路径）
         }
         self._seq += 1
         self.pages.append(page)

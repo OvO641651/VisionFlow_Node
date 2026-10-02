@@ -9,6 +9,7 @@ from PySide2.QtGui import QIcon # QIcon设置图标，QImage显示图像
 from PySide2.QtCore import QTimer, Qt, QPointF # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死
 
 import cv2
+import json
 import time
 import os
 
@@ -24,6 +25,19 @@ from NodeRegistry import SOURCE_KEY, get_spec, result_bbox
 
 
 uiloader = QUiLoader()
+
+
+def _fingerprint_value(value):
+    """
+    算"页面内容指纹"时把参数值规范化。
+    数字统一 round 到 4 位：避免 1 与 1.0、以及浮点误差（0.1+0.2）造成"明明一样却判成不同"。
+    """
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, (int, float)):
+        return ("num", round(float(value), 4))
+    return ("str", str(value))
+
 
 class MainWindow:
     # 视频 / 摄像头也当成一个"图片槽"，参数单独存一份，与图片的运行参数分开
@@ -113,12 +127,37 @@ class MainWindow:
             # 点"菜单"按钮 = 把菜单栏里的菜单弹出来（效果和点菜单栏一样）
             self.menu_button.clicked.connect(self._show_menubar_menu)
 
+        # 顶部那两个显眼的按钮（main.ui 里新加的：保存项目 / 导入项目）：
+        # 功能和菜单栏"方案 → 保存方案 / 打开方案"完全一样，只是位置更显眼
+        self.save_project_button = self.main_window.findChild(
+            QtWidgets.QPushButton, "save_project_button")
+        self.open_project_button = self.main_window.findChild(
+            QtWidgets.QPushButton, "open_project_button")
+        if self.save_project_button:
+            self.save_project_button.clicked.connect(self.save_project)
+        if self.open_project_button:
+            self.open_project_button.clicked.connect(self.open_project)
+
 
         # 主窗口关闭后清空摄像头内存
         self.main_window.closeEvent = self.close_event
 
         # 点击设置->摄像头设置后 弹出 新窗口
         self.main_window.action.triggered.connect(self.set_camera_id)
+
+        # 方案（.vfproj）的保存 / 加载：菜单"方案"下的三个动作
+        # 注意：方案文件路径是**按页面**记的（page["project_path"]），不是窗口级别的——
+        # 新建的页面没有对应文件，"保存方案"会弹窗让用户选路径，绝不会覆盖别的页面的文件。
+        self.last_source = None     # 最近打开的图片来源 {"kind": "image"/"video", "path": ...}
+        self.action_open_project = self.main_window.findChild(QtWidgets.QAction, "action_open_project")
+        self.action_save_project = self.main_window.findChild(QtWidgets.QAction, "action_save_project")
+        self.action_save_project_as = self.main_window.findChild(QtWidgets.QAction, "action_save_project_as")
+        if self.action_open_project:
+            self.action_open_project.triggered.connect(self.open_project)
+        if self.action_save_project:
+            self.action_save_project.triggered.connect(self.save_project)
+        if self.action_save_project_as:
+            self.action_save_project_as.triggered.connect(self.save_project_as)
 
         # 创建树控件
         self.tree = self.main_window.tree
@@ -144,6 +183,7 @@ class MainWindow:
             self.main_window.findChild(QtWidgets.QTabWidget, "flowWidget"),
             view_factory=lambda parent: FlowchartView(parent, main_window=self),
             on_page_switched=self._on_flow_page_switched,
+            on_page_close_requested=self._confirm_close_flow_page,
         )
         self.flow_page_mgr.setup()
         # "当前页"的引用：换页时由 _on_flow_page_switched 整体替换，
@@ -229,6 +269,8 @@ class MainWindow:
                 return
             self.cap = cap
             self._is_video_file = True
+            # 记下最近打开的来源（方案文件里会记它，便于知道参数属于哪张图/哪个视频）
+            self.last_source = {"kind": "video", "path": video_path}
 
             # 视频是独立的一个"图片槽"，把各节点的运行参数切到它自己那一份
             self._switch_image_params(self.VIDEO_ROI_KEY)
@@ -271,6 +313,9 @@ class MainWindow:
                     "以下图片读取失败，已跳过：\n" + "\n".join(failed_names)
                 )
 
+            # 记下最近打开的来源（方案文件里会记它）
+            self.last_source = {"kind": "image", "path": image_paths[0]}
+
             # 批量导入时主画面默认显示第一张，其余的点击图库缩略图切换
             # 新导入的图片还没有执行过，所以这里只显示原图
             self._show_static_image(loaded_frames[0])
@@ -283,6 +328,418 @@ class MainWindow:
         # 3、剩下的都是不支持的类型
         QMessageBox.warning(self.main_window, "错误", "不支持的文件格式")
 
+
+    # ------------------------------------------------------------------
+    # 方案（.vfproj）保存 / 加载
+    # ------------------------------------------------------------------
+    PROJECT_FORMAT = "VisionFlowNode.project"
+    PROJECT_VERSION = 1
+
+    def _page_title(self, page):
+        """取某一页的标签标题（找不到就返回空串）"""
+        try:
+            index = self.flow_page_mgr.tab_widget.indexOf(page["widget"])
+            if index >= 0:
+                return self.flow_page_mgr.tab_widget.tabText(index)
+        except RuntimeError:
+            pass
+        return ""
+
+    def _page_fingerprint(self, page):
+        """
+        给"工作区里的一页"算内容指纹：标题 + 每个节点的名字/坐标/图像源绑定/参数 + 连线关系。
+        用来判断"方案文件里的这一页，工作区里是不是已经有一模一样的了"。
+        """
+        nodes = page["nodes"]
+        index_of = {node: index for index, node in enumerate(nodes)}
+        node_items = []
+        for node in nodes:
+            pos = node.pos()
+            binding = getattr(node, "input_source", None)
+            if isinstance(binding, NodeItem):
+                # 绑定的是某个节点对象 → 换成页内序号，和文件里的表示保持一致
+                binding = index_of.get(binding)
+            node_items.append((
+                node.name,
+                round(float(pos.x()), 1), round(float(pos.y()), 1),
+                binding,
+                tuple(sorted((str(key), _fingerprint_value(value))
+                             for key, value in node.params.items())),
+            ))
+        edges = []
+        for edge in page["edges"]:
+            start = index_of.get(edge.start_node)
+            end = index_of.get(edge.end_node)
+            if start is not None and end is not None:
+                edges.append((start, end))
+        return (self._page_title(page).strip(), tuple(node_items), tuple(sorted(edges)))
+
+    def _model_page_fingerprint(self, page_model):
+        """给"方案文件里的一页模型"算指纹——结构必须和 _page_fingerprint 完全一致"""
+        node_items = []
+        for node in page_model["nodes"]:
+            node_items.append((
+                node["name"],
+                round(float(node["x"]), 1), round(float(node["y"]), 1),
+                node.get("input_source"),
+                tuple(sorted((str(key), _fingerprint_value(value))
+                             for key, value in node["params"].items())),
+            ))
+        edges = tuple(sorted(tuple(edge) for edge in page_model["edges"]))
+        return (page_model["title"].strip(), tuple(node_items), edges)
+
+    def _add_node_to_page(self, page, name, pos, mark_dirty=True):
+        """
+        在指定页里建一个节点（拖拽添加与加载方案共用）。
+        :param mark_dirty: 加载方案时传 False —— 从文件读进来的内容不算"未保存的改动"
+        """
+        node = NodeItem(name, pos)
+        page["view"].flow_scene.addItem(node)
+        # 方框被拖动时：刷新连线 + 把这一页标记成"有改动"
+        node.positionChanged.connect(lambda *_: self._on_node_moved(page))  # type:ignore
+        page["nodes"].append(node)
+        if mark_dirty:
+            self.flow_page_mgr.mark_dirty(page)
+        return node
+
+    def _add_edge_to_page(self, page, start_node, end_node, mark_dirty=True):
+        """在指定页里连一条线（同一对起终点不重复连）"""
+        for edge in page["edges"]:
+            if edge.start_node == start_node and edge.end_node == end_node:
+                return None
+        edge = EdgeItem(start_node, end_node)
+        page["view"].flow_scene.addItem(edge)
+        page["edges"].append(edge)
+        if mark_dirty:
+            self.flow_page_mgr.mark_dirty(page)
+        return edge
+
+    def _on_node_moved(self, page=None):
+        """方框被拖动：刷新连线，并把所在页面标记成"有改动" """
+        self.flow_page_mgr.mark_dirty(page or self.flow_page_mgr.current_page)
+        self.update_all_edges()
+
+    def _collect_page(self, page):
+        """把"一页流程图"收成可 JSON 化的 dict（节点 + 连线）"""
+        nodes = page["nodes"]
+        index_of = {node: index for index, node in enumerate(nodes)}
+        nodes_data = []
+        for index, node in enumerate(nodes):
+            pos = node.pos()
+            binding = getattr(node, "input_source", None)
+            if isinstance(binding, NodeItem):
+                # 绑定的是某个上游节点：存它的页内序号（不在本页就退回"自动"）
+                binding = index_of.get(binding, None)
+            nodes_data.append({
+                "id": index,
+                "name": node.name,
+                "x": round(float(pos.x()), 2),
+                "y": round(float(pos.y()), 2),
+                "input_source": binding,
+                "params": dict(node.params),
+            })
+        edges_data = []
+        for edge in page["edges"]:
+            start = index_of.get(edge.start_node)
+            end = index_of.get(edge.end_node)
+            if start is not None and end is not None:
+                edges_data.append([start, end])
+        return {
+            "title": self._page_title(page),
+            "nodes": nodes_data,
+            "edges": edges_data,
+        }
+
+    def _collect_project(self):
+        """
+        把**当前这一页**收成方案 dict（"保存方案"用）。
+
+        规则：**一个方案文件只装一页**（一个文件对应一个流程图窗口）——
+        以前是"把整张工作区的所有页面都写进去"，结果打开某个方案会把当时开着的
+        其它页面一起带出来，用户反馈过这个问题，所以改成只存当前页。
+
+        节点参数存的是"当前图片那一份"（node.params）：参数是按图片归档的、归档键用的是
+        id(原图)，跨进程不可复现，所以方案里只带当前这一份，另外用 last_source 记下它属于谁。
+        """
+        page = self.flow_page_mgr.current_page
+        pages_data = [self._collect_page(page)] if page is not None else []
+        return {
+            "format": self.PROJECT_FORMAT,
+            "version": self.PROJECT_VERSION,
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "current_page": 0,
+            "last_source": self.last_source,
+            "pages": pages_data,
+        }
+
+    def save_project(self):
+        """
+        "保存方案"：**这一页**已经有对应文件就直接存；没有（例如刚新建的页面）就当"另存为"，
+        弹窗让用户选路径——绝不拿别的页面用过的文件路径去覆盖。
+        """
+        page = self.flow_page_mgr.current_page
+        path = page.get("project_path") if page is not None else None
+        if path:
+            return self._write_project_file(path)
+        return self.save_project_as()
+
+    def save_project_as(self):
+        """菜单"另存为…"：弹文件对话框选路径"""
+        page = self.flow_page_mgr.current_page
+        path = page.get("project_path") if page is not None else None
+        if path:
+            default_name = os.path.basename(path)
+        else:
+            # 一个文件对应一个流程图页面：默认就用这一页的标签名当文件名
+            title = self._page_title(page).strip() or "方案"
+            default_name = "{0}.vfproj".format(title)
+        path, _ = QFileDialog.getSaveFileName(
+            self.main_window, "保存方案", default_name,
+            "VisionFlowNode 方案 (*.vfproj);;所有文件 (*.*)")
+        if not path:
+            return False
+        if not path.lower().endswith(".vfproj"):
+            path += ".vfproj"
+        return self._write_project_file(path)
+
+    def _write_project_file(self, path):
+        """把当前流程写进方案文件（JSON / UTF-8 / 缩进 2）"""
+        try:
+            data = self._collect_project()
+            with open(path, "w", encoding="utf-8") as fp:
+                json.dump(data, fp, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            QMessageBox.warning(self.main_window, "保存方案失败", "写入文件时出错：\n{0}".format(exc))
+            return False
+        page = self.flow_page_mgr.current_page
+        if page is not None:
+            # 这一页从此认这个文件（新建的页面也就有了自己的方案文件）
+            page["project_path"] = path
+        # 只把"刚存过的这一页"清干净：别的页面如果还有改动，仍然算未保存
+        self.flow_page_mgr.clear_dirty(page)
+        self._update_project_title()
+        return True
+
+    def _update_project_title(self):
+        """把**当前这一页**对应的方案文件名显示到窗口标题上"""
+        page = self.flow_page_mgr.current_page
+        path = page.get("project_path") if page is not None else None
+        name = os.path.basename(path) if path else "未保存的方案"
+        try:
+            self.main_window.setWindowTitle("VisionFlowNode - {0}".format(name))
+        except RuntimeError:
+            pass
+
+    def open_project(self):
+        """菜单"打开方案"：选文件后交给 load_project()"""
+        path, _ = QFileDialog.getOpenFileName(
+            self.main_window, "打开方案", "",
+            "VisionFlowNode 方案 (*.vfproj);;所有文件 (*.*)")
+        if not path:
+            return False
+        return self.load_project(path)
+
+    def load_project(self, path):
+        """
+        加载方案：先解析 + 校验（这一步完全不碰界面），全部通过之后才重建页面；
+        校验不过就原样返回，不破坏当前流程图。
+        """
+        # 1、读文件 + 基本校验
+        try:
+            with open(path, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+        except Exception as exc:
+            QMessageBox.warning(self.main_window, "打开方案失败", "读取或解析文件出错：\n{0}".format(exc))
+            return False
+        if not isinstance(data, dict) or data.get("format") != self.PROJECT_FORMAT:
+            QMessageBox.warning(self.main_window, "打开方案失败", "这不是 VisionFlowNode 的方案文件。")
+            return False
+        version = data.get("version")
+        if not isinstance(version, int) or version > self.PROJECT_VERSION:
+            QMessageBox.warning(
+                self.main_window, "打开方案失败",
+                "方案版本（{0}）比当前程序支持的版本（{1}）新，打不开。".format(version, self.PROJECT_VERSION))
+            return False
+        pages = data.get("pages")
+        if not isinstance(pages, list) or not pages:
+            QMessageBox.warning(self.main_window, "打开方案失败", "方案里没有任何流程图页面。")
+            return False
+
+        # 2、整理成"待应用模型"（只读数据，界面还没动）
+        model, warnings = self._build_project_model(pages)
+
+        # 3、去重：文件里与"工作区里已有的页面"内容完全相同的页，不再重复创建
+        #    （不然"保存 → 再打开同一个文件"会把页面越堆越多：Flow、Flow(2)、Flow(2)(2)…）
+        existing = set(self._page_fingerprint(page) for page in self.flow_page_mgr.pages)
+        kept_pages = []
+        skipped_pages = 0
+        for page_model in model["pages"]:
+            fingerprint = self._model_page_fingerprint(page_model)
+            if fingerprint in existing:
+                skipped_pages += 1
+                continue
+            existing.add(fingerprint)   # 同一个文件里若有重复页，也只建一份
+            kept_pages.append(page_model)
+        model["pages"] = kept_pages
+        if skipped_pages:
+            warnings.append("有 {0} 页与工作区里已有的页面完全相同，已跳过".format(skipped_pages))
+        if not kept_pages:
+            # 文件里的页面工作区里全都有：什么都不用建，提示一句就好
+            QMessageBox.information(
+                self.main_window, "打开方案",
+                "这个方案里的 {0} 页与当前工作区里已有的页面完全相同，没有新增页面。".format(skipped_pages))
+            return True
+
+        # 4、真正重建（到这里才开始动界面）
+        try:
+            self._apply_project(model, data, path)
+        except Exception as exc:
+            QMessageBox.warning(self.main_window, "打开方案失败", "重建流程图时出错：\n{0}".format(exc))
+            return False
+
+        self._update_project_title()
+        if warnings:
+            QMessageBox.information(
+                self.main_window, "打开方案",
+                "方案已加载；下面是 {0} 条提示：\n{1}".format(len(warnings), "\n".join(warnings)))
+        return True
+
+    def _build_project_model(self, pages):
+        """
+        把方案文件里的页面数据整理成"待应用模型"：
+        没注册的算子、悬空的连线、无效的图像源绑定都会被过滤掉，并记进 warnings。
+        """
+        model_pages = []
+        warnings = []
+        for page_index, page in enumerate(pages):
+            if not isinstance(page, dict):
+                warnings.append("第 {0} 页数据格式不对，已跳过".format(page_index + 1))
+                continue
+            title = str(page.get("title") or "Flow{0}".format(page_index + 1))
+            nodes = []
+            raw_nodes = page.get("nodes") if isinstance(page.get("nodes"), list) else []
+            for raw in raw_nodes:
+                if not isinstance(raw, dict):
+                    continue
+                name = str(raw.get("name") or "")
+                if get_spec(name) is None:
+                    warnings.append("算子“{0}”没有实现，已跳过".format(name or "(空)"))
+                    continue
+                try:
+                    x = float(raw.get("x", 0.0))
+                    y = float(raw.get("y", 0.0))
+                except (TypeError, ValueError):
+                    x, y = 0.0, 0.0
+                params = raw.get("params")
+                nodes.append({
+                    "name": name,
+                    "x": x,
+                    "y": y,
+                    "params": dict(params) if isinstance(params, dict) else {},
+                    "input_source": raw.get("input_source", None),
+                    "old_id": raw.get("id"),
+                })
+
+            # 连线：两端都要能对上"留下来的节点"，自环直接丢掉
+            index_by_old_id = {}
+            for index, node in enumerate(nodes):
+                index_by_old_id.setdefault(node["old_id"], index)
+            edges = []
+            raw_edges = page.get("edges") if isinstance(page.get("edges"), list) else []
+            for raw_edge in raw_edges:
+                if not (isinstance(raw_edge, (list, tuple)) and len(raw_edge) == 2):
+                    warnings.append("第 {0} 页有一条连线格式不对，已跳过".format(page_index + 1))
+                    continue
+                start = index_by_old_id.get(raw_edge[0])
+                end = index_by_old_id.get(raw_edge[1])
+                if start is None or end is None or start == end:
+                    warnings.append("第 {0} 页有一条连线指向不存在的节点，已跳过".format(page_index + 1))
+                    continue
+                edges.append([start, end])
+
+            # 图像源绑定：数字要能对上本页节点；对不上、或者指向自己，就退回"自动"
+            for index, node in enumerate(nodes):
+                binding = node["input_source"]
+                target = None
+                if isinstance(binding, int) and not isinstance(binding, bool):
+                    target = index_by_old_id.get(binding)
+                elif isinstance(binding, str) and binding == SOURCE_KEY:
+                    target = SOURCE_KEY
+                if target is None or target == index:
+                    target = None
+                node["input_source"] = target
+
+            model_pages.append({"title": title, "nodes": nodes, "edges": edges})
+        return {"pages": model_pages}, warnings
+
+    def _apply_project(self, model, data, project_path=None):
+        """
+        按模型把这些页面**追加**到现有流程后面（已有的页面一律保留、不动），
+        并恢复节点参数、图像源绑定、连线（界面从这里才开始变）。
+        :param project_path: 这些页来自哪个方案文件（记到 page["project_path"] 上，
+                             以后在这一页点"保存方案"就直接存回这个文件）
+        """
+        titles = [page["title"] for page in model["pages"]]
+        new_pages = self.flow_page_mgr.append_pages(titles)
+        if not new_pages:
+            return
+
+        # 1、逐页建节点 → 恢复参数 → 恢复图像源绑定 → 连连线
+        #    （mark_dirty=False：从文件读进来的内容不算"未保存的改动"）
+        for page, page_model in zip(new_pages, model["pages"]):
+            created = []
+            for node_model in page_model["nodes"]:
+                node = self._add_node_to_page(
+                    page, node_model["name"], QPointF(node_model["x"], node_model["y"]),
+                    mark_dirty=False)
+                node.params.clear()
+                node.params.update(node_model["params"])
+                created.append(node)
+            for index, node_model in enumerate(page_model["nodes"]):
+                binding = node_model["input_source"]
+                if binding == SOURCE_KEY:
+                    created[index].input_source = SOURCE_KEY
+                elif isinstance(binding, int) and 0 <= binding < len(created):
+                    created[index].input_source = created[binding]
+                else:
+                    created[index].input_source = None
+            for start, end in page_model["edges"]:
+                self._add_edge_to_page(page, created[start], created[end], mark_dirty=False)
+
+        # 2、参数同时写进"当前图片"的存档，否则切走再切回来就被清空了
+        if self.current_image_key is not None:
+            for page in new_pages:
+                for node in page["nodes"]:
+                    self._get_node_params_store(node)[self.current_image_key] = dict(node.params)
+
+        # 3、新追加的页面 = "刚打开的样子"：不算未保存改动，并记住它们来自哪个方案文件
+        for page in new_pages:
+            self.flow_page_mgr.clear_dirty(page)
+            page["project_path"] = project_path
+
+        # 4、切到方案里记录的那一页（它是新追加页面里的第 current_index 页）
+        current_index = data.get("current_page", 0)
+        if not isinstance(current_index, int) or not (0 <= current_index < len(new_pages)):
+            current_index = 0
+        try:
+            first_index = self.flow_page_mgr.tab_widget.indexOf(new_pages[0]["widget"])
+        except RuntimeError:
+            first_index = -1
+        if first_index >= 0:
+            # 走正常换页流程：主窗口引用重新绑定、旧页参数也会存好
+            self.flow_page_mgr.tab_widget.setCurrentIndex(first_index + current_index)
+        else:
+            # 兜底：标签栏状态异常时，至少把当前页和引用绑过去
+            self.flow_page_mgr.current_page = new_pages[current_index]
+            self._bind_current_flow_page()
+        self.selected_node = None
+        if self.current_node_label:
+            self.current_node_label.setText("未选中节点")
+
+        # 5、刷新画面与日志：有图就按新流程重跑一次，没图就只把连线刷新一下
+        self.update_all_edges()
+        if self.current_static_image is not None:
+            self._execute_static(self.current_static_image, "continuous")
 
     def _get_node_params_store(self, node):
         """
@@ -1021,27 +1478,14 @@ class MainWindow:
         dialog.exec_()
 
     def add_flow_node(self, name, pos):
-        # 添加节点时，绑定信号并更新连线逻辑
-        node = NodeItem(name, pos)  # 创建节点方框
-        self.main_window.graphicsView.flow_scene.addItem(node)  # 添加到画布view中
-        # 给这个节点绑上连线刷新信号
-        node.positionChanged.connect(self.update_all_edges)  # type:ignore
-        self.flow_nodes.append(node)  # 添加到flow_nodes[]中，方便管理
-        # 新节点加入后，立刻用延时器保证连线正确对齐
-        #QTimer.singleShot(0, self.update_all_edges)
-
-        return node
+        """拖拽 / 双击添加节点：加到"当前页"（真正建节点在 _add_node_to_page）"""
+        return self._add_node_to_page(self.flow_page_mgr.current_page, name, pos)
 
     def add_edge(self, start_node, end_node):
-        """从蓝点开始生成一条曲线"""
-        for edge in self.flow_edges:
-            if edge.start_node == start_node and edge.end_node == end_node:
-                # 防止重连，即相同的起点和相同的终点
-                return
-        edge = EdgeItem(start_node, end_node) # 实例化EdgeItem类对象
-        self.main_window.graphicsView.flow_scene.addItem(edge) # 添加到画布里面
-        self.flow_edges.append(edge) # 添加到列表里面记录
-        self.update_all_edges() # 刷新一次画面，刷新出曲线
+        """从蓝点开始生成一条曲线（同一对起终点不重复连）"""
+        edge = self._add_edge_to_page(self.flow_page_mgr.current_page, start_node, end_node)
+        self.update_all_edges()  # 刷新一次画面，刷新出曲线
+        return edge
 
     def delete_flow_node(self, node_to_delete):
         """实现删除与需要删除的节点相连接的曲线"""
@@ -1059,13 +1503,19 @@ class MainWindow:
             self.flow_edges.remove(edge) # 从数据列表里清空这条线的记录
         self.main_window.graphicsView.flow_scene.removeItem(node_to_delete) # 把这个方块本身从画布上彻底抹去
         self.flow_nodes.remove(node_to_delete) # 从列表中移除节点记录
+        self.flow_page_mgr.mark_dirty()  # 删了东西，这一页就算"有改动"
         self.update_all_edges() # 刷新画面
 
     def update_all_edges(self):
         """可更新的边缘连接曲线，移动方框后曲线会跟着移动"""
         for edge in self.flow_edges:
             # 遍历所有已存在的连线
-            edge.update_positions()  # 命令这条连线执行自身的刷新方法
+            try:
+                edge.update_positions()  # 命令这条连线执行自身的刷新方法
+            except RuntimeError:
+                # 这条连线（或它两端的方框）已经被 Qt 销毁了——典型场景是"打开方案"时
+                # 把旧页面的场景 clear() 掉。这里跳过就行，不然一次刷新就会把程序崩掉。
+                continue
 
 
     def _on_tree_double_click(self, _item, _column):
@@ -1109,43 +1559,76 @@ class MainWindow:
             return
         self.main_window.graphicsView.flow_scene.removeItem(edge_to_delete) # 在画布上删除
         self.flow_edges.remove(edge_to_delete) # 在列表中删除
+        self.flow_page_mgr.mark_dirty()  # 删了连线，这一页也算"有改动"
         self.update_all_edges() # 刷新画面
 
     def on_node_double_clicked(self, node):
-        """双击流程图方框时触发：直线、圆各自弹出配置窗口"""
-        # 双击直线检测节点弹出 LineParamsDialog 窗口
+        """双击流程图方框时触发：弹出这个算子自己的参数窗口"""
         if node.name == "直线":
-            # 直接使用导入的 LineParamsDialog，传入 (父窗口, 节点对象, 主窗口)
-            dialog = LineParamsDialog(self.main_window, node=node, main_window=self)
-            dialog.resize(390, 560)
-
-            # 记录当前激活的对话框，并绑定关闭时清空引用的信号
-            self.current_dialog = dialog
-            dialog.finished.connect(lambda: self._clear_current_dialog())
-
-            dialog.exec_()  # 模态显示
-
-        # 双击圆检测节点弹出 CircleParamsDialog 窗口
+            self._open_node_dialog(node, LineParamsDialog)
         elif node.name == "圆":
-            # 【新增】弹出圆配置窗口
-            dialog = CircleParamsDialog(self.main_window, node=node, main_window=self)
-            dialog.resize(390, 560)
-            self.current_dialog = dialog
-            dialog.finished.connect(lambda: self._clear_current_dialog())
-            dialog.exec_()
-
-
-        # 双击灰度节点弹出它自己的参数窗口（ROI + 是否作用于整图）
+            self._open_node_dialog(node, CircleParamsDialog)
         elif node.name == "灰度":
-            dialog = GrayParamsDialog(self.main_window, node=node, main_window=self)
-            dialog.resize(390, 560)
-            self.current_dialog = dialog
-            dialog.finished.connect(lambda: self._clear_current_dialog())
-            dialog.exec_()
-
+            self._open_node_dialog(node, GrayParamsDialog)
         else:
             # 人脸/颜色这些还没实现的模块：双击保持"无反应"、不弹提示
             pass
+
+    def _open_node_dialog(self, node, dialog_class):
+        """
+        双击节点时统一的开窗流程。
+        顺手记下打开之前的参数：窗口关掉之后如果参数真的变了，就把当前页标记成"有改动"，
+        这样关闭这一页时才能提醒用户保存。
+        """
+        before = dict(node.params)
+        dialog = dialog_class(self.main_window, node=node, main_window=self)
+        dialog.resize(390, 560)
+        self.current_dialog = dialog
+        dialog.finished.connect(lambda *_: self._clear_current_dialog())
+        dialog.finished.connect(lambda *_: self._mark_dirty_if_params_changed(node, before))
+        dialog.exec_()  # 模态显示
+
+    def _mark_dirty_if_params_changed(self, node, before):
+        """参数窗口关掉之后：只有参数确实变了，才把当前页标记成"有改动" """
+        if before != dict(node.params):
+            self.flow_page_mgr.mark_dirty()
+
+    def _confirm_close_flow_page(self, page):
+        """
+        关闭某一页之前的检查（FlowPageManager 的回调）：
+        这一页有未保存的改动，就先问"要不要保存方案"；用户点"取消"就放弃关闭。
+        :return: True = 可以关；False = 别关
+        """
+        if not page.get("dirty"):
+            # 没有未保存的改动，直接放行，不用打扰用户
+            return True
+        title = self._page_title(page) or "这一页"
+
+        # 用带中文按钮的对话框（标准按钮在没装 Qt 中文翻译时会显示英文）
+        box = QMessageBox(self.main_window)
+        box.setWindowTitle("未保存的改动")
+        box.setIcon(QMessageBox.Question)
+        box.setText("流程图页面“{0}”有改动，关闭前要保存方案吗？".format(title))
+        button_save = box.addButton("保存", QMessageBox.AcceptRole)
+        box.addButton("不保存", QMessageBox.DestructiveRole)
+        button_cancel = box.addButton("取消", QMessageBox.RejectRole)
+        box.exec_()
+
+        clicked = box.clickedButton()
+        if clicked is button_cancel:
+            return False
+        if clicked is button_save:
+            # 方案文件是"一个文件一页"，所以先把要关的这一页切成当前页再存，
+            # 否则会把"当前那一页"存进去、真正要关的这一页反而没保存
+            try:
+                index = self.flow_page_mgr.tab_widget.indexOf(page["widget"])
+                if index >= 0:
+                    self.flow_page_mgr.tab_widget.setCurrentIndex(index)
+            except RuntimeError:
+                pass
+            # 保存方案（还没有路径时会弹"另存为"）；保存失败或用户取消 → 不关这一页
+            return bool(self.save_project())
+        return True
 
     def _clear_current_dialog(self):
         """对话框关闭时，清除内部持有的引用"""
@@ -1333,6 +1816,9 @@ class MainWindow:
         self.on_node_selected(self.selected_node)
         if self.current_static_image is not None:
             self._show_static_image(self.current_static_image)
+
+        # 5、窗口标题跟着"当前页对应的方案文件"走（每页各有自己的方案文件）
+        self._update_project_title()
 
 
 

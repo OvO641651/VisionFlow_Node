@@ -2525,6 +2525,434 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 
 
 
+2026.10.2 21:43
+存在问题：批次4 的第一件事——流程图和参数一直只活在内存里，关掉程序就全没了：
+   多标签页面、节点坐标、连线、节点参数、图像源绑定，都没法存下来、也没法再打开。
+
+修改：
+一、FlowPages.py：新增"静默重建页面"的接口 reset_pages(titles)
+   打开方案要按文件里的页数和标题重建页面，但现有的 add_page() / delete_page() 会弹确认框、
+   还有"至少保留一页"的限制，不能直接拿来用：
+        def reset_pages(self, titles):
+            """静默重建页面（"打开方案"专用）：把现有页面全部丢掉，按 titles 重新建 N 页。"""
+   实现要点：清旧页（flow_scene.clear() + 移除数据记录 + 销毁页面控件）→ 把所有标签（含"+"）
+   清掉 → 按标题重建 → 补回"+" → current_page 落在第一页。
+   最后补了一次 self._notify_switched(None)：通知调用方把主窗口引用绑到新页面。不做这一步的话，
+   调用方手里还攥着旧页面的 nodes / edges 列表（那些控件已经被销毁），下一次刷新连线就会抛
+   RuntimeError（Internal C++ object already deleted）——这个坑是测试时踩出来的。
+
+二、main.py：方案的收集 / 写盘 / 读取 / 应用
+1、_collect_project()：遍历 flow_page_mgr.pages 生成可 JSON 化的结构；节点用"页内序号 id"，
+   连线与 input_source 都引用这个序号（跨会话稳定，不用对象引用）；input_source 指向别的页
+   （跨页绑定）时退回"自动"。
+2、save_project() / save_project_as() / _write_project_file(path)：JSON、UTF-8、缩进 2；
+   存完把文件名显示到窗口标题上。
+3、load_project(path)：**先解析 + 校验（完全不碰界面）**，全部通过才 _apply_project()；
+   校验不过就原样返回，不破坏当前流程图。
+4、_build_project_model(pages)：把文件数据整理成"待应用模型"，顺手过滤脏数据——
+   未注册的算子跳过、悬空 / 自环连线丢掉、input_source 对不上或指向自己就退回"自动"，
+   每一处问题记进 warnings（加载完统一提示一次）。
+5、_apply_project(model, data)：reset_pages(titles) → 逐页建节点 → 清空并灌入 params
+   → 恢复 input_source（按序号映射成节点对象）→ 连连线 → 把参数同时写进"当前图片"的存档
+   （否则切图再切回来就被清空）→ 切到方案记录的当前页 → 刷新画面（有图就按新流程重跑一次）。
+6、顺手把交互式的 add_flow_node() / add_edge() 改成调用新抽出的 _add_node_to_page() /
+   _add_edge_to_page()，交互添加和加载方案共用同一套建节点 / 连线的逻辑。
+7、update_all_edges() 加了 try/except RuntimeError：跳过已经被 Qt 销毁的连线，
+   一次刷新不会再把程序崩掉（旧页面被 clear 之后就可能留下这种残引用）。
+8、菜单：main.ui 里新增"方案"菜单（打开方案… / 保存方案 / 另存为…），main.py 用
+   findChild(QAction, ...) 接上槽；打开 / 保存默认过滤 *.vfproj，另存为会自动补 .vfproj 后缀。
+
+三、方案文件格式（.vfproj，JSON）
+   {
+     "format": "VisionFlowNode.project", "version": 1,
+     "saved_at": "2026-10-02 21:40:00", "current_page": 0,
+     "last_source": {"kind": "image", "path": "E:/.../image/lena.png"},
+     "pages": [
+       {"title": "检测页",
+        "nodes": [{"id": 0, "name": "直线", "x": 20.0, "y": 20.0,
+                   "input_source": null, "params": {"canny_low": 66, ...}}],
+        "edges": [[0, 1]]}
+     ]
+   }
+   说明：节点的 params 存的是"当前图片那一份"（node.params）。因为参数归档用的是 id(原图)、
+   跨进程不可复现，所以方案里只带当前这一份，另外用 last_source 记下它属于哪张图。
+
+验证（2026.10.2 21:40，全部实跑）：
+1、main.ui 的 XML 校验通过；py_compile 十个源文件 exit 0；
+2、无头冒烟 46 项全 PASS，关键项：
+   · 菜单：'方案'菜单存在、三个动作文字正确（打开方案… / 保存方案 / 另存为…）、菜单里挂 3 项
+   · 往返：2 页 / 3 个节点（含坐标、params、input_source 分别绑定上游节点与全局图像源）/ 1 条连线
+     → 保存 → **破坏现场**（删节点、多建节点、改参数、reset_pages 清空所有页）→ 加载
+     → 页数、页标题、节点名、坐标、params（被改过的 999 恢复成 66）、连线两端、input_source
+       的**对象身份**、当前页、主窗口引用绑定、场景里确有图元 —— 全部恢复
+   · 加载时把参数同时写进"当前图片"的存档（用 current_image_key = 4242 验证过）
+   · 容错：坏 JSON / format 不对 / 版本太新 / pages 为空 → 返回 False 且有提示，
+     **现场没被破坏**（页数与当前页节点数不变）
+   · 脏数据：未实现算子（人脸）跳过、悬空连线与自环丢掉、自己绑定自己退回"自动"，
+     加载完统一提示"有 3 处没能恢复"
+   · 回归：拖拽式 add_flow_node() / add_edge() 仍正常、重复连线仍被忽略
+3、界面截图：_ui_preview/menu_project.png（"方案"菜单三项）
+
+遗留 / 后续待办：
+· 方案里的参数只带"当前图片那一份"（批次4 决策 a 的推荐做法）。以后若要带"多图多套参数"，
+  必须先把 per-image 的键从 id(原图) 改成文件名 / 路径。
+· last_source 目前只记录、不自动打开：打开方案后想让它和参数完全对应，需要手动打开同一张图
+  （已经开着同一张图时，参数就是对的）。
+· 视图缩放 / 平移（_zoom_states）这次没存，第一版先不做。
+· 批次4 剩下三件：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_project_persist\
+   （main.py / main.ui / FlowPages.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2143\
+   （作为下一轮改动的 before）
+
+
+2026.10.2 22:57
+存在问题（用户反馈 + 新需求）：
+1、打开方案时把别的页面全清掉了——用户有多个流程图页面时，一打开方案就只剩方案里的那些页。
+   期望：**打开方案要保留现有页面**，方案里的页面**追加到最后**（"+"号前面）。
+2、用户在 main.ui 里新加了两个显眼的按钮（原来叫 pushButton / pushButton_2，
+   文字是"保存项目"/"导入项目"），功能要和菜单"方案 → 保存方案 / 打开方案"完全一样；
+   另外要把这两个按钮的 Name 改成合适的名字。
+3、某个流程图页面有改动时，关闭这一页要先弹窗问"要不要保存"，而不是直接把它关掉。
+
+修改：
+一、打开方案改成"追加"，不再清空（FlowPages.py + main.py）
+1、FlowPages.py：把上一版那个"静默重建页面 reset_pages(titles)"换成 append_pages(titles)：
+   新页插在"+"标签前面，已有页面原样保留（画布 / 方框 / 连线 / 状态都不动），
+   标题重名时自动加 (2)(3)…；建完兜一次 _ensure_add_tab_last()，保证"+"永远在最后。
+   （reset_pages 已经没人用了，直接删掉，不留死代码。）
+2、main.py::_apply_project()：改成 append_pages() + 只动新追加的那几页；最后按方案里记录的
+   current_page 切到"新页里的第 N 页"（走正常换页流程，标签下标 = 第一张新页的下标 + N），
+   已有页面一页都不碰。
+
+二、两个新按钮（main.ui + main.py）
+1、main.ui：pushButton → **save_project_button**（文字仍是"保存项目"）；
+   pushButton_2 → **open_project_button**（文字仍是"导入项目"）。
+   命名沿用工程里既有的风格（camera_button / open_button / close_button）。
+2、main.py：用 findChild 拿到这两个按钮，分别接到 save_project() / open_project()——
+   和菜单里那两项是同一套实现，行为完全一致。
+
+三、"页面有改动 → 关闭前提醒保存"
+1、FlowPages.py：每页记一个 dirty 标记（_register_page 里初始化 False），并加四个接口：
+   mark_dirty(page=None) / clear_dirty(page) / mark_all_clean() / has_dirty_pages()；
+   改了页面名字也算改动（_close_title_editor 里比较新旧标题）。
+   另加关闭前的回调 on_page_close_requested(page) -> bool：_remove_page() 一开始就问它，
+   返回 False 就"取消关闭"（什么都不动）。
+2、main.py 里什么时候算"有改动"：
+   · 加方框、加连线（_add_node_to_page / _add_edge_to_page，加载方案时传 mark_dirty=False）
+   · 删方框、删连线（delete_flow_node / delete_edge）
+   · 拖动方框（positionChanged → _on_node_moved）
+   · 参数窗口关掉之后参数确实变了（_open_node_dialog 先记一份 params 快照，
+     finished 时比较，_mark_dirty_if_params_changed）
+   · 保存方案成功后统一 mark_all_clean()；刚加载进来的新页也清干净（不算未保存）
+3、_confirm_close_flow_page(page)（FlowPageManager 的回调）：这一页 dirty 就弹一个
+   带中文按钮的对话框——"保存 / 不保存 / 取消"：
+   · 保存 → 调 save_project()（还没有路径会弹"另存为"），保存成功才继续关
+   · 不保存 → 直接关
+   · 取消 → 不关这一页
+   （用 QMessageBox + addButton 自己写按钮文字；标准按钮在没装 Qt 中文翻译时会显示英文。）
+4、双击节点的三个窗口顺手合并成 _open_node_dialog()，省掉三段重复代码。
+
+验证（2026.10.2 22:55，全部实跑）：
+1、main.ui 的 XML 校验通过；py_compile 十个源文件 exit 0；
+2、无头冒烟 35 项全 PASS，关键项：
+   · 按钮：改名后的 save_project_button / open_project_button 都在，旧的 pushButton /
+     pushButton_2 已经查不到；按钮文字保持原样；**点按钮真的会走保存 / 打开**
+     （用替身 QFileDialog 验证，保存真的写出了文件）
+   · 追加式加载：现场 2 页（都 dirty）→ 打开方案（方案里 1 页）→ 变成 3 页；
+     原有两页的标题、内容、dirty 状态全部保留；新页追加在最后、重名自动变成"原有页(2)"；
+     "+"标签仍在最后；新页的节点 / 连线 / 参数 / 图像源绑定都恢复，且不算未保存改动
+   · 关闭提醒：干净页面直接关、一次弹窗都不弹；有改动 + 取消 → 页面还在；
+     有改动 + 不保存 → 关掉且没有触发保存；有改动 + 保存 → 先保存再关；
+     保存失败（save_project 返回 False）→ 不关页面
+   · 参数变动检测：参数真变了才标记 dirty，没变不会误标记
+   · 回归：坏 JSON 仍然返回 False + 提示，且不动现有页面
+3、截图：_ui_preview/top_buttons.png（顶部按钮行，最后两个就是"保存项目 / 导入项目"）
+
+遗留 / 后续待办：
+· 关**整个程序窗口**时还没做"有未保存改动就提醒"（这次只做了关单个页面），要不要加待定。
+· 打开方案是"追加"语义：同一个方案连续打开两次会出现两份（重名会加 (2)）；
+  如果希望"打开时先问一句：清空还是追加"，可以再加一个确认框。
+· 批次4 剩下三件：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_append_pages_and_buttons\
+   （main.py / main.ui / FlowPages.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2257\
+   （作为下一轮改动的 before）
+
+
+2026.10.2 23:13
+存在问题：工作区有多个页面时，"保存方案 → 再打开这个文件"会把页面又建一遍。
+   比如有 3 页（Flow / Flow2 / Flow8），保存后打开该文件，标签变成 6 个；再打开一次变 9 个，
+   界面里出现 Flow、Flow8(2)、Flow(2)(2)… 越堆越多。
+   根因：上一条按用户要求把"打开方案"改成了**追加**（append_pages），但没有做去重——
+   文件里的页与工作区里已有的页本来就是同一批，于是又各建了一份。
+
+修改：给"页面"算内容指纹，加载时跳过与工作区已有页面完全相同的页（main.py）
+1、模块级新增 _fingerprint_value(value)：算指纹时把参数值规范化——bool 单独判、
+   数字统一 round 到 4 位、其它转字符串；这样 1 与 1.0、以及浮点误差（0.1+0.2）
+   都不会把"明明一样"的两页判成不同。
+2、MainWindow 新增两个指纹函数（两者结构必须完全一致，否则永远判不出"相同"）：
+   · _page_fingerprint(page)：工作区里的一页 → (标题, 节点序列, 连线序列)；
+     节点序列里每项是 (名字, x, y, 图像源绑定, 排好序的参数)；
+     绑定如果是节点对象，换算成"页内序号"，和文件里的表示对齐。
+   · _model_page_fingerprint(page_model)：文件里的一页模型 → 同样的结构。
+3、load_project() 在"整理成待应用模型"之后、真正建页面之前做去重：
+   · 先收集工作区里已有页面的指纹集合；
+   · 文件里每一页算指纹：命中就跳过并计数；没命中就留下，**并把它的指纹也加进集合**
+     （这样同一个文件里若有重复页，也只建一份）；
+   · 有跳过 → 追加一条提示"有 N 页与工作区里已有的页面完全相同，已跳过"；
+   · 全都被跳过 → 什么都不建，只弹一句"没有新增页面"，直接返回成功。
+4、顺手把提示文案改准确：原来是"方案已加载，但有 N 处没能恢复"，
+   现在"跳过"也走这条通道，改成"方案已加载；下面是 N 条提示："。
+
+验证（2026.10.2 23:10，全部实跑）：
+1、py_compile 十个源文件 exit 0；
+2、无头冒烟 14 项全 PASS：
+   · 3 页（Flow / Flow2 / Flow8）→ 保存 → 立刻打开同一文件：**页数仍然是 3**，
+     并提示"这个方案里的 3 页与当前工作区里已有的页面完全相同，没有新增页面"；
+   · 再打开一次仍然 3 页（幂等）；已有页面的节点 / 连线 / 参数都没被动过；
+   · 文件里"多出一页"时：只追加那一页（3 → 4），并提示"有 3 页…已跳过"；
+   · 工作区把某页参数改掉后再打开旧文件：文件里那一版会被当成"不同内容"追加
+     （4 → 5，标题 Flow(2)）；
+   · 同一个文件里放两页一模一样的内容：只建一份；
+   · 回归：坏 JSON 仍返回 False + 提示，且不动现有页面。
+3、截图：_ui_preview/tabs_after_reopen.png —— 保存后**连续打开同一文件两次**，
+   标签栏仍然只有 Flow / Flow2 / Flow8 三个（以前会变成 9 个）。
+
+遗留 / 后续待办：
+· 去重的判定是"内容完全一致"：如果工作区里那一页被改过，打开旧文件仍会把文件里那一版追加进来
+  （设计如此：不覆盖你手上的修改，也不丢文件里的内容）。
+· 打开方案成功后会把"当前方案"切到该文件（窗口标题跟着变）；但若这次一页都没新增，
+  就不改当前方案路径——避免把"保存方案"的目标悄悄换到别处。
+· 批次4 剩下三件：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_project_dedupe\
+   （main.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2313\
+   （作为下一轮改动的 before）
+
+
+2026.10.2 23:24
+存在问题：用户反馈"打开 方案2.vfproj 会把方案1、方案3 的页面也一起打开"，
+   并问"现在的代码不是一个文件只保存一个页面窗口的内容吗"。
+   读了 E:\opencv_python_3_8\save_test 下的方案文件，确认了原因：
+     · 方案1.vfproj  存了 1 页（Flow(3)）
+     · 方案3.vfproj  存了 2 页（方案3 + Flow9）
+     · 方案2.vfproj  存了 **4 页**（Flow25 + 方案3 + 方案1 + 方案2）
+     · 方案.vfproj   存了 7 页
+   也就是"保存方案"写进去的是**整张工作区的所有页面**，而不是当前这一页：
+   保存"方案2"的那一刻工作区里正好开着那 4 页，于是 4 页全被写进这个文件，
+   之后打开它自然把那 3 页也带出来了（不是串文件，是"一个文件装了整张工作区"）。
+
+修改：一个方案文件只装当前这一页（main.py）
+1、_collect_project() 拆成两半：
+   · 新增 _collect_page(page)：把"一页"收成可 JSON 化的 dict（标题 + 节点 + 连线）；
+   · _collect_project() 只收**当前页**——pages 里永远只有 1 页、current_page 固定 0，
+     并把这条规则写进 docstring（"一个文件对应一个流程图窗口"）。
+2、save_project_as() 的默认文件名：还没存过时用**当前页的标签名**（例如"方案2.vfproj"），
+   不再是固定的"方案.vfproj"。
+3、_confirm_close_flow_page() 里选"保存"时：先把**要关的这一页**切成当前页再保存，
+   否则会把"当时显示的那一页"存进去、真正要关的这一页反而没保存。
+4、打开方案的行为不变：仍然是"追加 + 内容指纹去重"（单页文件就是追加一个页面）；
+   老的多页方案文件依然能整篇读进来（向后兼容）。
+
+验证（2026.10.2 23:20，全部实跑）：
+1、py_compile 十个源文件 exit 0；
+2、无头冒烟 16 项全 PASS：
+   · 3 页（页A/页B/页C）→ 切到页B → 点"保存项目"：文件里**只有 1 页**且就是页B，
+     页A/页C 不在文件里；页B 的节点/连线/参数都在；current_page = 0；
+   · 切到页C 再存到同一个文件：文件里还是 1 页、内容是页C；
+   · 打开一个"工作区里没有的"单页方案：只追加 1 页；再打开一次 → 去重不新增
+     （提示"这个方案里的 1 页与当前工作区里已有的页面完全相同，没有新增页面"）；
+   · 老的多页方案（手写 2 页）仍能整篇读进来（追加 2 页）；
+   · 关闭"非当前页"且选"保存"：弹了一次提醒、页面被关掉，
+     **存进方案文件的是要关的那一页**（不是当时显示的那一页）；
+   · 回归：坏 JSON 仍返回 False + 提示 + 不动现场。
+3、说明：这次头一遍跑测试时前三项报"失败"，其实是**测试脚本的预期写错了**——
+   ① 文件里那一页（页C）当时就在工作区里开着，去重把它跳过了，我却断言"应该 +1 页"；
+   ② 中途加载过另一个方案文件，project_path 已经切到那个文件，
+      关闭时保存写进了那一个，而脚本还在读旧的那个。把预期改对之后 16 项全过。
+
+遗留 / 后续待办：
+· 用户现有的 方案1/2/3.vfproj 都是老的"整工作区"格式（多页）：打开仍会把里面的页全部追加进来。
+  需要的话可以把它们**拆成"一页一个文件"**（一次性小脚本即可）。
+· "保存到哪个文件"目前只有一个"当前方案路径"：关闭别的页时选"保存"，会写进当前方案文件。
+  若要更严格（每一页记住自己来自哪个文件），得给页面加一个 project_path 字段，后续可做。
+· 批次4 剩下三件：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_single_page_save\
+   （main.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2324\
+   （作为下一轮改动的 before）
+
+
+2026.10.2 23:38
+存在问题：用户先"导入方案3"（那个页面记下了方案3.vfproj），然后**新建了一个 Flow 页面**；
+   在这个新页面上点"保存项目"时没有弹选路径窗口，而是**直接把方案3.vfproj 覆盖成了新页面的内容**。
+   原因：方案文件路径当时是**窗口级**的一个变量（self.project_path）——
+   导入方案3 时它被设成方案3.vfproj，之后新建的页面也共用这一个变量，
+   于是"保存"就写回了方案3 的文件。按现在的语义（一个文件 = 一页），
+   路径应该**按页面**记：新建的页面没有文件，保存时必须弹窗让用户选路径。
+   （同一族还有第二个问题：保存一页时原来调的是 mark_all_clean()，
+    把**所有**页面的"未保存改动"标记都清掉了——另一个脏页面因此会被静默关掉、丢掉改动。）
+
+修改：
+一、方案文件路径改成"按页面记"（main.py + FlowPages.py）
+1、FlowPages._register_page()：页面记录里加 "project_path": None（新建页 = 还没有文件）。
+2、main.py 删掉窗口级的 self.project_path，统一用 page["project_path"]：
+   · save_project()：当前页有路径就写回它自己的文件；没有（新建页）就走 save_project_as() 弹窗选路径；
+   · save_project_as()：默认文件名仍取"当前页的标签名"，已有路径时用那个文件名；
+   · _write_project_file(path)：成功后把 path 记到**当前页**上，并且只 clear_dirty(当前页)；
+   · _update_project_title()：标题显示"当前页对应的方案文件"，没有就显示"未保存的方案"；
+   · _on_flow_page_switched()：换页之后刷新标题（每页各有自己的方案文件）；
+   · load_project() / _apply_project(model, data, project_path)：把"来自哪个文件"记到新追加的每一页上。
+3、效果：新建页第一次保存必弹选路径；已有文件的页面保存不再弹窗、写回自己的文件；
+   别的页面对应的文件绝不会被覆盖。
+
+二、文件位置整理（按用户要求）
+1、**当前版本**的设计方案移到工程 plan\ 下（并覆盖那里那份旧的）：
+   E:\opencv_python_3_8\PySide\VisionFlowNoed\plan\VisionFlowNode_批次4技术方案_v1.1_2026.10.2.md
+2、**以往版本**留在 E:\opencv_python_3_8\backups\：VisionFlowNode_批次4技术方案_2026.10.2.md（v1.0）
+3、界面预览截图整个目录搬走：工程\_ui_preview → E:\opencv_python_3_8\backups\_ui_preview
+   （以后截图直接存到这个新位置，不再往工程目录里放）
+
+验证（2026.10.2 23:35，全部实跑）：
+1、py_compile 十个源文件 exit 0；
+2、无头冒烟 21 项全 PASS，关键项：
+   · 第一次保存（页面还没有文件）→ 弹了选路径窗口、文件生成、页面记住该文件、标题显示文件名；
+   · **复现用户场景**：导入方案3 后新建 Flow 页 → 点"保存项目" → 弹了选路径窗口（以前是直接覆盖），
+     新文件按选择生成，**方案3.vfproj 内容一字未改**，方案3 页面自己的路径也没被改写；
+   · 切回方案3 页保存 → 不弹窗、写回它自己的文件；Flow 页的文件没被动；标题跟着当前页走；
+   · 只清"刚存的那一页"：存 Flow 页之后 Flow 变干净，**方案3 页仍然算'有未保存改动'**；
+   · 打开进来的页面会记住"来自哪个文件"（切到它时标题显示该文件）；
+   · 回归：去重不新增、坏 JSON 返回 False + 提示 + 不动现场。
+3、文件布局核对：plan\ 只有当前版本；backups\ 有 v1.0（以往版本）+ _ui_preview；工程里已无 _ui_preview。
+
+遗留 / 后续待办：
+· 页面标签名与文件名仍"各管各的"：把某页"另存为"到新文件名之后，标签名不会跟着改（后续可做）。
+· 批次4 剩下三件：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_page_project_path\
+   （main.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2338\
+   （作为下一轮改动的 before）
+
+
+2026.10.2 23:50
+存在问题（用户提问）：按"往期技术文档放 backups、最新放 plan"整理之后，用户发现 backups 里只有一个 .md，
+   问"往期不是修改了几个版本的吗"。
+   事实核查：这个方案文档**只单独存过两个文件**——v1.0 原版（26182 字节）和 v1.1"另存版"；
+   之后每次改方案（加载去重 / 单页保存 / 按页面记路径）都是在 v1.1 那一份里**就地更新**，
+   只在文档的"变更说明"里累加条款（v1.1.1 / v1.1.2 / v1.1.3），并没有每改一次就另存一个新文件。
+   而刚才整理目录时，我又把 v1.1 **移动**（而不是复制）到了 plan\，于是 backups 里就只剩 v1.0 一份。
+
+修改（文件整理 + 定下版本快照约定）：
+1、backups 里那份 v1.0 的文件名补上版本号：VisionFlowNode_批次4技术方案_v1.0_2026.10.2.md（内容未动）。
+2、把 plan\ 里当前那一份复制到 backups 存档：
+   backups\VisionFlowNode_批次4技术方案_v1.1.3_2026.10.2.md（与 plan\ 内容一致，已用哈希核对）；
+   同时把文档头的"文档版本"写成 **v1.1.3**，并注明历次修订在"变更说明"第 1~6 条。
+3、**定下归档约定（写进文档头）**：以后**每改一次方案，先在 backups 里存一份带版本号的快照**
+   （v1.1.4、v1.2…），plan\ 里始终只放"当前这一份"；这样 backups 会按版本排开一串历史文件。
+4、（用户的决定）v1.1 / v1.1.1 / v1.1.2 三个中间态**不还原**——它们当时被就地更新覆盖了，
+   彼此只差"变更说明"里那几条与 §3.4 / §3.6 的几行；从 v1.1.4 起每版都有快照。
+
+验证 / 结果（2026.10.2 23:50）：
+· backups\ 2 份：v1.0（26182 字节，文档版本行仍是 v1.0，原版未动）+ v1.1.3（= plan\ 当前内容）
+· plan\ 1 份：VisionFlowNode_批次4技术方案_v1.1_2026.10.2.md（内容 = v1.1.3）
+· 布局与用户要求一致：当前版本在工程 plan\，历史版本在 E:\opencv_python_3_8\backups
+
+
+2026.10.2 23:56
+总结：批次4 目标1「方案持久化（.vfproj 保存 / 加载）」整体总结
+   （共 1 次首版落地 + 4 次按用户实测反馈返工 + 1 次文件归档整理；对应日志条目：
+     21:43 首版、22:57 追加语义 / 两个按钮 / 关闭提醒、23:13 加载去重、23:24 一个文件一页、
+     23:38 路径按页面记 + 文件位置整理、23:50 文档归档约定）
+
+一、原定方案（见 plan\VisionFlowNode_批次4技术方案_v1.1_2026.10.2.md 第 3 节）的落地情况
+   1、文件格式：JSON / UTF-8 / 缩进 2；format = "VisionFlowNode.project"、version = 1、
+      saved_at、current_page、last_source、pages[]；节点存 id(页内序号) / name / x / y /
+      input_source / params，连线存 [起点 id, 终点 id] —— 与原方案一致。
+   2、功能：save_project / save_project_as / _write_project_file / open_project /
+      load_project / _collect_project / _apply_project 全部落地；菜单"方案"三项
+      （打开方案… / 保存方案 / 另存为…）落地。
+   3、加载安全性：**先解析校验、全部通过之后才动界面**（坏文件不破坏现场）—— 按方案做足。
+   4、参数语义：只存"当前图片那一份"参数（因为归档键是 id(原图)、跨进程不可复现），
+      另用 last_source 记下它属于哪张图 —— 即方案文档里决策 a 的推荐做法。
+
+二、返工记录（4 次，全部由用户实测反馈触发）
+   1、首版"打开方案"是"清空所有页面 → 按文件重建"，用户有多个页面时一打开就只剩方案里的页
+      → 改成**追加**：FlowPages.reset_pages() 换成 append_pages(titles)
+      （插在"+"标签前、已有页面一律保留、重名加 (2)），并删掉不再使用的 reset_pages。
+   2、用户自己在 main.ui 里加了两个按钮 → 改名 save_project_button / open_project_button，
+      接到与菜单**同一套**实现；同一轮还做了**关闭页面提醒保存**：每页记 page["dirty"]，
+      FlowPageManager._remove_page() 关页前回调 on_page_close_requested(page)，
+      main 的 _confirm_close_flow_page() 弹"保存 / 不保存 / 取消"（自带中文按钮）。
+   3、"保存方案 → 再打开这个文件"页面翻倍（3 → 6 → 9，标签出现 Flow(2)、Flow8(2)…）
+      → 加**内容指纹去重**：_fingerprint_value（数值统一 round 4 位）、_page_fingerprint、
+      _model_page_fingerprint；加载时跳过与工作区已有页完全相同的页，全跳过就只提示
+      "没有新增页面"；指纹不同（用户改过）则不跳过，避免覆盖用户的修改。
+   4、打开"方案2.vfproj"会把方案1、方案3 一起带出来（该文件里其实存了 4 页：保存那一刻
+      工作区里正开着那几页）→ **一个文件只装当前这一页**：新增 _collect_page() 收一页，
+      _collect_project() 只收当前页，pages 长度恒 1、current_page 恒 0，
+      "另存为"的默认文件名取当前页的标签名。
+   5、导入方案3 后**新建**一页、在新页上点保存，直接把方案3 的文件覆盖了 → **方案路径按页面记**
+      （page["project_path"]），删掉窗口级的 self.project_path：新建页保存必弹选路径，
+      已有文件的页面静默写回自己的文件；顺带修掉"保存一页却把**所有**页面的未保存标记
+      都清掉"的隐患（改成只 clear_dirty(当前页)）。
+
+三、收尾修复 / 连带改动
+   1、双击节点的三个参数窗口合并成 _open_node_dialog()，关闭时比较参数快照
+      （_mark_dirty_if_params_changed）再决定要不要标记"有改动"。
+   2、update_all_edges() 加 try/except RuntimeError：跳过已被 Qt 销毁的残引用（场景 clear 之后）。
+   3、窗口标题改为显示"当前页对应的方案文件"（没有则"未保存的方案"），换页时刷新。
+   4、文件归档整理（按用户指定）：当前版本方案放工程 plan\；历史版本 + 备份 + 界面截图
+      （_ui_preview）放 E:\opencv_python_3_8\backups；并定下"每改一版先在 backups 存一份
+      带版本号的快照"。
+
+四、涉及文件
+   · main.py：方案持久化全套 + 去重 + 按页面记路径 + 关闭提醒 + 双击路由合并（改动主体）
+   · FlowPages.py：append_pages()、页面字段 dirty / project_path、mark_dirty / clear_dirty /
+     mark_all_clean / has_dirty_pages、on_page_close_requested 回调
+   · main.ui：新增"方案"菜单（3 项）；顶部两个按钮改名
+   · pyside6.txt：6 条改动日志 + 本条总结
+   · plan\VisionFlowNode_批次4技术方案_v1.1_2026.10.2.md：方案文档 v1.1（内部修订到 v1.1.3）
+   · E:\opencv_python_3_8\backups：10 个 before / after 备份目录 + _ui_preview 截图
+
+五、验证（全部实跑，累计 132 项断言全 PASS）
+   · 46 项（首版往返 / 容错 / 脏数据）→ 35 项（追加语义 / 两个按钮 / 关闭提醒）
+     → 14 项（加载去重）→ 16 项（一个文件一页）→ 21 项（路径按页面记）
+   · 每轮另跑：py_compile 十个源文件、main.ui 的 XML 校验
+   · 界面截图 3 张（方案菜单、顶部按钮、重开同一文件后的标签栏），现在都在 backups\_ui_preview
+   · 关键回归：坏 JSON / 格式不符 / 版本过新 / pages 为空 / 未注册算子 / 悬空与自环连线 /
+     自己绑定自己 —— 一律"返回 False + 提示 + 不动现场"；老的多页方案仍能整篇读入
+
+六、回退点（每个子步骤都有 before / after，均在 E:\opencv_python_3_8\backups）
+   before_project_persist → at_20261002_2143 → before_append_pages_and_buttons → at_2257
+   → before_project_dedupe → at_2313 → before_single_page_save → at_2324
+   → before_page_project_path → at_2338
+
+七、遗留 / 后续待办
+   1、待用户拍板（已提过、尚未回）：① 是否把 E:\opencv_python_3_8\save_test 里 4 个老的
+      多页方案拆成"一页一个文件"；② "另存为"之后是否同步改页面标签名；③ 关**整个程序窗口**
+      时要不要提醒未保存；④ 打开方案时是否先问"清空还是追加"（现在固定为追加）。
+   2、已知限制：参数只存"当前图片那一份"（要支持多图多套参数，得先把归档键从 id(原图)
+      改成文件名 / 路径）；视图缩放 / 平移（_zoom_states）不入方案。
+   3、批次4 剩下三件（M2 / M3 / M4）：算子扩充 + 通用参数窗口、独立"图像源"节点、参数校验；
+      决策 b（通用动态窗口 vs 每算子单独 .ui）/ c（图像源并存 vs 取代）/
+      d（校验混合 vs 一律拦住）/ e（灰度是否移到"处理"分组）仍待拍板。
+
+
+
+
+
+
 
 
 

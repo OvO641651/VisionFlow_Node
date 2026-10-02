@@ -97,7 +97,7 @@
            </size>
           </property>
           <property name="text">
-           <string>打开</string>
+           <string>打开文件</string>
           </property>
          </widget>
         </item>
@@ -136,6 +136,44 @@
           </property>
           <property name="text">
            <string>连续执行</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="save_project_button">
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>保存项目</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="open_project_button">
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="text">
+           <string>导入项目</string>
           </property>
          </widget>
         </item>
@@ -356,7 +394,7 @@
       <x>246</x>
       <y>116</y>
       <width>117</width>
-      <height>90</height>
+      <height>69</height>
      </rect>
     </property>
     <property name="font">
@@ -369,7 +407,21 @@
     </property>
     <addaction name="action"/>
    </widget>
+   <widget class="QMenu" name="menu_project">
+    <property name="font">
+     <font>
+      <pointsize>9</pointsize>
+     </font>
+    </property>
+    <property name="title">
+     <string>方案</string>
+    </property>
+    <addaction name="action_open_project"/>
+    <addaction name="action_save_project"/>
+    <addaction name="action_save_project_as"/>
+   </widget>
    <addaction name="menu"/>
+   <addaction name="menu_project"/>
   </widget>
   <action name="action">
    <property name="text">
@@ -377,6 +429,21 @@
    </property>
    <property name="font">
     <font/>
+   </property>
+  </action>
+  <action name="action_open_project">
+   <property name="text">
+    <string>打开方案…</string>
+   </property>
+  </action>
+  <action name="action_save_project">
+   <property name="text">
+    <string>保存方案</string>
+   </property>
+  </action>
+  <action name="action_save_project_as">
+   <property name="text">
+    <string>另存为…</string>
    </property>
   </action>
  </widget>
