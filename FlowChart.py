@@ -61,21 +61,32 @@ class NodeItem(QObject, QGraphicsRectItem):
         super().mouseDoubleClickEvent(event) # 传递给父类
 
 
-    def contextMenuEvent(self, event):
-        """右键点击节点时弹出菜单，实现删除方框"""
+    def _make_context_menu(self):
+        """
+        组装右键菜单，返回 (menu, 菜单项字典)。
+
+        菜单里只有"删除节点"：灰度的"作用于整图"已经挪到它自己的参数窗口里了。
+        单独抽成函数是为了能自动化测试（不必真的弹菜单等用户点）。
+        """
         menu = QMenu()
-        delete_action = QAction("删除节点", menu)
-        menu.addAction(delete_action)
+        actions = {"delete": QAction("删除节点", menu)}
+        menu.addAction(actions["delete"])
+        return menu, actions
+
+    def contextMenuEvent(self, event):
+        """右键点击节点时弹出菜单：删除节点"""
+        menu, actions = self._make_context_menu()
 
         # 在鼠标点击的屏幕位置弹出菜单
         action = menu.exec_(event.screenPos())
+        if action is None:
+            return
 
-        if action == delete_action:
-            # 触发删除，通过视图寻找主窗口执行删除逻辑
-            if self.scene() and self.scene().views():
-                view = self.scene().views()[0]
-                if hasattr(view, 'main_window'):
-                    view.main_window.delete_flow_node(self)
+        if action == actions.get("delete"):
+            # 通过场景和视图找到主窗口，把删除交给它处理
+            view = self.scene().views()[0] if (self.scene() and self.scene().views()) else None
+            if view is not None and hasattr(view, 'main_window'):
+                view.main_window.delete_flow_node(self)
 
 
     def paint(self, painter, option: QStyleOptionGraphicsItem, widget=None):

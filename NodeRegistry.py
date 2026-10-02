@@ -46,7 +46,7 @@ KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果
 class NodeSpec(object):
     """一个算子的能力声明"""
 
-    def __init__(self, name, kind, run, draw=None, format_result=None):
+    def __init__(self, name, kind, run, draw=None, format_result=None, whole_image_param=None):
         """
         :param name: 算子名字（和左侧树、流程图上方框里的文字一致）
         :param kind: KIND_PROCESS 或 KIND_DETECT
@@ -54,12 +54,16 @@ class NodeSpec(object):
                     roi 是 (x, y, w, h)，都是原图坐标
         :param draw: draw(display_img, results, params)，只画显示层；处理类不需要
         :param format_result: format_result(results) -> str，执行日志"结果数据"那一列
+        :param whole_image_param: 参数名。该参数为真时这个算子忽略 ROI、作用于整幅图，
+                                  引擎会把它的 ROI 当成整图（做到"所见即所算"）。
+                                  目前只有灰度用它（gray_full_image）。
         """
         self.name = name
         self.kind = kind
         self.run = run
         self.draw = draw
         self.format_result = format_result
+        self.whole_image_param = whole_image_param
 
     @property
     def modifies_image(self):
@@ -79,12 +83,18 @@ def _run_gray(detector, img, roi, params):
 
     为什么返回 3 通道：数据层的图像要交给下游算法继续用（cv2.line/circle 都要求
     3 通道），单通道图会把后面的算子弄崩。
+    参数 gray_full_image = True 时不看 ROI，整幅图都转灰度（下游拿到的就是全灰的图）。
     """
-    x, y, w, h = roi
     out = img.copy()
     if out.ndim == 2:
         # 万一上游给的是单通道图，先补成 3 通道，保证和下游算法一致
         out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+
+    if params.get("gray_full_image", False):
+        # "作用于整图"：忽略 ROI，整幅图都转灰度
+        return detector.gray_bgr(out), []
+
+    x, y, w, h = roi
     patch = out[y:y + h, x:x + w]
     out[y:y + h, x:x + w] = detector.gray_bgr(patch)
     return out, []
@@ -170,7 +180,8 @@ def _format_circle(results):
 # 注册表
 # ----------------------------------------------------------------------
 NODE_SPECS = {
-    "灰度": NodeSpec("灰度", KIND_PROCESS, _run_gray, None, _format_gray),
+    "灰度": NodeSpec("灰度", KIND_PROCESS, _run_gray, None, _format_gray,
+                    whole_image_param="gray_full_image"),
     "直线": NodeSpec("直线", KIND_DETECT, _run_line, _draw_line, _format_line),
     "圆": NodeSpec("圆", KIND_DETECT, _run_circle, _draw_circle, _format_circle),
 }

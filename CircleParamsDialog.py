@@ -120,6 +120,13 @@ class CircleParamsDialog(LineParamsDialog):
         else:
             self.roi_draw.setChecked(True)
 
+        # 继承时向外扩的像素数（默认 0 = 与上游完全重合）
+        if self.spin_roi_margin:
+            self.spin_roi_margin.setValue(params.get("roi_margin", 0))
+
+        # "继承自"（默认继承上游的 ROI 框）
+        self._set_roi_source_to_ui(params.get("roi_source", "roi"))
+
         if self.cb_hide_roi:
             self.cb_hide_roi.setChecked(params.get("hide_roi", False))
 
@@ -145,6 +152,10 @@ class CircleParamsDialog(LineParamsDialog):
 
         # 保存"ROI创建"的选择（继承 = 用上游结果的包围盒当 ROI）
         self.node.params["roi_inherit"] = self.roi_inherit.isChecked()
+        if self.spin_roi_margin:
+            self.node.params["roi_margin"] = self.spin_roi_margin.value()
+        if self.combo_roi_source:
+            self.node.params["roi_source"] = self._roi_source_from_ui()
 
         # 图像源绑定也顺手存一次（数据流引擎里这个节点从谁的图像输出开始算）
         self._save_input_source()

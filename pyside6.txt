@@ -2000,6 +2000,529 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
    且 else 分支是 pass —— 确认双击灰度是静默无反应，不会再弹窗。
 
 
+2026.10.2 16:00
+存在问题：批次2 的体验项，两处：
+1、显示底图固定取"最后一个执行节点的图像输出"，流程图一旦有分叉、或者只想看某个中间节点的
+   处理结果，画面永远只显示最后那一步的图（VisionMaster 里是"点哪个模块就看哪个模块的输出图像"）；
+2、勾了"ROI 创建 = 继承"的节点，在单步执行、或者上游这一轮没检出东西时，会静默退回手绘 ROI，
+   用户完全看不出继承到底生效没有。
+
+修改：
+一、显示底图改成"点谁看谁"（main.py 的 _run_flow_pipeline 第 5 步）
+   底图取"当前选中的节点"的图像输出，叠加（各节点结果 + ROI 框）也只画到它为止；
+   没选中节点、或者选中的节点这一轮没执行（不在这一页 / 没连线），就退回原来的行为（最后一个执行节点）：
+        # 5、渲染层：底图取"当前选中的节点"的图像输出（点谁看谁），叠加也只画到它为止；
+        #    没选中、或者选中的节点这一轮没执行，就退回用最后一个执行节点的输出（原来的行为）。
+        base_node = self.selected_node
+        if base_node in out_images:
+            shown = executed[:order.index(base_node) + 1]
+        else:
+            base_node = order[-1]
+            shown = executed
+        display = self._render_display(out_images[base_node], shown)
+   效果：选中"灰度"再点连续执行，画面就是"灰度这一步的灰度图 + 画到灰度为止的 ROI 框"；
+         不选中时行为与以前完全一致。执行日志表格仍然列出全部执行的节点，不受影响。
+
+二、"ROI 继承未生效"必须在日志里看得见（main.py 的 _format_result_text）
+   这里只能用日志文案、不能弹窗——单步执行和视频每一帧都会走到这个方法：
+        text = spec.format_result(results)
+        if node.params.get("roi_inherit", False) and not roi_info[6]:
+            # 勾了继承但没继承成功：上游这一轮没有结果（或上游是处理类算子、本来就没有结果）
+            text += "  ← ROI 继承未生效：上游没有结果，已退回手绘 ROI"
+        return text
+   效果：日志"结果数据"列会写成"检测到0个圆  ← ROI 继承未生效：上游没有结果，已退回手绘 ROI"。
+
+未做（等确认）：
+· 2.4 roi_margin（继承 ROI 时向外扩的像素数，默认 20）加界面控件：**.ui 里的 ROI 参数区是"固定几何"**
+  （roi_params_widget 写死了 x/y/w/h、不在布局管理器里），直接插第 5 行会被裁掉，
+  必须同时调几何高度、或者把这一块改成用布局管理器。这牵扯整个对话框的排版，先不动。
+  要做的话二选一：
+  (a) 你在 Qt 设计师里把 ROI 参数区改成长宽自适应的布局，我再往里加控件（推荐，设计师里可见）；
+  (b) 我用代码创建控件并自动把容器撑高（缺点是设计师里看不到这个控件，和"设计器与代码一致"的原则相悖）。
+· 2.5 灰度加"作用于整图 / 仅 ROI"开关：目前灰度只处理自己的 ROI（下游可见范围同理），
+  是否要整图模式等你定。
+
+验证（2026.10.2 16:00，全部实跑）：
+1、py_compile 九个源文件 exit 0；
+2、无头冒烟测试 11 项全 PASS：
+   · 2.1a 没选中节点 -> 叠加仍是 ["灰度","直线","圆"]（原行为不变）
+   · 2.1b 选中灰度 -> 叠加只剩 ["灰度"]（只画到它为止）
+   · 2.1c 底图确实换成了灰度节点的输出（R=G=B 全等，是灰度图）
+   · 2.1d 选中圆 -> 叠加恢复成三个节点
+   · 2.3a 勾了继承但上游没结果 -> 日志带"← ROI 继承未生效：上游没有结果，已退回手绘 ROI"
+   · 2.3b/2.3c 继承生效时、没勾继承时都不加多余提示
+   · 回归：连续执行 3 行 5 元组日志、越界 ROI 仍被裁成 0 尺寸、
+     单步执行仍返回 3 个值 + 1 行日志
+
+
+2026.10.2 16:15
+存在问题：批次2 剩下的两项（用户已确认做法）：
+1、roi_margin（ROI 创建选"继承"时向外扩多少像素，默认 20）只能改代码/参数，界面上没有控件；
+2、灰度节点只处理自己那块 ROI，下游拿到的"灰度图"也只有那一小块是灰的，
+   没有"作用于整图"的开关。
+
+修改：
+一、2.4 给"继承"加一个"外扩"控件（走方案 a：直接改 .ui）
+1、LineParamsDialog.ui：在 ROI区域 的"屏蔽形状"和"位置修正"之间插入一行
+   "外扩:" + QSpinBox(spin_roi_margin)，范围 0~1000、默认 20，并带 tooltip 说明。
+   这一行刻意放在"ROI创建/形状/屏蔽形状/位置修正"这一组里（不是 XYWH 那一组）：
+   因为 XYWH 在选"继承"时是要被隐藏的，而"外扩"恰恰只有"继承"才用得上。
+2、LineParamsDialog.py：取控件、读写参数、并按"绘制/继承"显示或隐藏这一行：
+    def _set_roi_margin_visible(self, visible):
+        """显示 / 隐藏"外扩"这一行（只有 ROI 创建 = 继承 时才用得上）"""
+        if self.label_roi_margin:
+            self.label_roi_margin.setVisible(visible)
+        if self.spin_roi_margin:
+            self.spin_roi_margin.setVisible(visible)
+   _load_params() 读 params["roi_margin"]（默认 20）；_update_params() 写回；
+   _update_roi_params_visibility() 在"绘制"时隐藏这一行、"继承"时显示。
+3、CircleParamsDialog.py 重写了这两个方法，所以同样补了 roi_margin 的读写。
+   说明：.ui 里 roi_params_widget 是"固定几何"（写死 x/y/w/h），本来担心多一行会被裁掉，
+   截图确认它下面还有空余高度，这次不用改几何；下次再往这一段加控件仍要先看这里。
+4、插入位置第一次插错了（插到了"位置修正"那个 <item> 内部，一个 item 里出现两个子元素），
+   已经把 <item> 的位置调正 —— .ui 的 item 里只能有一个子元素，这点以后要小心。
+
+二、2.5 灰度加"作用整图（忽略 ROI）"开关
+1、NodeRegistry.py：NodeSpec 增加声明字段 whole_image_param；灰度的 spec 声明
+   whole_image_param="gray_full_image"。_run_gray() 在这个参数为真时忽略 ROI、整幅图转灰度：
+        if params.get("gray_full_image", False):
+            # "作用于整图"：忽略 ROI，整幅图都转灰度
+            return detector.gray_bgr(out), []
+2、main.py：_resolve_roi() 也认这个声明 —— 参数打开时 ROI 直接按整幅图返回，
+   这样日志和黄色 ROI 框显示的就是算法真正处理的范围（"所见即所算"）：
+        spec = get_spec(node.name)
+        whole_key = getattr(spec, 'whole_image_param', None) if spec is not None else None
+        if whole_key and params.get(whole_key, False):
+            return 0, 0, img_w, img_h, roi_shape, False
+3、入口放在节点右键菜单（FlowChart.py）。为什么不是双击：用户明确要求"双击灰度保持无反应"，
+   所以给右键菜单加一个可勾选项。顺带把菜单组装抽成 _make_context_menu()，方便自动化测试：
+    def _make_context_menu(self):
+        """组装右键菜单，返回 (menu, 菜单项字典)。单独抽出来是为了能自动化测试。"""
+        ...
+        spec = get_spec(self.name)
+        if spec is not None and spec.whole_image_param:
+            menu.addSeparator()
+            scope = QAction("灰度作用整图（忽略 ROI）", menu)
+            scope.setCheckable(True)
+            scope.setChecked(bool(self.params.get(spec.whole_image_param, False)))
+            menu.addAction(scope)
+            ...
+   勾选/取消后回调主窗口 toggle_gray_scope()：翻参数 + 立刻重算
+   （静态图片调 _execute_static("continuous")，视频调 update_frame()），马上能看到效果。
+   参数存在 node.params 里，所以同样是"按图片分别记"的。
+
+验证（2026.10.2 16:11，全部实跑）：
+1、main.ui 与 LineParamsDialog.ui 都用 xml.etree 解析通过；py_compile 九个源文件 exit 0；
+2、无头冒烟测试 20 项全 PASS，关键项：
+   · 2.4a~2.4d：找到 spin_roi_margin、默认 20、存进 node.params(33)、从 node.params 读回(47)
+   · 2.4e/2.4f：绘制模式隐藏"外扩"行、继承模式显示
+   · 2.5a/2.5b：整图模式 ROI=整幅图(0,0,640,480)；非整图模式 ROI 仍用参数(10,10,50,50)
+   · 2.5c~2.5e：整图模式整幅图都变灰；仅 ROI 模式 ROI 内变灰、ROI 外仍是彩色
+   · 2.5f~2.5i：灰度右键菜单有"作用整图"且可勾选，直线节点没有，两者的"删除节点"都还在
+   · 2.5j/2.5k：toggle_gray_scope 连切两次结果正确
+   · 回归：连续执行 3 行 5 元组日志、越界 ROI 仍被裁成 0 尺寸
+3、界面截图（用 dialog.grab() 抓的，放在工程的 _ui_preview/ 目录）：
+   · roi_dialog_inherit.png：继承模式 —— "外扩: 47"正常显示，XYWH 已隐藏，没有裁掉/重叠
+   · roi_dialog_draw.png：绘制模式 —— "外扩"行隐藏，XYWH 与"框选/ROI参数 ▲"按钮正常
+   · menu_gray_node.png：灰度节点右键菜单 —— "删除节点" + "✓ 灰度作用整图（忽略 ROI）"
+   （截图里单选按钮的圆点是上一次状态的残留渲染，属 grab() 时序，实测的 isVisible() 断言是对的。）
+
+如何回退（如果效果不合适）：
+1、文件级备份（改动前的 6 个文件）：
+   E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_before_2.4_2.5\
+   （main.py / NodeRegistry.py / FlowChart.py / LineParamsDialog.py / LineParamsDialog.ui / CircleParamsDialog.py）
+   把这 6 个文件拷回工程 = 回到本次改动之前。
+2、或者走 git：先 git diff 看差异；要退回上一次提交用 git checkout -- <文件>
+   （当前 HEAD = 批次3 那次提交；注意本次还带着未提交的批次2 改动）。
+
+
+2026.10.2 16:30
+存在问题（用户实测反馈 + 复现确认）：
+1、流程"直线 -> 灰度 -> 直线"里，右键灰度节点勾选 / 取消"灰度作用整图"，检测结果完全一样，
+   都是整幅图变灰。复现数据：灰度节点参数 = {}（空），"仅 ROI"模式下它解析出的 ROI
+   就是 (0,0,512,512) 整幅图，输出也整幅是灰的 —— 两种模式的 ROI 完全相同。
+   原因：灰度节点没有参数窗口（当时双击是"无反应"），它的 ROI 参数永远是空的，
+   而引擎在参数缺失时默认按整幅图处理（roi_w = params.get("roi_w", img_w)），
+   所以"仅 ROI"本来就等于"整图"，那个开关形同虚设。
+2、用户要求：给灰度做一个**独立的参数窗口**，把"作用整图"放进窗口里；
+   右键菜单只保留"删除节点"。
+
+修改：
+一、新增 GrayParamsDialog.py（灰度的独立参数窗口）
+   继承 LineParamsDialog、共用同一份 .ui（和 CircleParamsDialog 一个路子），差别只有四点：
+1、标题改成"灰度"；
+2、隐藏"运行参数"页（Canny / Hough 参数对灰度没意义）：
+        if self.ui.tabWidget.count() > 1:
+            try:
+                self.ui.tabWidget.setTabVisible(1, False)
+            except AttributeError:
+                # 老版本 Qt 没有 setTabVisible()，干脆把这一页移除
+                self.ui.tabWidget.removeTab(1)
+3、把"作用于整图"勾选框显示出来并接信号（在共享 .ui 里它默认是隐藏的）；
+4、勾上"作用于整图"时把 ROI 参数区与"框选"按钮置灰，免得用户以为 ROI 还有用：
+    def _on_gray_full_toggled(self, checked):
+        if self.roi_params_widget:
+            self.roi_params_widget.setEnabled(not checked)
+        if self.btn_select:
+            self.btn_select.setEnabled(not checked)
+   _load_params() / _update_params() 里调 super() 之后补上 gray_full_image 的读写
+   （参数还是存 node.params，所以同样"按图片分别记"）。文件末尾留了独立测试入口。
+
+二、LineParamsDialog.ui：在"屏蔽形状"和"位置修正"之间加一行勾选框
+       <widget class="QCheckBox" name="cb_gray_full_image">  文字"作用于整图"
+       带 tooltip："勾上：整幅图都转灰度、忽略 ROI；不勾：只把 ROI 那块区域转灰度"
+   （仍然是插在"ROI创建/形状/屏蔽形状/位置修正"这一组里，锚在目标行的 <item> 上，
+     没有出现上次那种 item 套两个子元素的问题。）
+
+三、LineParamsDialog.py：找到这个勾选框并默认隐藏（直线 / 圆的窗口里不该出现灰度专属选项）：
+        self.cb_gray_full_image = self.ui.findChild(QCheckBox, "cb_gray_full_image")
+        if self.cb_gray_full_image:
+            self.cb_gray_full_image.setVisible(False)
+
+四、main.py：双击灰度方框 -> 打开 GrayParamsDialog（和双击直线/圆一样）；
+   删掉已经没人用的 toggle_gray_scope()（那个是右键菜单时代的产物）。
+   "双击灰度保持无反应"这条旧要求由"人脸/颜色这些还没实现的模块"的 else 分支继续承担。
+
+五、FlowChart.py：右键菜单恢复成只有"删除节点"（去掉灰度那一项和 NodeRegistry 依赖），
+   仍然保留 _make_context_menu() 这个可测的组装函数。
+
+验证（2026.10.2 16:27，全部实跑）：
+1、main.ui 与 LineParamsDialog.ui 的 XML 校验通过；py_compile 十个源文件（含新的
+   GrayParamsDialog.py）exit 0；
+2、无头冒烟 18 项全 PASS，关键项：
+   · 灰度窗口标题 = "灰度"；"作用于整图"存在且可见；"运行参数"页已隐藏
+   · 直线窗口里同一个勾选框是隐藏的（互不干扰）
+   · 勾上 -> 存进 node.params（True）且 ROI 区置灰；取消 -> 读回 False 且 ROI 区恢复可用
+   · 勾上：ROI 解析成整幅图 (0,0,640,480)；不勾：ROI 用参数里那块 (100,100,200,150)
+   · 勾上：整幅图都灰；不勾：只有 ROI 内灰、ROI 外还是彩色（这才是开关该有的区别）
+   · 右键菜单只剩 ["delete"]
+   · 双击灰度会打开灰度参数窗口（用替身类验证调用，不弹真窗口）
+   · 回归：连续执行 2 行 5 元组日志；toggle_gray_scope 已从主窗口移除
+3、界面截图（_ui_preview/ 目录）：
+   · gray_dialog_off.png：未勾"作用于整图" —— 标签页只剩"基本参数/显示结果"，
+     ROI 区可用，X/Y/W/H = 100/100/260/220
+   · gray_dialog_on.png：勾上后 —— 勾选框打勾，ROI 参数区与"框选"按钮置灰
+
+如何回退（如果效果不合适）：
+1、文件级备份（改动前的 4 个文件）：
+   E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_before_gray_dialog\
+   （LineParamsDialog.ui / LineParamsDialog.py / main.py / FlowChart.py）
+   拷回工程，并删掉新增的 GrayParamsDialog.py = 回到本次改动之前。
+2、或走 git：git diff 看差异；git checkout -- <文件> 退回上一次提交。
+
+
+2026.10.2 16:40
+存在问题（用户发截图反馈）：
+1、灰度参数窗口的 UI 被挤压变形：ROI区域 这一组在 .ui 里是"绝对定位"——行组
+   （layoutWidget，写死高度 125，本来只放"ROI创建/形状/屏蔽形状/位置修正"4 行）
+   加上 2.4 的"外扩"、2.5 的"作用于整图"以后，行数会在 4~5 行之间变，
+   一旦变成 5 行就超出容器高度，行与行互相挤在一起（"位置修正""框选"被压得重叠）。
+2、"显示结果"页对灰度没有意义（灰度没有结果数据），应该去掉。
+
+修改：
+一、把 ROI区域 改成用布局管理器（根治"行数一变就挤"）
+1、LineParamsDialog.ui：两个控件重名（都叫 layoutWidget），findChild 只能拿到第一个，
+   所以先改成唯一名字：行组 -> roi_rows_widget；"框选 / ROI参数"那一行 -> roi_buttons_widget。
+2、LineParamsDialog.py：在代码里给这一组套一个垂直布局，把三块按视觉顺序排好：
+        self.roi_group_box = self.ui.findChild(QWidget, "groupBox_2")
+        self.roi_rows_widget = self.ui.findChild(QWidget, "roi_rows_widget")
+        self.roi_buttons_widget = self.ui.findChild(QWidget, "roi_buttons_widget")
+        if (self.roi_group_box is not None and self.roi_rows_widget is not None
+                and self.roi_buttons_widget is not None and self.roi_params_widget is not None):
+            roi_group_layout = QVBoxLayout(self.roi_group_box)
+            roi_group_layout.addWidget(self.roi_rows_widget)
+            roi_group_layout.addWidget(self.roi_buttons_widget)
+            roi_group_layout.addWidget(self.roi_params_widget)
+   这样做之后：行数变化（外扩/作用于整图出现、选"继承"时 XYWH 整块隐藏）高度会自动收缩，
+   三块也不会重叠 —— 实测行组高度 148 = 它布局需要的高度 148，继承模式整组从 386 收到 362。
+   说明：布局是在代码里加的，.ui 里这三块的绝对几何仍保留，所以 Qt 设计师里看到的还是
+   旧的绝对定位预览；如果希望设计师里也自适应，需要再做一次 .ui 结构重排
+   （把 XYWH 那一块移到文件末尾并整体改成布局项），本次先不动，避免大段搬 XML 出错。
+
+二、灰度窗口只留"基本参数"页（GrayParamsDialog.py）
+        # 运行参数（Canny/Hough）和显示结果（结果计数）对灰度都没有意义
+        for index in range(self.ui.tabWidget.count() - 1, -1, -1):
+            if self.ui.tabWidget.tabText(index) != "基本参数":
+                self.ui.tabWidget.removeTab(index)
+   倒着删避免索引错位；removeTab 不会删除页面里的控件，所以 _update_params() 和
+   update_result_count() 仍然能正常跑（已实测不崩）。
+
+验证（2026.10.2 16:35，全部实跑）：
+1、LineParamsDialog.ui 的 XML 校验通过；py_compile 十个源文件 exit 0；
+2、无头冒烟 23 项全 PASS，关键项：
+   · ROI 区有布局管理器、里面装着 行组/按钮组/XYWH 三块
+   · 行组没被压扁：高度 148 >= 它自己布局需要的高度 148
+   · 分组高度 386 >= 布局需要的高度 364
+   · 三块几何 (12,32,308,148) / (12,187,308,29) / (12,223,308,151)，从上到下不重叠、都在分组内
+   · 灰度窗口只剩 1 个标签页且标题是"基本参数"；被移除页里的控件仍可用
+   · 继承模式：XYWH 隐藏、"外扩"显示、整组高度 386 -> 362（自动收紧）、行组仍不被压扁
+   · 直线窗口仍有 3 个标签页、"作用于整图"仍隐藏（没被带坏）
+   · 存/读勾选状态、ROI 区置灰与恢复、外扩值、ROI 解析、连续执行回归都正常
+3、界面截图（_ui_preview/，全部重抓过）：
+   · gray_dialog_off.png：绘制模式、未勾整图 —— 行距正常、XYWH 正常、只有"基本参数"一页
+   · gray_dialog_on.png：勾上"作用于整图" —— 勾选框打勾、ROI 区与"框选"置灰
+   · gray_dialog_inherit.png：继承模式 —— XYWH 隐藏、"外扩: 20"显示、整组自动收紧
+   · roi_dialog_draw.png / roi_dialog_inherit.png：直线窗口（共用同一套 ROI 区，一并重抓）
+
+如何回退（如果效果不合适）：
+1、文件级备份（改动前的 3 个文件）：
+   E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_before_roi_group_layout\
+   （LineParamsDialog.ui / LineParamsDialog.py / GrayParamsDialog.py）拷回工程即可。
+2、或走 git：git diff 看差异；git checkout -- <文件> 退回上一次提交。
+
+
+2026.10.2 16:50
+存在问题（用户提的两个问题）：
+1、流程图 圆 -> 灰度 -> 直线，最后一个直线节点勾了"继承"、外扩 20，点连续执行后
+   整幅图都被检测、画满了直线。
+2、灰度节点（继承圆、外扩设成 0）解析出来的 ROI 框，和圆节点自己的 ROI 框不重合。
+
+原因分析（都用脚本复现过，下面是实测数字）：
+   圆   输入结果数=0 -> ROI=(100, 50, 300, 300)  继承=无     （它自己参数里手绘的那块 ROI）
+   灰度  输入结果数=1 -> ROI=(159, 139, 210, 210) 继承=结果   （圆检出结果 (264,244,105) 的包围盒）
+   直线  输入结果数=0 -> ROI=(0, 0, 512, 512)     继承=无     （退回自己的参数，而它没画过 ROI = 整幅图）
+1、问题一的真因是"继承链断了"：灰度是**处理类算子，它不产出任何结果数据**（results 为空），
+   result_bbox() 拿到空结果返回 None，引擎就按"上游没有结果"处理、退回本节点手绘 ROI，
+   而直线从来没画过 ROI → 默认整幅图 → 全图搜索、检出 64 条线。
+   日志里其实已经写了"← ROI 继承未生效：上游没有结果，已退回手绘 ROI"，
+   但"结果数据"那一列太窄被截断成"检测到64条直…"，所以没被看到。
+2、问题二不是 bug 而是语义：这里的"继承"继承的是**上游检出目标的包围盒**（结果数据流），
+   不是上游那个 ROI 框。所以外扩=0 时，(159,139,210,210)（圆找出来的那个圆的包围盒）
+   和 (100,50,300,300)（圆搜索用的 ROI）本来就不该重合。
+   界面上只写"继承"两个字，很容易被理解成"把上面那个框复制下来"，这才是误解的来源。
+
+修改（用户拍板：① 修继承链 ② 保持"结果包围盒"语义、只把文字说清楚）：
+一、继承链修复（main.py）
+1、_resolve_roi() 增加 in_roi 参数：勾了"继承结果"时先按上游结果算包围盒；
+   **上游没有结果数据时，改用上游那一轮实际用的 ROI 区域**，再加本节点的外扩。
+   这样中间夹着处理类算子（灰度）也不会断链：
+        if params.get("roi_inherit", False):
+            margin = int(params.get("roi_margin", 20))
+            bbox = result_bbox(in_results)
+            inherited = "result"
+            if bbox is None and in_roi is not None and in_roi[2] > 0 and in_roi[3] > 0:
+                # 上游没有结果数据（处理类算子，比如灰度）：直接继承它的处理区域
+                bbox = (in_roi[0], in_roi[1], in_roi[2], in_roi[3])
+                inherited = "region"
+2、_execute_node() 跟着多一个 in_roi 参数往下传；
+   _run_flow_pipeline() 里新增 roi_of = {} 记录"每个节点这一轮实际用的 ROI"，
+   执行前取 in_roi = roi_of.get(source_key) 交给下游。
+3、_resolve_roi() 返回值最后一位由布尔改成字符串，便于日志区分到底发生了什么：
+   ""=不是继承来的；"result"=继承上游结果的包围盒；"region"=继承上游的处理区域。
+   （渲染层仍按"是不是继承来的"决定洋红/黄色，两种继承都画洋红。）
+
+二、日志文案说清楚、并且写短（"结果数据"列容易被截断）
+        if node.params.get("roi_inherit", False):
+            if roi_info[6] == "region":
+                text += "  ← 上游无结果，ROI 用了它的处理区域"
+            elif not roi_info[6]:
+                text += "  ← 继承未生效（改用本节点 ROI）"
+
+三、界面文字澄清（LineParamsDialog.ui）
+1、单选按钮文字由 "继承" 改成 "继承结果"，并加 tooltip：
+   "用上游'检测结果'的包围盒当 ROI；上游是灰度这类处理类算子、没有结果时，
+    就用它实际处理的那块区域。外扩像素数在下面调"
+2、"外扩"的 tooltip 同步改成"选'继承结果'时，在上游结果（上游没有结果时用它的处理区域）
+   外再扩多少像素，默认 20"。
+
+验证（2026.10.2 16:47，全部实跑）：
+1、LineParamsDialog.ui 的 XML 校验通过；py_compile 十个源文件 exit 0；
+2、无头冒烟 15 项全 PASS —— 一个流程图里搭了 4 层继承：
+   圆 ->（直线A、灰度 ->（直线B、灰度2 -> 直线C）），实测解析结果：
+     圆    (100, 50, 300, 300)   ""
+     直线A (139, 119, 250, 250)  "result"   （= 圆结果包围盒 + 外扩 20，行为不变）
+     灰度  (159, 139, 210, 210)  "result"   （= 圆结果包围盒 + 外扩 0）
+     直线B (139, 119, 250, 250)  "region"   （= 灰度的处理区域 + 外扩 20；修复前是 (0,0,512,512)）
+     灰度2 (154, 134, 220, 220)  "region"   （= 灰度的处理区域 + 外扩 5）
+     直线C (154, 134, 220, 220)  "region"   （链一路传下去，没有断）
+   · 日志：直线B 那行带"← 上游无结果，ROI 用了它的处理区域"；直线A 不加多余说明
+   · 单步执行（没有上游）仍然提示"← 继承未生效（改用本节点 ROI）"
+   · 灰度"作用于整图"优先级更高（ROI = 整幅图、不算继承）
+   · 回归：越界 ROI 仍被裁成 0 尺寸、日志仍是 5 元组、"点谁看谁"仍生效
+3、截图：roi_dialog_inherit.png 已重抓，单选按钮显示"继承结果"。
+
+如何回退（如果效果不合适）：
+1、本次只改了 main.py 与 LineParamsDialog.ui，改动集中在 4 处
+   （_resolve_roi 的继承分支、_execute_node 的参数、_run_flow_pipeline 的 roi_of、
+     _format_result_text 的文案；.ui 里两处文字/tooltip）。说一声我直接改回去。
+2、本次改动之后的整体状态已快照到：
+   E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_at_20261002_1650\
+   （main.py / LineParamsDialog.ui / LineParamsDialog.py / GrayParamsDialog.py /
+     NodeRegistry.py / FlowChart.py / CircleParamsDialog.py）——
+   下一次改动前的回退点就用这一份。
+3、提醒：今天所有改动都还没提交（HEAD 仍是 11:26 那次"批次3"）。
+   建议按你的习惯提交一次，之后 git checkout 就能精确回到今天这一版。
+
+
+2026.10.2 17:10
+批次2 整体总结（把 16:00 / 16:15 / 16:30 / 16:40 / 16:50 这几条按功能重新整理成一份，
+              回头一次就能看完这一批改了什么）
+
+一、批次2 原定的五项，落地情况：
+2.1 显示底图"点谁看谁" —— 完成。_render_display 的底图取"当前选中节点"的图像输出，
+    叠加（各节点结果 + ROI 框）也只画到该节点为止；没选中、或选中的节点这一轮没执行，
+    就退回"最后一个执行节点"（原行为，不影响没选中时的使用习惯）。
+2.2 多上游自动绑定加提示 —— 已在批次3 顺手做掉（_resolve_input 优先挑"改图"的上游，
+    日志"图像源"列写"（多上游，自动取最后一个改图的上游）"），批次2 不再重复做。
+2.3 "ROI 继承未生效"要有提示 —— 完成。写进执行日志"结果数据"列，不弹窗
+    （单步执行与视频每一帧都会走到那个方法，弹窗会毁掉视频体验）；
+    后来文案改短成"← 继承未生效（改用本节点 ROI）"—— 原来的长句会被列宽截断、看不到。
+2.4 roi_margin（继承时向外扩多少像素）加界面控件 —— 完成。
+    LineParamsDialog.ui 在"屏蔽形状"和"位置修正"之间加了一行"外扩:" + QSpinBox
+    (spin_roi_margin)，范围 0~1000、默认 20、带 tooltip，而且只在选"继承结果"时显示；
+    LineParamsDialog.py 与 CircleParamsDialog.py 负责读写 params["roi_margin"]。
+2.5 灰度加"作用于整图 / 仅 ROI"开关 —— 完成（经过一次返工，见第二条）。
+
+二、批次2 过程中的两次返工（都是用户实测后发现的）
+1、2.5 第一版把开关做在节点右键菜单里：逻辑是对的，但当时灰度没有参数窗口、它的 ROI
+   参数永远是空的，引擎缺省按整幅图处理，于是"仅 ROI" ≡ "整图"，勾不勾结果完全一样。
+   按用户要求重做成独立窗口：
+     · 新增 GrayParamsDialog.py（继承 LineParamsDialog、共用同一份 .ui）：标题"灰度"、
+       只保留"基本参数"页（removeTab 掉"运行参数"与"显示结果"）、显示"作用于整图"
+       勾选框、勾上时把 ROI 参数区置灰；
+     · 入口 = 双击灰度节点；右键菜单恢复成只有"删除节点"（顺手删掉 toggle_gray_scope()）；
+     · LineParamsDialog.ui 增加共享勾选框 cb_gray_full_image，直线 / 圆窗口里默认隐藏。
+2、用户随后发截图报两个界面问题，都已修：
+   · ROI 区被挤压：这个 groupBox 没有布局管理器、行组高度写死 125，行数在 4~5 行之间
+     变（多了"外扩""作用于整图"，或者选"继承"时少几行）就装不下，行与行互相压、还顶到
+     "位置修正 / 框选" —— 改成在代码里给这一组套 QVBoxLayout（roi_rows_widget /
+     roi_buttons_widget / roi_params_widget 三块），高度自动跟着内容走
+     （实测行组 148 = sizeHint 148；切换模式时整组自动收紧，如灰度 389→362）。
+     顺带把两个重名的 layoutWidget 改名成 roi_rows_widget / roi_buttons_widget
+     （同名时 findChild 只能拿到第一个）。
+   · 灰度窗口的"显示结果"页对灰度没有意义 —— 只保留"基本参数"页。
+
+三、批次2 收尾时修掉的数据流问题（用户发截图提问，已用脚本复现）
+1、继承链断了：上游是处理类算子（灰度）时它不产出结果数据，result_bbox() 返回 None，
+   原来会退回本节点的手绘 ROI（而这个节点没画过 ROI = 整幅图），于是整幅图都在检测
+   （实测全图检出 64 条线，而预期只在圆附近那圈）。改成"上游没有结果时，继承上游那一轮
+   实际用的 ROI 区域"，并把这份"有效 ROI"沿数据流一路传下去：
+     · _run_flow_pipeline() 增加 roi_of 字典，记录每个节点这一轮实际用的 ROI；
+     · _resolve_roi(node, img_shape, in_results, in_roi=None) 与
+       _execute_node(..., in_roi=None) 各多一个参数；
+     · _resolve_roi() 返回值末位由布尔改成字符串码：""=没继承 /
+       "result"=继承上游结果的包围盒 / "region"=继承上游的处理区域（日志据此写说明）。
+   实测（圆 →（直线A、灰度 →（直线B、灰度2 → 直线C）））：
+     圆    (100, 50, 300, 300)   ""
+     直线A (139, 119, 250, 250)  "result"
+     灰度  (159, 139, 210, 210)  "result"
+     直线B (139, 119, 250, 250)  "region"   ← 修复前是 (0, 0, 512, 512)
+     灰度2 (154, 134, 220, 220)  "region"
+     直线C (154, 134, 220, 220)  "region"   （链一路传下去，没有断）
+2、语义澄清："继承"继承的是上游**检出结果**的包围盒（结果数据流：下游跟着上游发现的
+   目标走），不是上游那个 ROI 框，所以外扩=0 时两个框本来就不该重合
+   （圆搜索框 (100,50,300,300) vs 继承来的 (159,139,210,210) 是正常的）；
+   界面上把"继承"改名为"继承结果"并加 tooltip 说明，避免继续误解。
+3、选"继承结果"时"框选"按钮也一起隐藏（本次）：ROI 是继承来的，手动画 ROI 没有意义，
+   和 XYWH 一起藏起来；整行藏空之后由外层布局把这段高度自动收掉。
+   直线 / 圆 / 灰度三个窗口行为一致（分组高度：直线 364→350、灰度 389→362）。
+
+四、批次2 涉及的文件
+main.py、LineParamsDialog.ui、LineParamsDialog.py、CircleParamsDialog.py、
+GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
+
+五、验证（每一处改动都单独跑过，全部实跑）
+· py_compile 十个源文件 exit 0；.ui 用 xml.etree 解析通过；
+· 无头冒烟累计 22 / 11 / 20 / 18 / 23 / 15 / 25 项，全部 PASS；
+· 界面用 dialog.grab() 抓图后人工看图（含"内容最多"的继承模式），截图都在 _ui_preview/。
+
+六、回退点（都放在工程外 E:\opencv_python_3_8\PySide\，避免污染 grep）
+· _backup_VisionFlowNoed_before_2.4_2.5        2.4 / 2.5 之前
+· _backup_VisionFlowNoed_before_gray_dialog    灰度独立窗口之前
+· _backup_VisionFlowNoed_before_roi_group_layout  ROI 区改布局之前
+· _backup_VisionFlowNoed_at_20261002_1650      继承链修复之后（= 下一轮改动的 before）
+· _backup_VisionFlowNoed_before_hide_select_btn 本次隐藏"框选"之前
+
+七、遗留 / 后续待办
+· 批次4：JSON 方案持久化（页面 / 节点 / 连线 / 参数 / 图像源绑定）、算子扩充
+  （取反 / 滤波 / 二值化 / 边缘提取）、独立的"图像源"节点、参数校验
+  （Canny low < high、min_radius <= max_radius 这类）。
+· 批次5：拆分 MainWindow、算法线程化、缓存与内存上限、撤销 / 重做。
+· .ui 里 ROI 区仍是绝对几何（运行时以代码里的布局为准，Qt 设计师里看到的是旧预览）；
+  若要让设计师里也自适应，需要把 XYWH 那一块搬到文件末尾再整体改成布局项。
+· 待用户复跑确认：继承链效果（圆 -> 灰度 -> 直线 应该只在圆附近那圈找线）、
+  灰度窗口界面（继承结果时"框选"隐藏、只剩"基本参数"一页）。
+
+
+2026.10.2 17:20
+存在问题：上一条里解释了"继承"目前继承的是上游**检出结果的外接框**，于是
+    · 最后一个直线继承到的是"那几个圆的外接矩形"，会把所有圆都包住、框很大；
+    · 用户之前也问过"为什么外扩=0 时，继承来的框和上游的框还是不重合"。
+   结论：应该让"继承什么"可选。用户拍板按 B 方案改：两种语义并存，
+   **默认选"继承上游 ROI 框"**（框固定、逐级一致）。
+
+修改：
+一、引擎（main.py::_resolve_roi）
+1、继承来源由 node.params["roi_source"] 决定，参数不存在时按 "roi"：
+     · "roi"（默认）：沿用上游那一轮实际用的 ROI 框（in_roi）—— 框固定、逐级一致，
+       不受上游检出几个目标、目标跑到哪儿的影响；
+     · "result"：用上游结果（直线端点 / 圆心半径）算外接框 —— 目标动、框跟着动。
+   首选那种拿不到时会自动退回另一种（单步执行没有 in_roi；上游是处理类算子没有结果数据），
+   实在什么都没有才用本节点手画的 ROI：
+        source = params.get("roi_source", "roi")     # 默认：继承上游那一轮用的 ROI 框
+        if source == "roi":
+            if in_roi is not None and in_roi[2] > 0 and in_roi[3] > 0:
+                bbox = (in_roi[0], in_roi[1], in_roi[2], in_roi[3])
+                inherited = "roi"
+            else:
+                bbox = result_bbox(in_results)       # 退回"上游结果的外接框"
+                ...
+        else:
+            bbox = result_bbox(in_results)           # "上游结果框"
+            ...
+2、返回值末位的来源码由 "region" 改成 "roi"（现在它表示"继承上游的框"，
+   检测类 / 处理类上游通用，不再分两种）。
+3、roi_margin 默认值由 20 改成 0 —— "继承"就该与上游完全重合，要留余量自己填。
+   引擎（params.get("roi_margin", 0)）、直线 / 圆两个窗口的 _load_params、.ui 里的初始值都改了。
+
+二、日志文案（main.py::_format_result_text）
+        "roi"    -> "  ← 继承上游ROI框"
+        "result" -> "  ← 继承上游结果框"
+        都不是   -> "  ← 继承未生效（改用本节点 ROI）"
+   （都很短，避免被"结果数据"那一列截断；仍然只用日志、不弹窗。）
+
+三、参数窗口（LineParamsDialog.ui / LineParamsDialog.py，圆与灰度窗口继承它）
+1、在"外扩"下面加了一行"继承自"下拉框（combo_roi_source），两项：
+       "上游 ROI 框"（默认） / "上游结果框"，并带 tooltip 说明两者区别；
+2、单选按钮文字由"继承结果"改成"继承上游"—— 继承什么由下面那个下拉框指明，
+   免得"选了继承结果、下面又写着上游 ROI 框"自相矛盾；
+3、"外扩"的 tooltip 改成"选'继承上游'时，在上游那块框外再扩多少像素
+   （默认 0 = 与上游完全重合）"；
+4、显隐：只有"继承上游"时显示"外扩"与"继承自"，选"绘制"时两行一起藏起来
+   （新增 _set_roi_source_visible()，和 _set_roi_margin_visible() 一起由
+     _update_roi_params_visibility() 统一控制）；
+5、取值映射用"遍历 itemText 比对文字"（_set_roi_source_to_ui / _roi_source_from_ui），
+   不用 QComboBox.findData —— PySide2 里它比对 QVariant 不可靠；
+6、CircleParamsDialog.py 重写了读写方法，所以 roi_source 的读写也同步补上；
+7、顺带把 _resolve_roi 的 docstring、_update_roi_params_visibility 的 docstring
+   里"继承结果 / region"这些旧说法改成新说法。
+
+验证（2026.10.2 17:17，全部实跑）：
+1、LineParamsDialog.ui 的 XML 校验通过；py_compile 十个源文件 exit 0；
+   残留检查：全项目已无 "region" 关键字、也没有旧文字"继承结果"（只剩说明性注释，已同步改掉）；
+2、无头冒烟 25 项全 PASS：
+   · 默认（没设 roi_source）：圆 -> 直线A 继承到的是**圆的 ROI 框** (100,50,300,300)/"roi"
+   · 链条逐级一致：直线C、灰度、直线D 全是同一个框 (100,50,300,300)/"roi"
+   · 显式选"上游结果框"：直线B 仍是圆检出的外接框 (159,139,210,210)/"result"
+   · 外扩 10：(100,50,300,300) -> (90,40,320,320)，四边各扩 10
+   · 日志两种文案都出现（"← 继承上游ROI框" / "← 继承上游结果框"）
+   · 单步执行仍提示"← 继承未生效（改用本节点 ROI）"
+   · 界面：下拉默认"上游 ROI 框"、外扩默认 0、绘制模式隐藏这两行、继承模式显示、
+     切到"上游结果框"能存进 params、能读回、认不出来的值按默认处理、灰度窗口同样有这个下拉
+   · 回归：日志仍是 5 元组、"作用于整图"优先级仍然更高（ROI = 整幅图）
+3、截图（_ui_preview/，都重抓过）：
+   · roi_dialog_inherit.png：直线窗口"继承上游"模式 —— 7 行内容（ROI创建/形状/屏蔽形状/
+     外扩/继承自/作用于整图/位置修正）也不挤压
+   · gray_dialog_inherit.png：灰度窗口（只剩"基本参数"一页）
+
+如何回退（如果效果不合适）：
+1、改动前的备份（5 个文件）：
+   E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_before_roi_source\
+   （main.py / LineParamsDialog.ui / LineParamsDialog.py / CircleParamsDialog.py / GrayParamsDialog.py）
+2、改动后的快照：E:\opencv_python_3_8\PySide\_backup_VisionFlowNoed_at_20261002_1719\
+   （作为下一轮改动的 before）
+
+
 
 
 

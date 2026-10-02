@@ -252,10 +252,32 @@ class LineParamsDialog(QDialog):
         self.spin_roi_y = self.ui.findChild(QSpinBox, "spin_roi_y")
         self.spin_roi_w = self.ui.findChild(QSpinBox, "spin_roi_w")
         self.spin_roi_h = self.ui.findChild(QSpinBox, "spin_roi_h")
+        # "外扩"：ROI 创建选"继承上游"时，在上游那块框外再扩多少像素（默认 0）
+        self.spin_roi_margin = self.ui.findChild(QSpinBox, "spin_roi_margin")
+        self.label_roi_margin = self.ui.findChild(QLabel, "label_roi_margin")
+        # "继承自"：继承上游的"ROI 框"还是上游"检出的结果外接框"
+        self.combo_roi_source = self.ui.findChild(QComboBox, "combo_roi_source")
+        self.label_roi_source = self.ui.findChild(QLabel, "label_roi_source")
 
         # 获取 "ROI参数" 这个按钮，用来实现下面 XYWH 的显示与隐藏
         self.btn_roi_toggle = self.ui.findChild(QPushButton, "btn_roi_toggle")
         self.roi_params_widget = self.ui.findChild(QWidget, "roi_params_widget")
+
+        # ROI区域 这一组在 .ui 里是"绝对定位"（子控件写死几何、没有布局管理器），
+        # 行数一变（比如"外扩""作用于整图"多出来、或者选"继承"少了几行）就会挤在一起。
+        # 这里在代码里给这三块套一个垂直布局，让高度自动跟着内容走：
+        #   行组（ROI创建/形状/屏蔽形状/外扩/作用于整图/位置修正）
+        #   -> 框选 / ROI参数 按钮
+        #   -> XYWH 参数区（选"继承"时整块隐藏，布局会自动收起来）
+        self.roi_group_box = self.ui.findChild(QWidget, "groupBox_2")
+        self.roi_rows_widget = self.ui.findChild(QWidget, "roi_rows_widget")
+        self.roi_buttons_widget = self.ui.findChild(QWidget, "roi_buttons_widget")
+        if (self.roi_group_box is not None and self.roi_rows_widget is not None
+                and self.roi_buttons_widget is not None and self.roi_params_widget is not None):
+            roi_group_layout = QVBoxLayout(self.roi_group_box)
+            roi_group_layout.addWidget(self.roi_rows_widget)
+            roi_group_layout.addWidget(self.roi_buttons_widget)
+            roi_group_layout.addWidget(self.roi_params_widget)
 
         # 获取滑动条（即位置修正右边的左右移动条）
         self.pos_correction_slider = self.ui.findChild(QSlider, "pos_correction_slider")
@@ -273,6 +295,11 @@ class LineParamsDialog(QDialog):
 
         # 获取隐藏 "ROI参数" 绘制的黄色框的复选框
         self.cb_hide_roi = self.ui.findChild(QCheckBox, "cb_hide_roi")
+
+        # "作用于整图"（只有灰度的参数窗口才显示它，直线 / 圆的窗口里隐藏）
+        self.cb_gray_full_image = self.ui.findChild(QCheckBox, "cb_gray_full_image")
+        if self.cb_gray_full_image:
+            self.cb_gray_full_image.setVisible(False)
 
         # 获取框选按钮
         self.btn_select = self.ui.findChild(QPushButton, "pushButton")
@@ -449,6 +476,13 @@ class LineParamsDialog(QDialog):
             else:
                 self.roi_draw.setChecked(True)
 
+            # 读取并恢复"继承"时向外扩的像素数（默认 0 = 与上游完全重合）
+            if self.spin_roi_margin:
+                self.spin_roi_margin.setValue(params.get("roi_margin", 0))
+
+            # 读取并恢复"继承自"（默认继承上游的 ROI 框）
+            self._set_roi_source_to_ui(params.get("roi_source", "roi"))
+
             # 加载运行参数到界面
             self.spin_canny_low.setValue(params.get("canny_low", 50))
             self.spin_canny_high.setValue(params.get("canny_high", 150))
@@ -471,6 +505,14 @@ class LineParamsDialog(QDialog):
 
             # 保存"ROI创建"的选择（继承 = 用上游结果的包围盒当 ROI，也就是"结果数据流"）
             self.node.params["roi_inherit"] = self.roi_inherit.isChecked()
+
+            # 保存"继承"时向外扩的像素数
+            if self.spin_roi_margin:
+                self.node.params["roi_margin"] = self.spin_roi_margin.value()
+
+            # 保存"继承自"（roi = 上游的 ROI 框 / result = 上游检出的结果外接框）
+            if self.combo_roi_source:
+                self.node.params["roi_source"] = self._roi_source_from_ui()
 
             # 顺手把图像源绑定也存一次（正常情况下下拉框一变就已经存过了）
             self._save_input_source()
@@ -570,8 +612,45 @@ class LineParamsDialog(QDialog):
         else:
             self.btn_roi_toggle.setText("ROI参数 ▼")
 
+    def _set_roi_margin_visible(self, visible):
+        """显示 / 隐藏"外扩"这一行（只有 ROI 创建 = 继承上游 时才用得上）"""
+        if self.label_roi_margin:
+            self.label_roi_margin.setVisible(visible)
+        if self.spin_roi_margin:
+            self.spin_roi_margin.setVisible(visible)
+
+    # "继承自"下拉框的两项与内部取值的对应关系（用文字匹配，不依赖 PySide2 的 findData）
+    ROI_SOURCE_ITEMS = (("roi", "上游 ROI 框"), ("result", "上游结果框"))
+
+    def _set_roi_source_to_ui(self, key):
+        """把 params 里的 roi_source 反映到下拉框上（认不出来时按默认的"上游 ROI 框"）"""
+        if not self.combo_roi_source:
+            return
+        text = dict(self.ROI_SOURCE_ITEMS).get(key, "上游 ROI 框")
+        for index in range(self.combo_roi_source.count()):
+            if self.combo_roi_source.itemText(index) == text:
+                self.combo_roi_source.setCurrentIndex(index)
+                return
+
+    def _roi_source_from_ui(self):
+        """从下拉框读出 roi_source（默认 roi = 继承上游的 ROI 框）"""
+        if not self.combo_roi_source:
+            return "roi"
+        current = self.combo_roi_source.currentText()
+        for key, text in self.ROI_SOURCE_ITEMS:
+            if text == current:
+                return key
+        return "roi"
+
+    def _set_roi_source_visible(self, visible):
+        """显示 / 隐藏"继承自"这一行（只有选"继承上游"时才用得上）"""
+        if self.label_roi_source:
+            self.label_roi_source.setVisible(visible)
+        if self.combo_roi_source:
+            self.combo_roi_source.setVisible(visible)
+
     def _update_roi_params_visibility(self):
-        """根据“ROI创建”的单选框状态(选择绘制 或者 继承)，控制展开按钮及参数区域的显示与隐藏"""
+        """根据“ROI创建”的单选框状态(绘制 / 继承上游)，控制"框选"按钮、展开按钮与参数区域的显示与隐藏"""
         # 选择的是 绘制roi_draw 时
         if self.roi_draw.isChecked():
             # 将"ROI参数"按钮展示出来
@@ -581,10 +660,23 @@ class LineParamsDialog(QDialog):
                 self.roi_params_widget.setVisible(True)
                 # 改变 "ROI参数"的图标
                 self.btn_roi_toggle.setText("ROI参数 ▲")
+            # 只有手绘 ROI 才需要"框选"
+            if self.btn_select:
+                self.btn_select.setVisible(True)
+            # 手绘 ROI 用不到"外扩"和"继承自"
+            self._set_roi_margin_visible(False)
+            self._set_roi_source_visible(False)
         else:
-            # 选中的是 继承roi_params_widget 时，隐藏下面的内容
+            # 选中的是 继承上游 时，隐藏下面的内容
             self.roi_params_widget.setVisible(False)
             self.btn_roi_toggle.setVisible(False)
+            # ROI 是从上游继承来的，"框选"（手动画 ROI）没有意义，和 XYWH 一起藏起来；
+            # 这一整行都空了之后，外层布局会自动把这段高度收掉。
+            if self.btn_select:
+                self.btn_select.setVisible(False)
+            # 只有"继承上游"才用得上"外扩"和"继承自"
+            self._set_roi_margin_visible(True)
+            self._set_roi_source_visible(True)
 
     def _update_shape_layout(self, shape_text):
         """根据形状下拉框当前选中的文字，动态更新参数框的标签名和可见性"""

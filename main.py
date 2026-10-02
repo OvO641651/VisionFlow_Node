@@ -17,6 +17,7 @@ from FlowChart import NodeItem, EdgeItem, FlowchartView
 from FlowPages import FlowPageManager
 from LineParamsDialog import LineParamsDialog
 from CircleParamsDialog import CircleParamsDialog
+from GrayParamsDialog import GrayParamsDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
 from NodeRegistry import SOURCE_KEY, get_spec, result_bbox
@@ -671,35 +672,72 @@ class MainWindow:
             return source, label + note
         return SOURCE_KEY, "全局图像源" + note
 
-    def _resolve_roi(self, node, img_shape, in_results):
+    def _resolve_roi(self, node, img_shape, in_results, in_roi=None):
         """
         算出这个节点真正要处理的 ROI，两种来源：
 
-            1、ROI创建 = "继承"：把上游结果（直线端点 / 圆心半径）算成包围盒，
-               再向外扩 roi_margin 像素（默认 20）。这就是"结果数据流"，
-               也是检测类算子影响下游的唯一合法方式；
+            1、ROI创建 = "继承上游"：具体继承什么由 params["roi_source"] 决定
+                 · "roi"（默认）：直接沿用上游那一轮实际用的 ROI 框（in_roi）——
+                   框固定、逐级一致，不受上游检出几个目标、目标跑到哪儿的影响；
+                 · "result"：把上游结果（直线端点 / 圆心半径）算成外接框 ——
+                   目标动、框跟着动，就是"结果数据流"；
+               两种都再向外扩 roi_margin 像素（默认 0 = 与上游完全重合）。
+               首选那种拿不到时（单步执行没有 in_roi、或者上游是处理类算子没有结果数据）
+               会自动退回另一种，实在什么都没有才用本节点手画的 ROI；
             2、其余情况：用参数里的 roi_x / roi_y / roi_w / roi_h
                （这张图片还没设置过时，默认就是整幅图），并统一裁剪到图像范围内。
 
+        :param in_roi: 输入源那个节点这一轮实际用的 ROI（roi_info 元组），供"继承 ROI 框"用
         :return: (roi_x, roi_y, roi_w, roi_h, roi_shape, inherited)
-                 inherited=True 表示这块 ROI 是从上游结果继承来的
+                 inherited = ""       这块 ROI 不是继承来的（用的是本节点参数）
+                             "roi"    沿用上游那一轮实际用的 ROI 框
+                             "result" 用上游"检测结果"的外接框
         """
         params = node.params
         roi_shape = params.get("roi_shape", "矩形")
         img_h = img_shape[0]
         img_w = img_shape[1]
 
+        # 算子声明了"整图模式参数"并且已经打开时（目前是灰度的 gray_full_image），
+        # ROI 一律当成整幅图 —— 算法本身也是按整图处理的，这样日志和 ROI 框才与事实一致。
+        spec = get_spec(node.name)
+        whole_key = getattr(spec, 'whole_image_param', None) if spec is not None else None
+        if whole_key and params.get(whole_key, False):
+            return 0, 0, img_w, img_h, roi_shape, ""
+
         if params.get("roi_inherit", False):
-            bbox = result_bbox(in_results)
+            margin = int(params.get("roi_margin", 0))
+            source = params.get("roi_source", "roi")     # 默认：继承上游那一轮用的 ROI 框
+            bbox = None
+            inherited = ""
+            if source == "roi":
+                # 默认做法：直接沿用上游那一轮实际用的框（框固定、逐级一致）
+                if in_roi is not None and in_roi[2] > 0 and in_roi[3] > 0:
+                    bbox = (in_roi[0], in_roi[1], in_roi[2], in_roi[3])
+                    inherited = "roi"
+                else:
+                    # 上游这一轮没执行（单步执行）、或者输入源就是全局图像源：
+                    # 退回"上游检出的结果外接框"
+                    bbox = result_bbox(in_results)
+                    if bbox is not None:
+                        inherited = "result"
+            else:
+                # "上游结果框"（roi_source = result）：用上游检出目标的最小外接框（目标动、框跟着动）
+                bbox = result_bbox(in_results)
+                if bbox is not None:
+                    inherited = "result"
+                elif in_roi is not None and in_roi[2] > 0 and in_roi[3] > 0:
+                    # 上游是处理类算子（比如灰度）、没有结果数据：退回继承它用的框
+                    bbox = (in_roi[0], in_roi[1], in_roi[2], in_roi[3])
+                    inherited = "roi"
             if bbox is not None:
-                margin = int(params.get("roi_margin", 20))
                 left = max(0, int(round(bbox[0])) - margin)
                 top = max(0, int(round(bbox[1])) - margin)
                 right = min(img_w, int(round(bbox[0] + bbox[2])) + margin)
                 bottom = min(img_h, int(round(bbox[1] + bbox[3])) + margin)
                 if right > left and bottom > top:
-                    return left, top, right - left, bottom - top, roi_shape, True
-            # 上游一个结果都没有（或者上游是处理类算子，本来就没有结果）：
+                    return left, top, right - left, bottom - top, roi_shape, inherited
+            # 上游既没有结果、也没有可继承的处理区域（比如单步执行，或者输入源就是全局图像源）：
             # 自动退回参数里的 ROI，免得整个节点因为 ROI 尺寸为 0 被跳过
 
         roi_x = int(params.get("roi_x", 0))
@@ -716,14 +754,15 @@ class MainWindow:
         roi_y = max(0, min(roi_y, img_h))
         roi_w = max(0, min(roi_w, img_w - roi_x))
         roi_h = max(0, min(roi_h, img_h - roi_y))
-        return roi_x, roi_y, roi_w, roi_h, roi_shape, False
+        return roi_x, roi_y, roi_w, roi_h, roi_shape, ""
 
-    def _execute_node(self, node, in_img, in_results):
+    def _execute_node(self, node, in_img, in_results, in_roi=None):
         """
         执行一个节点（节点契约的执行侧）。
 
         :param in_img: 数据层输入图像（按"图像源"绑定取到的那一份）
         :param in_results: 输入源那个节点的结果数据，供"ROI 继承"用
+        :param in_roi: 输入源那个节点这一轮实际用的 ROI（上游是处理类算子、没有结果时用它）
         :return: (out_img, results, roi_info, spec)
                  out_img  这个节点的图像输出，会被下游当成图像源；
                           检测类算子是原样透传（同一个对象，不复制）
@@ -733,7 +772,7 @@ class MainWindow:
         """
         spec = get_spec(node.name)
         roi_x, roi_y, roi_w, roi_h, roi_shape, inherited = self._resolve_roi(
-            node, in_img.shape, in_results)
+            node, in_img.shape, in_results, in_roi)
         hide_roi = node.params.get("hide_roi", False)
         roi_info = (roi_x, roi_y, roi_w, roi_h, hide_roi, roi_shape, inherited)
 
@@ -756,7 +795,18 @@ class MainWindow:
             return "ROI 尺寸为 0，已跳过（图像原样传给下游）"
         if spec is None:
             return "模块未实现，图像原样传给下游"
-        return spec.format_result(results)
+        text = spec.format_result(results)
+        if node.params.get("roi_inherit", False):
+            # 勾了"继承上游"之后到底继承到了什么，必须让用户看见（否则会以为继承生效了）。
+            # 注意：单步执行 / 视频每帧都会走到这里，所以只能用日志文案、不能弹窗；
+            # 文案也要尽量短——"结果数据"那一列显示不全会被截断。
+            if roi_info[6] == "roi":
+                text += "  ← 继承上游ROI框"
+            elif roi_info[6] == "result":
+                text += "  ← 继承上游结果框"
+            else:
+                text += "  ← 继承未生效（改用本节点 ROI）"
+        return text
 
     def _render_display(self, base_img, executed):
         """
@@ -807,6 +857,7 @@ class MainWindow:
         img = frame.copy()              # 全局图像源（数据层的起点）
         out_images = {SOURCE_KEY: img}  # {图像源标识: 图像输出}
         results_of = {}                 # {节点: 它产出的结果数据}
+        roi_of = {}                     # {节点: 它这一轮实际用的 ROI}，供下游"继承"用
         executed = []                   # [(节点, 结果, roi_info, spec), ...]，按执行顺序
         all_data = []                   # 所有节点结果汇总（给结果计数用）
         exec_info = []                  # 执行日志
@@ -834,11 +885,13 @@ class MainWindow:
                 source_label = "全局图像源（回退）"
                 in_img = out_images[SOURCE_KEY]
             in_results = results_of.get(source_key)
+            in_roi = roi_of.get(source_key)   # 上游没有结果时，下游继承它这块处理区域
 
             # 3、执行节点；它的图像输出挂到 out_images 上，供下游当图像源
-            out_img, results, roi_info, spec = self._execute_node(node, in_img, in_results)
+            out_img, results, roi_info, spec = self._execute_node(node, in_img, in_results, in_roi)
             out_images[node] = out_img
             results_of[node] = results
+            roi_of[node] = roi_info
             executed.append((node, results, roi_info, spec))
 
             # 4、汇总结果 + 记一行日志（图像源也记下来，方便排查数据流走向）
@@ -854,8 +907,15 @@ class MainWindow:
             exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
                               "以下节点未执行（没有连线，或者连线成环）：" + names))
 
-        # 5、渲染层：用最后一个执行节点的图像输出当底图，统一画结果和 ROI 框
-        display = self._render_display(out_images[order[-1]], executed)
+        # 5、渲染层：底图取"当前选中的节点"的图像输出（点谁看谁），叠加也只画到它为止；
+        #    没选中、或者选中的节点这一轮没执行，就退回用最后一个执行节点的输出（原来的行为）。
+        base_node = self.selected_node
+        if base_node in out_images:
+            shown = executed[:order.index(base_node) + 1]
+        else:
+            base_node = order[-1]
+            shown = executed
+        display = self._render_display(out_images[base_node], shown)
         return display, all_data, exec_info
 
 
@@ -1075,8 +1135,16 @@ class MainWindow:
             dialog.exec_()
 
 
+        # 双击灰度节点弹出它自己的参数窗口（ROI + 是否作用于整图）
+        elif node.name == "灰度":
+            dialog = GrayParamsDialog(self.main_window, node=node, main_window=self)
+            dialog.resize(390, 560)
+            self.current_dialog = dialog
+            dialog.finished.connect(lambda: self._clear_current_dialog())
+            dialog.exec_()
+
         else:
-            # 灰度这类模块没有可配置的参数，双击保持"无反应"、不弹提示
+            # 人脸/颜色这些还没实现的模块：双击保持"无反应"、不弹提示
             pass
 
     def _clear_current_dialog(self):
