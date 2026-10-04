@@ -2949,6 +2949,232 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
       d（校验混合 vs 一律拦住）/ e（灰度是否移到"处理"分组）仍待拍板。
 
 
+2026.10.3 22:38
+存在问题（用户需求）：开始批次4 目标二「算子扩充 + 通用参数窗口」，按已拍板的决策
+   （b 通用动态窗口 / e 灰度移到"处理"分组 / 识别类本批不做）落地：
+   处理类算子从 1 个（灰度）扩到 6 个（+ 取反 / 滤波 / 二值化 / 形态学 / 边缘提取），
+   并且**以后加算子不用再写界面**。
+
+修改：
+一、新增 ProcessOps.py：处理类算子的算法 + 参数表（按大类分文件）
+   1、分类结构：处理类 → 本文件（新）；检测类仍留在 Detector.py + NodeRegistry.py；
+      识别类以后另开。文件里一个 ProcessOps 类（每个算子一个方法）+ 文件末尾的
+      PROCESS_SPECS 声明表。**本文件不 import NodeRegistry**，避免循环导入。
+   2、三条硬规矩（写在文件头注释里）：① 绝不就地改入参，统一走 _apply_to_roi() 先 copy；
+      ② 输出一律保证 3 通道 BGR（下游 cv2.line / cv2.circle 要求 3 通道）；
+      ③ 只处理 ROI 那一块，ROI 以外保持原样。
+   3、五个算子：取反（bitwise_not）、滤波（均值/高斯/中值，核强制奇数）、
+      二值化（固定/Otsu/自适应 + 二值/反二值，先转灰度再算、结果补回 3 通道）、
+      形态学（腐蚀/膨胀/开/闭 + 矩形/椭圆/十字核 + 迭代次数）、
+      边缘提取（Canny / Sobel / Laplacian）。
+   4、**灰度也搬进来了**（ProcessOps.gray，算法仍用 Detector.gray_bgr，只是接上"处理类外壳"）
+      ——这就是决策 e 在代码侧的对应动作：灰度本来就是处理类。
+   5、每个算子带参数表（参数名 / 界面中文名 / 控件类型 / 附加选项）+ 统一结果文案
+      "执行成功（图像已处理，下游可见）"（取反 / 滤波 / 二值化 / 形态学 / 边缘提取共用）。
+
+二、NodeRegistry.py：NodeSpec 增加参数声明 + 汇总各分类模块
+   1、NodeSpec 增加 param_specs：
+      · None = 走专用参数窗口（直线 / 圆 / 灰度）
+      · []   = 走通用窗口但没有可调参数（取反）
+      · 有内容 = 通用窗口按这张表自动生成控件
+   2、注册表改成"汇总"：文件末尾 `from ProcessOps import PROCESS_SPECS`，把每条声明
+      组装成 NodeSpec（kind=KIND_PROCESS）登记进 NODE_SPECS ⇒ 加一个处理类算子只改
+      ProcessOps.py + main.ui 树，不用动引擎。
+   3、原来的 _run_gray / _format_gray 从本文件删除（搬去 ProcessOps.py）。
+
+三、新增 GenericProcessDialog.py：按参数声明生成"运行参数"页（决策 b）
+   1、继承 LineParamsDialog ⇒ "基本参数"页整套（图像源 / ROI 绘制·继承 / 继承自 / 外扩 /
+      框选 / XYWH）原样复用，不必为每个算子重写。
+   2、先把"运行参数"页里直线专用那几行**按布局项遍历**藏起来（不依赖控件名），
+      再按 param_specs 动态生成行：一行一个"中文名 + 控件"，控件名统一 param_<键名>。
+   3、五类控件：int（QSpinBox，odd=True 时步长 2 并自动纠成奇数）/ float（QDoubleSpinBox）/
+      combo（QComboBox）/ bool（QCheckBox）/ file（QLineEdit + 浏览…）；
+      没有参数的算子（取反）给一句灰字提示"该模块没有可调参数"。
+   4、处理类没有结构化结果 ⇒ 去掉"显示结果"页（removeTab）。
+   5、参数读写：_load_params / _update_params 先调父类（基本参数照旧）再读写动态控件；
+      父类会把直线专用那 5 个参数也写进 node.params（控件只是被藏起来、值还在），
+      所以**先 pop 掉那 5 个键**再写自己的——这一步必须放在"没有动态控件就返回"之前，
+      否则取反这类无参数算子会把直线参数混进节点参数和方案文件（第一遍测试就抓到了）。
+
+四、main.py：双击路由改成"专用优先、通用兜底"
+   1、on_node_double_clicked()：直线 / 圆 / 灰度 走各自的专用窗口；其余算子只要
+      spec.param_specs 不是 None 就走 GenericProcessDialog ⇒ **新增算子不用再改这里**
+      （原来每加一个算子都要加一个 elif）。
+   2、import 增加 from GenericProcessDialog import GenericProcessDialog。
+
+五、main.ui：左侧树分成 处理 / 检测 / 识别 三组
+   处理（灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取）、检测（直线 / 圆）、
+   识别（人脸 / 颜色，未实现；按用户决定本批不动）。
+
+验证（2026.10.3 22:35，全部实跑）：
+1、main.ui 的 XML 校验通过；py_compile 十二个源文件 exit 0；
+2、无头冒烟 **114 项断言全 PASS**，关键项：
+   · 注册表：6 个处理类算子都注册且 kind=process；灰度 param_specs=None（专用窗口）、
+     取反 =[]（通用窗口无参数）；直线 / 圆 仍是 detect + 专用窗口；人脸 / 颜色 仍未实现；
+     四张参数表的键名与控件类型逐项核对通过；
+   · 算子效果（直接调 spec.run，就是引擎调的那个）：6 个算子各自"入参原图没被改动
+     （数据层不被污染）""返回新图、3 通道、尺寸不变""只有 ROI 那块变了、ROI 以外原样"
+     "结果为空列表 + 日志文案短"全部通过；
+   · 对照实验（参数不同 → 输出必须不同）：二值化阈值 60 vs 200、二值 vs 反二值、
+     均值 vs 中值、腐蚀 vs 膨胀、Canny vs Sobel、Canny 双阈值 20/60 vs 150/300 —— 全不同；
+     滤波核填 8 会自动纠成 9（结果与核 9 完全一致，不报错）；
+   · 灰度"作用于整图"这条老路仍通；ROI 被裁成 0 尺寸时不崩；
+   · 引擎链：直线 → 灰度 → 二值化 真跑一遍，3 行日志的模块名与文案都对，
+     喂进去的原始帧没被改动、显示图确实被处理过；
+   · 通用窗口：滤波 / 二值化 / 形态学 / 边缘提取 各自生成 4 个控件、类型对、
+     名字是 param_<键名>、直线专用控件已藏、动态控件在"运行参数"页可见、
+     "显示结果"页已去掉（只剩 2 页）；参数写进 node.params 且**没有**混入直线参数、
+     基本参数（roi_x / roi_inherit）照常保存、重开窗口能读回、参数会进方案文件结构；
+     取反：无动态控件 + 有提示文字 + 不产生多余参数；
+   · 双击路由（替身窗口类）：直线 / 圆 / 灰度 → 专用窗口，5 个新算子 → 通用窗口，
+     人脸 → 不弹窗；
+   · 左侧树：处理分组内容正确、检测只剩 直线 / 圆、识别仍是 人脸 / 颜色、
+     每个叶子要么已注册要么是明确未实现的（人脸 / 颜色）。
+3、界面截图（人工读图确认排版正常，存 E:\opencv_python_3_8\backups\_ui_preview）：
+   m2_dialog_threshold.png（二值化 4 行）/ m2_dialog_morphology.png / m2_dialog_blur.png /
+   m2_dialog_invert.png（无参数提示）/ m2_tree_process.png（处理·检测·识别 三分组）。
+
+遗留 / 后续待办：
+· 目前只有灰度带"作用于整图"（whole_image_param），其余处理类算子只按 ROI 处理；
+  要不要给所有处理类都加这个开关，等用户定（引擎已支持，加一行声明即可）。
+· GenericProcessDialog 的 file 控件类型已实现（QLineEdit + 浏览…），是留给目标三的
+  "图像源"节点用的，本批没有算子用到。
+· 目标三「独立图像源节点」（决策 c 待拍板）、目标四「参数校验」（决策 d 待拍板）未开工。
+· 识别类（人脸 / 颜色）本批不做，M5 收尾时在树里标注"未实现"。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_M2\
+   （main.py / main.ui / NodeRegistry.py / Detector.py / LineParamsDialog.* / FlowPages.py 等）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261003_2238\
+
+
+2026.10.3 23:42
+存在问题（用户需求）：两件小事一起做：
+   ① 形态学节点里补上"梯度 / 顶帽 / 黑帽"三个算法（之前只有 腐蚀 / 膨胀 / 开运算 / 闭运算）；
+   ② 把灰度的算法本身从 Detector.py 搬到 ProcessOps.py（Detector.py 只放检测类）。
+
+修改：
+一、ProcessOps.py：形态学补三档
+   1、morphology() 的 op 映射表加上三项：
+      "梯度": cv2.MORPH_GRADIENT（膨胀 − 腐蚀，勾出轮廓）
+      "顶帽": cv2.MORPH_TOPHAT（原图 − 开运算，挑出比周围亮的细节）
+      "黑帽": cv2.MORPH_BLACKHAT（闭运算 − 原图，挑出比周围暗的细节）
+   2、PROCESS_SPECS 里"形态学"的 morph_op 下拉从 4 项变 7 项（参数表其余三项不动）。
+   3、docstring 补一句：OpenCV 里这七个是同一个 API（cv2.morphologyEx）的不同模式，
+      参数完全一样（核形状 + 核大小 + 迭代次数），所以共用一个节点、一张参数表。
+
+二、ProcessOps.py + Detector.py：灰度算法搬家
+   1、ProcessOps 新增 to_gray(img)：就是原来 DetectorShape.gray_bgr() 那份实现
+      （单通道补 3 通道 / BGR→灰度→补回 3 通道），并保留原来那段"为什么必须 3 通道"的说明。
+   2、ProcessOps.gray(img, roi, params) 不再接收"把函数当参数传进来"的 gray_func，
+      直接调 ProcessOps.to_gray ⇒ 少一层间接。
+   3、Detector.py 里删掉 DetectorShape.gray_bgr()，原地留一行注释指路（"已搬到
+      ProcessOps.to_gray()，本文件只放检测类算法"）；文件末尾那个独立测试 main() 改成
+      在函数内 `from ProcessOps import ProcessOps` 再调 to_gray —— 放在函数内 import，
+      免得"检测类模块 → 处理类模块"产生模块级依赖。
+   4、_run_gray() 不再传 detector.gray_bgr（引擎调用签名统一，detector 参数保留不用）。
+
+验证（2026.10.3 23:42，全部实跑）：
+1、py_compile 十二个源文件 exit 0；main.ui 的 XML 校验通过；
+2、新改动 **43 项断言全 PASS**：
+   · 搬家核对：DetectorShape 里已经没有 gray_bgr；to_gray(BGR 输入) 与原实现**逐像素一致**、
+     单通道输入会补成 3 通道、None / 空输入不崩；灰度算子的两条分支（ROI 内 / 作用于整图）
+     结果与预期一致，且"原图未被改 + ROI 以外原样"；
+   · 形态学 7 档：每一档都能跑，7 档都满足"原图未被改 + 3 通道 + 尺寸不变 + ROI 内确实变了"；
+     新三档与旧四档**输出互不相同**（7 组对照全过，证明不是"同一个算法换了个名字"）；
+   · **语义逐像素核对**：顶帽 == 原图 − 开运算；黑帽 == 闭运算 − 原图；梯度 == 膨胀 − 腐蚀；
+   · 引擎链 直线 → 灰度 → 形态学(梯度) 真跑一遍：3 行日志的模块名与文案都对、
+     喂进去的原始帧没被改动、显示图确实被处理过；
+   · 通用窗口：运算下拉 7 项、选"顶帽"能写进 node.params、重开窗口能读回"顶帽"；
+3、**M2 全量回归重跑：114 项断言仍全 PASS**（这次改动没碰坏任何既有行为）；
+4、残留检查：全工程 grep "gray_bgr" 只剩 Detector.py 第 15 行那句指路注释；
+5、界面截图（人工读图确认排版正常，存 E:\opencv_python_3_8\backups\_ui_preview）：
+   m2_dialog_morphology_7ops.png（形态学窗口：运算=顶帽、核大小=5、迭代次数=2）
+   m2_morph_op_list.png（下拉弹开的 7 项：腐蚀/膨胀/开运算/闭运算/梯度/顶帽/黑帽）。
+
+遗留 / 后续待办：
+· 形态学仍是"一个节点 + op 下拉"（按 2026.10.3 的讨论结论：参数同构就合并进同一个节点，
+  不拆节点、也暂不做"节点显示参数摘要"）。
+· 彩色图上做顶帽 / 黑帽 / 梯度 会有点花（逐通道），推荐用连线在前面接一个"灰度"节点；
+  以后嫌麻烦可以给形态学加一个"先转灰度"的勾选。
+· 目标三「独立图像源节点」（决策 c 待拍板）、目标四「参数校验」（决策 d 待拍板）未开工。
+
+如何回退：
+1、改动前的备份：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_morph_ext_and_gray_move\
+   （ProcessOps.py / Detector.py / NodeRegistry.py / main.py）
+2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261003_2342\
+
+
+2026.10.5 01:09
+总结：批次4 目标2「算子扩充 + 通用参数窗口」整体总结
+   （共 1 次主体落地 + 2 次小追加 + 1 次架构讨论定案；对应日志条目：
+     2026.10.3 22:38 主体落地、2026.10.3 23:42 形态学扩 7 档 + 灰度算法搬家）
+
+一、原定方案（plan\VisionFlowNode_批次4技术方案_v1.3_2026.10.3.md 第 4 节）的落地情况
+   1、算子扩充：处理类从 1 个（灰度）扩到 **6 个**——灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取；
+      检测类不新增（直线 / 圆）；识别类（人脸 / 颜色）本批不做（仍在树里，拖进去是"模块未实现"）。
+   2、参数声明：`NodeSpec` 增加 `param_specs`（参数名 / 界面中文名 / 控件类型 / 附加选项），
+      语义 = None 走专用窗口（直线 / 圆 / 灰度）、[] 走通用窗口但没有可调参数（取反）、有内容则按表生成。
+   3、通用参数窗口：新增 `GenericProcessDialog`（继承 LineParamsDialog），复用"基本参数"页
+      （图像源 + ROI 绘制 / 继承 + 继承自 + 外扩 + 框选），按 `param_specs` 在"运行参数"页动态生成控件
+      （int / float / combo / bool / file；控件名 `param_<键名>`），处理类去掉"显示结果"页。
+   4、双击路由改成"专用优先、通用兜底" ⇒ 新增算子不必再改 `on_node_double_clicked`。
+   5、左侧树分成 处理 / 检测 / 识别 三组（决策 e：灰度从"检测"移到新的"处理"）。
+   6、算法按大类分文件——新增 `ProcessOps.py`（`ProcessOps` 类 + 文件末尾 `PROCESS_SPECS` 声明表）；
+      `NodeRegistry` 末尾汇总组装成 NodeSpec；`Detector.py` 只留检测类。
+
+二、返工 / 追加记录（2 次小追加 + 1 次讨论定案）
+   1、（2026.10.3 23:42）用户要求"形态学补 梯度 / 顶帽 / 黑帽" → `morph_op` 从 4 档扩到 **7 档**：
+      只改了下拉选项 + op 映射表（这三者与旧四档参数完全同构，参数表其余项 / 窗口 / 树都没动）。
+   2、（同轮）用户要求"把灰度算法也搬到 ProcessOps" → 新增 `ProcessOps.to_gray()`（原
+      `DetectorShape.gray_bgr` 的实现整体搬过来），`ProcessOps.gray()` 不再接收 `gray_func` 参数，
+      `_run_gray()` 不再传 `detector.gray_bgr`；`Detector.py` 末尾那个独立测试入口改成函数内 import
+      （避免"检测类模块 → 处理类模块"的模块级依赖）。
+   3、（2026.10.3 讨论定案）用户问"形态学四个算法挤在一个节点，看流程图不知道在算什么" →
+      结论：**维持不拆节点**（仍是一个节点带 op 下拉）、"节点在画布上显示参数摘要"暂不做；
+      并沉淀出判据 **参数同构就合并进同一节点**（形态学 7 档是正面例子；滤波的 sigma、
+      边缘的 low/high vs ksize、二值化的阈值属于"参数不同构"，以后考虑参数联动显示）。
+
+三、收尾修复 / 连带改动
+   1、`GenericProcessDialog._update_params()` 必须**先 pop 掉父类写进来的直线那 5 个参数**
+      （canny_low / canny_high / hough_threshold / min_line_length / max_line_gap），
+      而且这步要放在"没有动态控件就 return"**之前**——否则取反这种无参数算子会把它们混进
+      节点参数和方案文件（第一遍冒烟就抓到了，是本轮唯一一个真 bug）。
+   2、形态学在彩色图上是逐通道的：不改代码，改为在日志与方案里写明"顶帽 / 黑帽 / 梯度建议前面接灰度节点"。
+
+四、涉及文件
+   · 新增 `ProcessOps.py`（处理类算法 + 参数表 + `to_gray`）
+   · 新增 `GenericProcessDialog.py`（通用参数窗口）
+   · `NodeRegistry.py`：`NodeSpec` 加 `param_specs`、删掉原 `_run_gray` / `_format_gray`、末尾汇总 PROCESS_SPECS
+   · `main.py`：双击路由 + import GenericProcessDialog
+   · `main.ui`：左侧树加"处理"分组（含 6 项）、从"检测"里移除灰度
+   · `Detector.py`：删掉 `gray_bgr`（原地留指路注释）、末尾测试入口改函数内 import
+   · `pyside6.txt`：22:38 / 23:42 两条 + 本条总结
+   · 方案文档：`plan\VisionFlowNode_批次4技术方案_v1.3_2026.10.3.md`（§4.6 实现落地表、变更说明第 7 / 8 条、§9 里 b / e 标"已定"）
+
+五、验证（全部实跑，累计 114 + 43 项断言全 PASS）
+   · 主体（2026.10.3 22:38，114 项）：注册表 / 参数表键名与控件类型 / 6 个算子的效果与对照实验 /
+     数据层不被污染 / 通用窗口生成与读写 / 双击路由（替身窗口类）/ 左侧树结构；5 张界面截图。
+   · 追加（2026.10.3 23:42，43 项）：`to_gray` 与原实现逐像素一致 / 单通道与 None 输入 / 灰度两条分支 /
+     形态学 7 档各自可跑 + 7 组"输出互不相同" + **逐像素核对定义式**（顶帽 = 原图 − 开运算、
+     黑帽 = 闭运算 − 原图、梯度 = 膨胀 − 腐蚀）/ 引擎链 直线→灰度→形态学(梯度) / 窗口下拉 7 项与读写；
+     并**回归重跑主体那 114 项仍然全 PASS**；全工程 grep `gray_bgr` 只剩 Detector.py 里一句指路注释。
+   · 界面截图（人工读图确认，均在 E:\opencv_python_3_8\backups\_ui_preview）：
+     m2_dialog_threshold / m2_dialog_morphology / m2_dialog_morphology_7ops / m2_morph_op_list /
+     m2_dialog_blur / m2_dialog_invert / m2_tree_process.png。
+
+六、回退点（均在 E:\opencv_python_3_8\backups）
+   before_M2 → at_20261003_2238 → before_morph_ext_and_gray_move → at_20261003_2342
+
+七、遗留 / 后续待办
+   1、目标3「独立图像源节点」未开工，需先拍板决策 c（与全局图像源**并存** vs 取代）；
+      目标4「参数校验」需先拍板决策 d（"能纠正的自动纠正 + 日志" vs 一律拦住）。
+   2、目前只有灰度带"作用于整图"（whole_image_param），其余处理类算子只按 ROI 处理——要不要都加，待定。
+   3、`GenericProcessDialog` 的 `file` 控件类型已实现，是留给目标3的图像源节点用的，本批没有算子用到。
+   4、识别类（人脸 / 颜色）本批不做，M5 收尾时在树里标注"未实现"。
+   5、形态学在彩色图上做顶帽 / 黑帽 / 梯度是逐通道的，实际用建议前面接"灰度"节点。
+
+
 
 
 

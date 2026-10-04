@@ -12,22 +12,8 @@ class DetectorShape:
     在显示层完成，这样检测结果永远不会污染下游节点的输入图像。
     """
 
-    def gray_bgr(self, img):
-        """
-        灰度化的"数据层"版本：始终返回 3 通道 BGR 图。
-
-        数据流引擎里灰度是"处理类"算子，它的输出图像要交给下游模块继续算，
-        而下游的 cv2.line / cv2.circle / HoughCircles 都要求 3 通道，
-        所以这里不能像原来的 gray() 那样返回单通道，必须先灰度再补回 3 通道。
-        图像内容没有颜色了，但通道数保持和彩色图一致，下游不会报错。
-        """
-        if img is None or img.size == 0:
-            return img
-        if len(img.shape) == 2:
-            # 本来就是单通道，补成 3 通道即可
-            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    # 注：灰度化（原来的 gray_bgr）2026.10.3 已搬到 ProcessOps.to_gray()——
+    #     本文件只放检测类算法，处理类（灰度等）统一归 ProcessOps.py。
 
     def line_detector(self, img, rho = 1.0, theta = np.pi / 180,
                       threshold = 100, min_line_length = 100.0,
@@ -137,10 +123,9 @@ def main():
         print("没找到 image/lena.png，改用自动生成的测试图")
         img = make_test_image()
 
-    gray = detector.gray_bgr(img)     # 灰度（数据层版本，仍是 3 通道）
-    canvas = gray.copy()
-    canvas, line_data = detector.line_detector(canvas)
-    canvas, circle_data = detector.circle_detector(canvas)
+
+    canvas, line_data = detector.line_detector(img)
+    canvas, circle_data = detector.circle_detector(img)
     print("检测到直线：", line_data)
     print("检测到圆：", circle_data)
 

@@ -19,6 +19,7 @@ from FlowPages import FlowPageManager
 from LineParamsDialog import LineParamsDialog
 from CircleParamsDialog import CircleParamsDialog
 from GrayParamsDialog import GrayParamsDialog
+from GenericProcessDialog import GenericProcessDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
 from NodeRegistry import SOURCE_KEY, get_spec, result_bbox
@@ -1563,13 +1564,23 @@ class MainWindow:
         self.update_all_edges() # 刷新画面
 
     def on_node_double_clicked(self, node):
-        """双击流程图方框时触发：弹出这个算子自己的参数窗口"""
+        """
+        双击流程图方框时触发：弹出这个算子自己的参数窗口。
+
+        路由顺序（批次4 决策 b）：**专用窗口优先，通用窗口兜底**——
+        · 直线 / 圆 / 灰度各有专用窗口（灰度那个带"作用于整图"这种特殊开关）；
+        · 其余算子只要在注册表里声明了 param_specs（含空表），就走通用窗口
+          GenericProcessDialog，界面按参数表自动生成 ⇒ **新增算子不用改这里**。
+        """
+        spec = get_spec(node.name)
         if node.name == "直线":
             self._open_node_dialog(node, LineParamsDialog)
         elif node.name == "圆":
             self._open_node_dialog(node, CircleParamsDialog)
         elif node.name == "灰度":
             self._open_node_dialog(node, GrayParamsDialog)
+        elif spec is not None and spec.param_specs is not None:
+            self._open_node_dialog(node, GenericProcessDialog)
         else:
             # 人脸/颜色这些还没实现的模块：双击保持"无反应"、不弹提示
             pass

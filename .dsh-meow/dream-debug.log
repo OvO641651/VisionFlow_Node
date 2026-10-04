@@ -134,3 +134,53 @@
 [2026-10-02T15:55:31.485Z] hit-chain pid=9800 sid=350ebb02 textLen=33 hit=yes
 [2026-10-02T15:56:54.834Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
 [2026-10-02T15:57:21.976Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-02T16:23:17.949Z] hit-chain pid=9800 sid=350ebb02 textLen=178 hit=null
+[2026-10-02T16:27:22.309Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-02T19:16:59.353Z] check sid=350ebb02 active=false idle=10178s
+[2026-10-02T20:16:51.553Z] check sid=350ebb02 active=false idle=13770s
+[2026-10-02T20:16:51.572Z] dream start pid=9800 session=350ebb02 rounds=3 T=1790958441637
+[2026-10-02T21:16:37.149Z] check sid=350ebb02 active=true idle=17356s
+[2026-10-02T22:16:46.644Z] check sid=350ebb02 active=true idle=20965s
+[2026-10-02T23:16:58.396Z] check sid=350ebb02 active=true idle=24577s
+[2026-10-03T00:16:49.397Z] check sid=350ebb02 active=true idle=28168s
+[2026-10-03T01:34:17.838Z] hit-chain pid=9800 sid=350ebb02 textLen=262 hit=null
+[2026-10-03T01:35:10.834Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T04:10:10.298Z] check sid=350ebb02 active=true idle=9300s
+[2026-10-03T04:10:10.331Z] dream recovered session=350ebb02 stamped=28
+[2026-10-03T14:35:14.829Z] hit-chain pid=9800 sid=350ebb02 textLen=131 hit=yes
+[2026-10-03T14:39:52.514Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T14:40:41.731Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T14:42:44.365Z] check sid=350ebb02 active=false idle=173s
+[2026-10-03T14:57:44.385Z] check sid=350ebb02 active=false idle=1073s
+[2026-10-03T15:12:44.400Z] check sid=350ebb02 active=false idle=1973s
+[2026-10-03T15:19:55.996Z] hit-chain pid=9800 sid=350ebb02 textLen=195 hit=yes
+[2026-10-03T15:27:44.400Z] check sid=350ebb02 active=false idle=435s
+[2026-10-03T15:34:31.173Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T15:38:57.257Z] hit-chain pid=9800 sid=350ebb02 textLen=78 hit=null
+[2026-10-03T15:39:27.772Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T15:41:33.449Z] hit-chain pid=9800 sid=350ebb02 textLen=53 hit=null
+[2026-10-03T15:42:44.402Z] check sid=350ebb02 active=false idle=12s
+[2026-10-03T15:43:17.077Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T15:43:43.956Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-03T15:57:44.413Z] check sid=350ebb02 active=false idle=869s
+[2026-10-03T16:12:44.415Z] check sid=350ebb02 active=false idle=1769s
+[2026-10-03T16:27:44.419Z] check sid=350ebb02 active=false idle=2669s
+[2026-10-03T16:42:44.421Z] check sid=350ebb02 active=false idle=3569s
+[2026-10-03T16:57:44.423Z] check sid=350ebb02 active=false idle=4469s
+[2026-10-03T17:12:44.439Z] check sid=350ebb02 active=false idle=5369s
+[2026-10-03T17:27:44.438Z] check sid=350ebb02 active=false idle=6269s
+[2026-10-03T17:42:44.438Z] check sid=350ebb02 active=false idle=7169s
+[2026-10-03T17:57:44.438Z] check sid=350ebb02 active=false idle=8069s
+[2026-10-03T18:12:44.441Z] check sid=350ebb02 active=false idle=8969s
+[2026-10-03T18:27:44.442Z] check sid=350ebb02 active=false idle=9869s
+[2026-10-03T18:42:44.452Z] check sid=350ebb02 active=false idle=10769s
+[2026-10-03T18:57:44.455Z] check sid=350ebb02 active=false idle=11669s
+[2026-10-03T18:57:44.486Z] dream start pid=9800 session=350ebb02 rounds=3 T=1791042195880
+[2026-10-03T18:58:08.722Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-03T18:58:08.730Z] dream group 2/3 steered
+[2026-10-03T18:58:36.998Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-03T18:58:37.002Z] dream group 3/3 steered
+[2026-10-03T18:59:59.110Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-03T18:59:59.126Z] dream done session=350ebb02 groups=3 stamped=32
+[2026-10-04T17:09:42.606Z] hit-chain pid=9800 sid=350ebb02 textLen=64 hit=yes
+[2026-10-04T17:10:37.839Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false

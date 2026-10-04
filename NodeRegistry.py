@@ -46,7 +46,8 @@ KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果
 class NodeSpec(object):
     """一个算子的能力声明"""
 
-    def __init__(self, name, kind, run, draw=None, format_result=None, whole_image_param=None):
+    def __init__(self, name, kind, run, draw=None, format_result=None, whole_image_param=None,
+                 param_specs=None):
         """
         :param name: 算子名字（和左侧树、流程图上方框里的文字一致）
         :param kind: KIND_PROCESS 或 KIND_DETECT
@@ -57,6 +58,12 @@ class NodeSpec(object):
         :param whole_image_param: 参数名。该参数为真时这个算子忽略 ROI、作用于整幅图，
                                   引擎会把它的 ROI 当成整图（做到"所见即所算"）。
                                   目前只有灰度用它（gray_full_image）。
+        :param param_specs: 参数声明表（决定"参数窗口"长什么样），每一项是
+                            (参数名, 界面中文名, 控件类型, 附加选项)；
+                            int / float / combo / bool / file 五种控件类型。
+                            · None = 这个算子走"专用参数窗口"（直线 / 圆 / 灰度）
+                            · []   = 走通用窗口，但没有可调参数（取反）
+                            · 有内容 = 通用窗口按这张表自动生成控件（决策 b）
         """
         self.name = name
         self.kind = kind
@@ -64,6 +71,7 @@ class NodeSpec(object):
         self.draw = draw
         self.format_result = format_result
         self.whole_image_param = whole_image_param
+        self.param_specs = param_specs
 
     @property
     def modifies_image(self):
@@ -76,32 +84,12 @@ class NodeSpec(object):
 
 # ----------------------------------------------------------------------
 # 处理类算子
+#
+# 处理类（灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取）的算法、参数表、
+# 结果文案都放在 ProcessOps.py 里，本文件只在下面把它们的声明汇总成 NodeSpec
+# （这样"加一个处理类算子"= 改 ProcessOps.py + main.ui 树里加一项，不用动引擎）。
+# 检测类算子（直线 / 圆）的算法依赖 DetectorShape，仍然登记在本文件下方。
 # ----------------------------------------------------------------------
-def _run_gray(detector, img, roi, params):
-    """
-    灰度（处理类）：把 ROI 区域转成 3 通道灰度，返回一张新图。
-
-    为什么返回 3 通道：数据层的图像要交给下游算法继续用（cv2.line/circle 都要求
-    3 通道），单通道图会把后面的算子弄崩。
-    参数 gray_full_image = True 时不看 ROI，整幅图都转灰度（下游拿到的就是全灰的图）。
-    """
-    out = img.copy()
-    if out.ndim == 2:
-        # 万一上游给的是单通道图，先补成 3 通道，保证和下游算法一致
-        out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
-
-    if params.get("gray_full_image", False):
-        # "作用于整图"：忽略 ROI，整幅图都转灰度
-        return detector.gray_bgr(out), []
-
-    x, y, w, h = roi
-    patch = out[y:y + h, x:x + w]
-    out[y:y + h, x:x + w] = detector.gray_bgr(patch)
-    return out, []
-
-
-def _format_gray(results):
-    return "执行成功（图像已灰度化，下游模块可见）"
 
 
 # ----------------------------------------------------------------------
@@ -180,11 +168,24 @@ def _format_circle(results):
 # 注册表
 # ----------------------------------------------------------------------
 NODE_SPECS = {
-    "灰度": NodeSpec("灰度", KIND_PROCESS, _run_gray, None, _format_gray,
-                    whole_image_param="gray_full_image"),
     "直线": NodeSpec("直线", KIND_DETECT, _run_line, _draw_line, _format_line),
     "圆": NodeSpec("圆", KIND_DETECT, _run_circle, _draw_circle, _format_circle),
 }
+
+# 汇总"处理"这一大类的算子声明（算法 + 参数表都在 ProcessOps.py 里）。
+# 放在文件末尾 import，避免"注册表 ←→ 处理类模块"互相 import 造成循环导入。
+from ProcessOps import PROCESS_SPECS  # noqa: E402
+
+for _entry in PROCESS_SPECS:
+    NODE_SPECS[_entry["name"]] = NodeSpec(
+        name=_entry["name"],
+        kind=KIND_PROCESS,
+        run=_entry["run"],
+        draw=None,
+        format_result=_entry.get("format_result"),
+        whole_image_param=_entry.get("whole_image_param"),
+        param_specs=_entry.get("param_specs"),
+    )
 
 
 def get_spec(name):

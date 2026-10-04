@@ -2,13 +2,13 @@
 
 | 项 | 内容 |
 |---|---|
-| 文档版本 | **v1.1.3**（v1.1 系列的当前修订；历次修订见下方"v1.1 相对 v1.0 的变更"第 1~6 条；v1.0 原版保留不动） |
-| 撰写日期 | 2026.10.2（v1.1 更新于 22:57；v1.1.1 / v1.1.2 / v1.1.3 依次补于 23:13 / 23:24 / 23:38） |
+| 文档版本 | **v1.3**（历次修订见下方"v1.1 相对 v1.0 的变更"第 1~8 条；v1.0 原版保留不动） |
+| 撰写日期 | 2026.10.2 起（v1.1.x 于 10.2 22:57~23:38；**v1.2 于 10.3 22:38**：目标二落地；**v1.3 于 10.3 23:42**：形态学补 3 档 + 灰度算法搬到 ProcessOps） |
 | 适用工程 | `E:\opencv_python_3_8\PySide\VisionFlowNoed`（目录名少个 d） |
-| 代码基线 | 批次2 提交 `668320d`、批次3 提交 `d64d7b6`；**M1 已实现**（尚未提交） |
-| 备份基线 | `E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261002_2257` |
-| 当前状态 | **M1（方案持久化）已完成并通过验证**；M2~M4 未开工，第 9 节的决策仍待拍板 |
-| 说明 | 第 3 节已按**实际实现**更新（不再是"拟定"）；第 4~6 节的代码片段仍为**拟定**。**归档约定**：本文件是"当前版本"，只放在工程 `plan\`；**每改一次方案，先在 `E:\opencv_python_3_8\backups` 存一份带版本号的快照**（如 `VisionFlowNode_批次4技术方案_v1.1.3_2026.10.2.md`），历史版本按版本号排开。 |
+| 代码基线 | 批次2 提交 `668320d`、批次3 提交 `d64d7b6`；**M1 / M2 已实现**（尚未提交） |
+| 备份基线 | `E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261003_2342` |
+| 当前状态 | **M1（方案持久化）、M2（算子扩充 + 通用参数窗口）已完成并通过验证**；M3 / M4 未开工，第 9 节的 c / d 仍待拍板 |
+| 说明 | 第 3 节（方案持久化）、第 4 节（算子扩充 + 通用窗口）已按**实际实现**更新；第 5 / 6 节的代码片段仍为**拟定**。**归档约定**：本文件是"当前版本"，只放在工程 `plan\`；**每改一次方案，先在 `E:\opencv_python_3_8\backups` 存一份带版本号的快照**，历史版本按版本号排开。 |
 
 **v1.1 相对 v1.0 的变更（按用户反馈调整）**
 
@@ -18,6 +18,8 @@
 4. **加载去重（v1.1.1 补充）**：文件里与工作区已有页面**内容完全相同**的页不再重复创建——否则"保存 → 再打开同一文件"会把页面越堆越多（`Flow`、`Flow8(2)`、`Flow(2)(2)`…）。判定用"页面内容指纹"：标题 + 每个节点的名字/坐标/图像源绑定/参数（数值 round 4 位）+ 连线关系。
 5. **一个文件只装一页（v1.1.2 补充）**：`_collect_project()` 只收**当前页**（新增 `_collect_page(page)` 负责"收一页"），`pages` 数组长度恒为 1、`current_page` 恒为 0；"另存为"的默认文件名用**当前页的标签名**；关闭非当前页时选"保存"，会先把那一页切成当前页再存。原因：以前的"保存方案"写的是**整张工作区**，导致打开某个方案会把当时开着的其它页面一起带出来（用户实测反馈）。
 6. **方案文件路径按页面记（v1.1.3 补充）**：路径存在 `page["project_path"]` 上（不再是窗口级变量）。新建的页面没有文件，"保存项目"会**弹窗让用户选路径**；已有文件的页面保存时静默写回自己的文件。同时修掉"保存一页把**所有**页面的未保存标记都清掉"的问题——现在只 `clear_dirty(当前页)`。
+7. **M2 落地（v1.2）**：处理类算子扩到 6 个（灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取），算法与参数表放进新文件 **`ProcessOps.py`**（按大类分文件，注册表只做汇总）；新文件 **`GenericProcessDialog.py`** 按 `param_specs` 自动生成"运行参数"页（直线 / 圆 / 灰度 仍用各自的专用窗口）；双击路由改为"专用优先、通用兜底"；左侧树分成 **处理 / 检测 / 识别** 三组（灰度从"检测"移到"处理"）。识别类（人脸 / 颜色）本批不做。
+8. **形态学补 3 档 + 灰度算法搬家（v1.3）**：形态学的 `morph_op` 从 4 档扩到 **7 档**（+ 梯度 / 顶帽 / 黑帽——OpenCV 同一个 `cv2.morphologyEx`，参数完全同构，所以仍是**一个节点 + 一张参数表**）；灰度的**算法本身**从 `DetectorShape.gray_bgr()` 搬到 `ProcessOps.to_gray()`（`Detector.py` 只放检测类），`ProcessOps.gray()` 不再接收 `gray_func` 参数。
 
 ---
 
@@ -254,10 +256,23 @@ NodeSpec(
 | **取反** | 无（沿用 ROI / 继承） | `out[roi] = cv2.bitwise_not(patch)` |
 | **滤波** | `type`(均值/高斯/中值)、`ksize`(int, odd, 1~31, 默认 3)、`sigma`(float, 默认 0) | `cv2.blur` / `cv2.GaussianBlur` / `cv2.medianBlur` |
 | **二值化** | `mode`(固定/Otsu/自适应)、`thresh`(0~255)、`maxval`(0~255)、`bin_type`(二值/反二值) | `cv2.threshold` / `cv2.threshold(..., THRESH_OTSU)` / `cv2.adaptiveThreshold`；结果需 `cvtColor(GRAY2BGR)` 回 3 通道 |
-| **形态学** | `op`(腐蚀/膨胀/开/闭)、`shape`(矩形/椭圆/十字)、`ksize`(odd)、`iterations`(1~10) | `cv2.getStructuringElement` + `cv2.morphologyEx` |
+| **形态学** | `op`(**腐蚀/膨胀/开/闭/梯度/顶帽/黑帽**，v1.3 起 7 档)、`shape`(矩形/椭圆/十字)、`ksize`(odd)、`iterations`(1~10) | `cv2.getStructuringElement` + `cv2.morphologyEx`（含 `MORPH_GRADIENT` / `MORPH_TOPHAT` / `MORPH_BLACKHAT`） |
 | **边缘提取** | `method`(Canny/Sobel/Laplacian)、`low`、`high`、`ksize`(odd) | `cv2.Canny` / `cv2.Sobel` / `cv2.Laplacian`；输出灰度 → 补成 3 通道 |
 
-**统一结果文案**：新增 `_format_process(results)` 之类，返回"执行成功（图像已处理，下游模块可见）"，避免每个算子各写一份（现有 `_format_gray` 可并入）。
+**统一结果文案**：`ProcessOps.format_process()` 返回"执行成功（图像已处理，下游可见）"，取反 / 滤波 / 二值化 / 形态学 / 边缘提取共用（灰度保留"图像已灰度化"那句）。
+
+### 4.6 实现落地（v1.2，2026.10.3）
+
+| 项 | 落地情况 |
+|---|---|
+| 算法位置 | 新文件 **`ProcessOps.py`**：`ProcessOps` 类（每个算子一个方法）+ 文件末尾 `PROCESS_SPECS` 声明表；三条硬规矩写在文件头（不就地改入参 / 输出保证 3 通道 / 只动 ROI）；本文件不 import `NodeRegistry`（避免循环导入）。**灰度算法本身也在 `ProcessOps.to_gray()`**（v1.3 从 `DetectorShape.gray_bgr` 搬来，`Detector.py` 只放检测类） |
+| 参数表实际键名 | 取反：无；滤波 `blur_type` / `blur_ksize`(odd) / `blur_sigma`；二值化 `thresh_mode` / `thresh_value` / `thresh_maxval` / `thresh_type`；形态学 `morph_op` / `morph_shape` / `morph_ksize`(odd) / `morph_iterations`；边缘提取 `edge_method` / `edge_low` / `edge_high` / `edge_ksize`(odd) |
+| 注册方式 | `NodeRegistry` 文件末尾 `from ProcessOps import PROCESS_SPECS`，逐条组装成 `NodeSpec(kind=KIND_PROCESS)` ⇒ 加一个处理类算子只改 `ProcessOps.py` + `main.ui` 树，不动引擎 |
+| 参数声明语义 | `param_specs=None` = 专用窗口（直线 / 圆 / 灰度）；`[]` = 通用窗口但没有可调参数（取反）；有内容 = 通用窗口按表生成 |
+| 通用窗口 | `GenericProcessDialog(LineParamsDialog)`：先藏掉"运行参数"页里直线专用那几行（按布局项遍历，不依赖控件名），再按表生成 `param_<键名>` 控件（int / float / combo / bool / file）；处理类去掉"显示结果"页；没参数时给一句灰字提示。**必须先把父类写进来的直线参数 pop 掉**，否则无参数算子会混入无关参数 |
+| 双击路由 | 专用优先（直线 / 圆 / 灰度），其余 `param_specs is not None` 的走通用窗口 ⇒ 新增算子不必再改 `on_node_double_clicked` |
+| 树分组 | 处理（灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取）、检测（直线 / 圆）、识别（人脸 / 颜色，未实现） |
+| 本批未做 | 除灰度外没有"作用于整图"开关（引擎已支持 `whole_image_param`，加一行声明即可）；`validate`（目标四）未接；`file` 控件类型已实现但暂无算子使用（留给目标三的图像源节点） |
 
 **共同注意**：
 - 处理类算子必须 `out = img.copy()` 后改 ROI 区域，**不能就地改入参**；
@@ -381,7 +396,7 @@ NodeSpec(
 | 里程碑 | 内容 | 交付判定 | 回退点 |
 |---|---|---|---|
 | **M1 方案持久化 ✅ 已完成（2026.10.2）** | `append_pages` + `save/load_project` + 菜单 + 顶部两个按钮 + 关闭页面提醒保存 | 46 项 + 35 项无头冒烟全 PASS；坏文件不破坏现场；追加式加载不影响已有页面 | `before_project_persist`（第一版）/ `before_append_pages_and_buttons`（v1.1） |
-| **M2 通用窗口 + 5 算子** | `param_specs`、`GenericProcessDialog`、5 个算子 run、树项 | 5 个算子的效果断言全通过；双击能开窗口 | `before_generic_dialog` |
+| **M2 通用窗口 + 5 算子 ✅ 已完成（2026.10.3）** | `ProcessOps.py`（5 个算子 + 灰度迁移）、`NodeSpec.param_specs`、`GenericProcessDialog`、树三分组、双击路由 | 114 项无头冒烟全 PASS（参数表 / 控件生成 / 算子效果与对照实验 / 数据层不被污染 / 路由 / 树结构）+ 5 张界面截图 | `before_M2` / `at_20261003_2238` |
 | **M3 图像源节点** | 新 spec + 引擎落点 + 参数表（含 file 类型） | 三种来源各跑通；不放它时行为不变 | `before_image_source` |
 | **M4 参数校验** | `validate` 规则 + 窗口钩子 + 引擎兜底 | 规则逐条用例通过 | `before_validate` |
 | **M5 收尾** | 树里未实现模块标注、批次总结日志、截图、最终备份 | 项目全景与日志齐全 | `at_<时间>` 快照 |
@@ -395,10 +410,10 @@ NodeSpec(
 | 编号 | 问题 | 推荐做法 | 备选 |
 |---|---|---|---|
 | **a** | 方案文件里存哪些参数？ | 只存"当前图片那一份参数" + `last_image` | 先把 per-image 键从 `id(原图)` 改成文件名/路径，再存多图多套参数（额外一块工作） |
-| **b** | 5 个算子的参数界面 | 通用动态窗口（`GenericProcessDialog`） | 每个算子单独 `.ui`（设计师可见，但每加一个算子就要重复一遍） |
-| **c** | "图像源"节点与全局图像源 | 并存（流程里放了才生效） | 取代（老流程与老方案都要改） |
-| **d** | 参数校验策略 | 能纠正的自动纠正 + 日志，不能的拦住 | 一律拦住、弹提示 |
-| **e** | 附加问题 | 建议把"灰度"从"检测"分组挪到新的"处理"分组（它本来就是处理类算子） | 保持现状 |
+| **b** | 5 个算子的参数界面 | ✅ **已定（2026.10.3）：通用动态窗口**（`GenericProcessDialog` 已实现） | 每个算子单独 `.ui`（未采用） |
+| **c** | "图像源"节点与全局图像源 | 并存（流程里放了才生效）——**待拍板** | 取代（老流程与老方案都要改） |
+| **d** | 参数校验策略 | 能纠正的自动纠正 + 日志，不能的拦住——**待拍板** | 一律拦住、弹提示 |
+| **e** | 附加问题 | ✅ **已定（2026.10.3）：灰度移到新的"处理"分组**（树已改成 处理 / 检测 / 识别） | 保持现状（未采用） |
 
 ---
 
