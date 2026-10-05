@@ -41,6 +41,7 @@ AUTO_SOURCE = "__auto__"
 # 算子类型
 KIND_PROCESS = "process"    # 处理类：会改写数据层图像
 KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果
+KIND_SOURCE = "source"      # 图像源类：流程的起点，自己"造"图（读文件 / 当前图像 / 测试图），没有上游
 
 
 class NodeSpec(object):
@@ -76,10 +77,11 @@ class NodeSpec(object):
     @property
     def modifies_image(self):
         """
-        这个算子的输出图像会不会和输入不一样（处理类 = True，检测类 = False）。
+        这个算子的输出图像会不会和输入不一样。
+        处理类 = True；图像源类 = True（它读出来的是新图）；检测类 = False（原样透传）。
         main.py 在多上游时用它挑"真正产出新图像"的那一支当默认图像源。
         """
-        return self.kind == KIND_PROCESS
+        return self.kind in (KIND_PROCESS, KIND_SOURCE)
 
 
 # ----------------------------------------------------------------------
@@ -172,20 +174,31 @@ NODE_SPECS = {
     "圆": NodeSpec("圆", KIND_DETECT, _run_circle, _draw_circle, _format_circle),
 }
 
-# 汇总"处理"这一大类的算子声明（算法 + 参数表都在 ProcessOps.py 里）。
-# 放在文件末尾 import，避免"注册表 ←→ 处理类模块"互相 import 造成循环导入。
-from ProcessOps import PROCESS_SPECS  # noqa: E402
 
-for _entry in PROCESS_SPECS:
-    NODE_SPECS[_entry["name"]] = NodeSpec(
-        name=_entry["name"],
-        kind=KIND_PROCESS,
-        run=_entry["run"],
-        draw=None,
-        format_result=_entry.get("format_result"),
-        whole_image_param=_entry.get("whole_image_param"),
-        param_specs=_entry.get("param_specs"),
-    )
+def _register_category(entries, kind):
+    """
+    把某个"分类模块"导出的声明表组装成 NodeSpec 登记进注册表。
+    分类模块（ProcessOps.py / SourceOps.py）只导出声明、**不 import 本文件**，
+    所以"注册表 ←→ 分类模块"不会循环导入。
+    """
+    for entry in entries:
+        NODE_SPECS[entry["name"]] = NodeSpec(
+            name=entry["name"],
+            kind=kind,
+            run=entry["run"],
+            draw=None,
+            format_result=entry.get("format_result"),
+            whole_image_param=entry.get("whole_image_param"),
+            param_specs=entry.get("param_specs"),
+        )
+
+
+# 放在文件末尾 import：避免循环导入（注册表 ←→ 分类模块）
+from ProcessOps import PROCESS_SPECS  # noqa: E402
+from SourceOps import SOURCE_SPECS    # noqa: E402
+
+_register_category(PROCESS_SPECS, KIND_PROCESS)   # 处理类：灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取
+_register_category(SOURCE_SPECS, KIND_SOURCE)     # 图像源类：图片源（第一版）
 
 
 def get_spec(name):

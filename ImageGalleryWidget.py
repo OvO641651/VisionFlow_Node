@@ -27,6 +27,14 @@ class ImageGalleryWidget(QWidget):
     # 自定义信号：当点击缩略图时，把原图的数据（OpenCV BGR numpy数组）发送出去
     image_selected = Signal(object)
 
+    # 自定义信号：点击缩略图时，把它对应的**文件路径**发送出去
+    # （路径可能为空：摄像头抓帧、测试图这些没有对应文件）
+    # 主窗口用它把"图片源"节点的路径同步过去——图库和图片源节点是统一的
+    image_path_selected = Signal(object)
+
+    # 条目里存"图片文件路径"用的角色（Qt.UserRole 已经存了原图数据，往后排一个）
+    PATH_ROLE = Qt.UserRole + 1
+
     # 需要拦截并丢弃的拖放类事件（配合 eventFilter 使用）
     # 类属性 _DROP_EVENTS
     # QEvent.DragEnter	拖拽进入事件	鼠标拖着一个东西刚进入控件范围时触发
@@ -107,11 +115,14 @@ class ImageGalleryWidget(QWidget):
         # 非拖放事件交回 QWidget 的默认实现，避免影响点击、绘制、滚动等正常功能
         return super().eventFilter(watched, event)
 
-    def add_image(self, cv_img):
+    def add_image(self, cv_img, path=None):
         """
         将一张 OpenCV 格式的图片添加到图库列表。
 
         :param cv_img: OpenCV 读取的 BGR 格式图像数据 (numpy 数组)。
+        :param path: 这张图对应的文件路径（可选）。
+                     传了就能"点图库改图片源节点的路径"；摄像头帧这类没有文件的就不传。
+        :return: 新增的 QListWidgetItem
         """
         # 图像格式转换：BGR -> RGB，并转换为 Qt 能够识别的 QPixmap。
         rgb_frame = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -130,21 +141,44 @@ class ImageGalleryWidget(QWidget):
 
         # 将原始的大图数据存到条目中。
         item.setData(Qt.UserRole, cv_img)
+        # 顺便记住它来自哪个文件（没有就存 None）
+        item.setData(self.PATH_ROLE, path)
 
         # 将配置好的条目添加到 QListWidget 中
         self.gallery_list.addItem(item)
+        return item
 
+    def has_path(self, path):
+        """
+        图库里是不是已经有这个文件了。
+
+        批量导入 / "图片源"执行完之后顺手把它的图也放进图库时，用它去重，避免同一个文件出现两张缩略图。
+        """
+        if not path:
+            return False
+        target = os.path.normcase(os.path.abspath(path))
+        for i in range(self.gallery_list.count()):
+            item = self.gallery_list.item(i)
+            saved = item.data(self.PATH_ROLE) if item is not None else None
+            if saved and os.path.normcase(os.path.abspath(saved)) == target:
+                return True
+        return False
 
     def _on_item_clicked(self, item):
         """
         内部槽函数：处理列表项的点击事件，并发射信号。
         :param item: 被点击的 QListWidgetItem 对象。
         """
+        if item is None:
+            return
         # 从点击的条目中取出之前绑定的原图数据
         img_bgr = item.data(Qt.UserRole)
         if img_bgr is not None:
             # 触发自定义信号，把原图数据传给主窗口
             self.image_selected.emit(img_bgr) # type:ignore
+        # 再把"这张图来自哪个文件"也发出去（可能是空字符串：摄像头帧、测试图没有文件）
+        path = item.data(self.PATH_ROLE) or ""
+        self.image_path_selected.emit(path) # type:ignore
 
 
 

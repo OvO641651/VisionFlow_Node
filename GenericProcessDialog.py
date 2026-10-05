@@ -27,12 +27,14 @@
 控件名字统一是 param_<参数名>，方便 findChild / 排查问题。
 """
 
+import os
+
 from PySide2.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSpinBox, QVBoxLayout, QWidget)
 
 from LineParamsDialog import LineParamsDialog
-from NodeRegistry import get_spec
+from NodeRegistry import KIND_SOURCE, get_spec
 
 # 直线专用、但要被通用窗口藏起来的控件（它们的值对处理类算子没有意义）
 LINE_ONLY_WIDGETS = ("canny_low", "canny_high", "spin_canny_low", "spin_canny_high",
@@ -55,6 +57,11 @@ class GenericProcessDialog(LineParamsDialog):
 
         self._build_param_rows()      # 生成"运行参数"页（内部会先藏掉直线专用那几行）
         self._remove_result_tab()     # 处理类没有结构化结果 → 去掉"显示结果"页
+        if getattr(self.spec, "kind", None) == KIND_SOURCE:
+            # 图像源这类"流程起点"没有上游：基本参数页里那些"图像源绑定 / ROI 继承"对它没意义，
+            # 所以只留"运行参数"页；同时去掉"执行 / 连续执行"两个按钮（见 _remove_run_buttons）。
+            self._remove_basic_tab()
+            self._remove_run_buttons()
         self._load_params()           # 再加载一次：这回把动态控件也灌上值
 
     # ------------------------------------------------------------------
@@ -104,8 +111,13 @@ class GenericProcessDialog(LineParamsDialog):
 
         specs = list(getattr(self.spec, "param_specs", None) or [])
         if not specs:
-            hint = QLabel("该模块没有可调参数（只按基本参数里的 ROI / 继承处理）")
+            # 这一页没有任何可调参数：给一行灰字提示。
+            # 注意文案要短 + 允许换行：QLabel 的 sizeHint 是按**整行文字**宽度算的，
+            # 长句子会把整个对话框顶宽（用户实测反馈："取反的窗口比别的宽一大截"就是这句长提示造成的）。
+            hint = QLabel("该模块没有可调参数")
             hint.setStyleSheet("color: #888888;")
+            hint.setWordWrap(True)
+            hint.setToolTip("该模块没有可调参数，只按“基本参数”页里的 ROI / 继承设置处理")
             layout.addWidget(hint)
             layout.addStretch(1)
             return
@@ -172,11 +184,48 @@ class GenericProcessDialog(LineParamsDialog):
         value = int(value)
         return value + 1 if value % 2 == 0 else value
 
+    def _browse_wants_folder(self):
+        """
+        这次点"浏览…"该弹"选文件夹"还是"选图片"？
+
+        用户 2026.10.5 要求：图片和文件夹**分开**、对话框回到系统原生——
+        图片源节点的来源选成"文件夹"时，这里就弹"选择文件夹"；否则弹"选择图片"。
+        看的是下拉框**当前**选中的值（用户可能刚改过还没保存）。
+        """
+        if getattr(self.spec, "kind", None) != KIND_SOURCE:
+            return False
+        controls = getattr(self, "param_controls", None) or {}
+        combo = controls.get("source_type")
+        if combo is not None:
+            return combo.currentText() == "文件夹"
+        if self.node is None:
+            return False
+        return self.node.params.get("source_type") == "文件夹"
+
     def _browse_file(self, edit, filters):
-        """file 类型参数右边那个"浏览…"按钮"""
-        path, _selected = QFileDialog.getOpenFileName(self, "选择文件", edit.text(), filters)
-        if path:
-            edit.setText(path)
+        """file 类型参数右边那个"浏览…"按钮
+
+        用**系统原生**对话框（用户要求：图片和文件夹分开，界面回到原生）：
+          · 图片源节点的来源 = "文件夹" → 弹"选择文件夹"，选完路径就是这个文件夹
+            （里面的图片会静默导入图库，方便点缩略图切换）；
+          · 其它情况 → 弹"选择图片"，选完路径就是这张图。
+        导入全程不弹任何提示，坏的图片自动跳过。
+        """
+        if self._browse_wants_folder():
+            folder = QFileDialog.getExistingDirectory(self, "选择文件夹", edit.text())
+            if not folder:
+                return
+            if self.main_window is not None and hasattr(self.main_window, "import_folder_path"):
+                self.main_window.import_folder_path(folder)     # 静默导入，坏文件跳过
+            edit.setText(folder)
+            return
+
+        path, _selected = QFileDialog.getOpenFileName(self, "选择图片", edit.text(), filters)
+        if not path:
+            return
+        if self.main_window is not None and hasattr(self.main_window, "import_image_path"):
+            self.main_window.import_image_path(path)            # 静默导入，读不出来就跳过
+        edit.setText(path)
 
     def _remove_result_tab(self):
         """处理类没有结构化结果 → 去掉"显示结果"页（那页是结果计数）"""
@@ -186,6 +235,39 @@ class GenericProcessDialog(LineParamsDialog):
         index = self.ui.tabWidget.indexOf(result_page)
         if index >= 0:
             self.ui.tabWidget.removeTab(index)
+
+    def _remove_basic_tab(self):
+        """"流程起点"类节点（图片源）：去掉"基本参数"页——它没有上游，图像源绑定无从谈起"""
+        basic_page = self.ui.findChild(QWidget, "tab")
+        if basic_page is None:
+            return
+        index = self.ui.tabWidget.indexOf(basic_page)
+        if index >= 0:
+            self.ui.tabWidget.removeTab(index)
+
+    def _remove_run_buttons(self):
+        """
+        "流程起点"类节点的窗口去掉"执行 / 连续执行"两个按钮，只留"确定"（用户 2026.10.5 要求）。
+
+        理由：它的参数只是"从哪儿拿图"，没有可以单独预览的算法效果；
+        留着那两个按钮只会让人以为"在这里执行的是这个节点"。
+        点"确定" = 保存参数并关闭（见下面重写的 on_ok）。
+        """
+        for name in ("btn_run", "btn_cont"):
+            btn = self.ui.findChild(QWidget, name)
+            if btn is not None:
+                btn.hide()
+
+    def on_ok(self):
+        """点"确定"：起点节点只保存参数并关窗；其它算子沿用父类行为（先执行一次单步再关）"""
+        if getattr(self.spec, "kind", None) == KIND_SOURCE:
+            self._update_params()
+            # 用户 2026.10.5 要求：在图片源窗口点"确定"时，就把这张图加进图像列表里
+            if self.main_window is not None and hasattr(self.main_window, "_ensure_source_images_in_gallery"):
+                self.main_window._ensure_source_images_in_gallery()
+            self.accept()
+            return
+        super().on_ok()
 
     # ------------------------------------------------------------------
     # 参数读写：基本参数交给父类，动态控件由本类处理
@@ -214,6 +296,14 @@ class GenericProcessDialog(LineParamsDialog):
         for key in ("canny_low", "canny_high", "hough_threshold",
                     "min_line_length", "max_line_gap"):
             self.node.params.pop(key, None)
+
+        if getattr(self.spec, "kind", None) == KIND_SOURCE:
+            # 起点节点（图片源）没有"处理区域"这个概念：把父类写进来的 ROI 参数一并清掉，
+            # 免得方案文件里留一堆没用的 roi_x / roi_w —— 画面上那个莫名其妙的黄框就是这么来的
+            # （对话框曾经把"主窗口当前图的尺寸"当成 ROI 默认值写了进去，用户实测看到 512×512 的怪框）。
+            for key in ("roi_x", "roi_y", "roi_w", "roi_h", "roi_shape", "roi_inherit",
+                        "roi_margin", "roi_source", "hide_roi"):
+                self.node.params.pop(key, None)
 
         controls = getattr(self, "param_controls", None) or {}
         for key, _label, kind, _options in list(getattr(self.spec, "param_specs", None) or []):

@@ -22,7 +22,7 @@ from GrayParamsDialog import GrayParamsDialog
 from GenericProcessDialog import GenericProcessDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
-from NodeRegistry import SOURCE_KEY, get_spec, result_bbox
+from NodeRegistry import KIND_SOURCE, SOURCE_KEY, get_spec, result_bbox
 
 
 uiloader = QUiLoader()
@@ -214,6 +214,8 @@ class MainWindow:
             self.gallery_widget = ImageGalleryWidget(self.image_gallery)
             # 连接图库点击信号到主窗口的显示函数
             self.gallery_widget.image_selected.connect(self._on_gallery_image_selected)
+            # 点图库时顺便知道"这张图来自哪个文件"，用来同步"图片源"节点的路径
+            self.gallery_widget.image_path_selected.connect(self._on_gallery_path_selected)
 
 
 
@@ -232,7 +234,7 @@ class MainWindow:
             self.main_window,
             "选择图片或视频",
             "",
-            "图片文件 (*.png *.jpg *.jpeg *.bmp);;视频文件 (*.mp4 *.avi *.mkv);;所有文件(*.*)"
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;视频文件 (*.mp4 *.avi *.mkv);;所有文件(*.*)"
         )
         if not file_paths:
             # 用户点了取消，或者一个文件都没有选中
@@ -241,11 +243,13 @@ class MainWindow:
         # 无论当前是播放摄像头还是视频，先关闭释放资源
         self.close_camera()
 
-        # 把选中的文件按后缀分成 图片 / 视频 两类
-        image_exts = ('.png', '.jpg', '.jpeg', '.bmp')
+        # 把选中的文件按后缀分成 图片 / 视频 两类（"打开文件"只负责选图片和视频，不管文件夹）
+        image_exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
         video_exts = ('.mp4', '.avi', '.mkv')
-        image_paths = [p for p in file_paths if p.lower().endswith(image_exts)]
-        video_paths = [p for p in file_paths if p.lower().endswith(video_exts)]
+        image_paths = [p for p in file_paths
+                       if os.path.isfile(p) and p.lower().endswith(image_exts)]
+        video_paths = [p for p in file_paths
+                       if os.path.isfile(p) and p.lower().endswith(video_exts)]
 
         # 1、选中了视频：只播放视频（视频和静态图片不能混着处理）
         if video_paths:
@@ -288,38 +292,22 @@ class MainWindow:
             return
 
         # 2、选中了图片：批量导入（一张也可以）
+        #    用户要求：读不出来的图片直接跳过，不弹任何提示
         if image_paths:
-            # 批量读取图片，读取失败的单独记下来，最后一起提示
-            loaded_frames = []
-            failed_names = []
+            loaded = []
             for image_path in image_paths:
-                frame = cv2.imread(image_path)  # 读取图片
-                if frame is None:
-                    # 单张读取失败不影响其它图片，先记下文件名，最后统一提示
-                    failed_names.append(os.path.basename(image_path))
-                    continue
-                loaded_frames.append(frame)
-                # 把读取到的图片加到图库里
-                if hasattr(self, 'gallery_widget'):
-                    self.gallery_widget.add_image(frame)
+                loaded.extend(self.import_image_path(image_path))
 
-            if not loaded_frames:
-                # 一张都没读进来，直接提示并结束
-                QMessageBox.warning(self.main_window, "错误", "无法读取选中的图片文件")
+            if not loaded:
+                # 一张都没读进来：静默结束（不弹提示）
                 return
-            if failed_names:
-                # 有部分图片读取失败，提示用户哪些被跳过了
-                QMessageBox.warning(
-                    self.main_window, "警告",
-                    "以下图片读取失败，已跳过：\n" + "\n".join(failed_names)
-                )
 
             # 记下最近打开的来源（方案文件里会记它）
-            self.last_source = {"kind": "image", "path": image_paths[0]}
+            self.last_source = {"kind": "image", "path": loaded[0][1]}
 
             # 批量导入时主画面默认显示第一张，其余的点击图库缩略图切换
             # 新导入的图片还没有执行过，所以这里只显示原图
-            self._show_static_image(loaded_frames[0])
+            self._show_static_image(loaded[0][0])
 
             # 如果此时刚好有配置窗口开着，通知它刷新尺寸为图片的实际大小
             if self.current_dialog and self.current_dialog.isVisible():
@@ -753,6 +741,17 @@ class MainWindow:
             node.params_per_image = store
         return store
 
+    def _is_source_node(self, node):
+        """
+        这个节点是不是"流程起点"（图片源）。
+
+        起点节点的参数（来源 / 路径）属于**流程图本身**，不按图片归档 ——
+        否则用户一换图库里的图，图片源的路径就被清空了，它会退回"当前图像"，
+        于是"绑了图片源却处理当前图"（和当年"图像源绑定绝不能存进 params"是同一类坑）。
+        """
+        spec = get_spec(node.name)
+        return spec is not None and spec.kind == KIND_SOURCE
+
     def _save_node_params(self, nodes, image_key):
         """
         把一批节点的当前参数存到某个图片名下。
@@ -762,6 +761,9 @@ class MainWindow:
         if image_key is None:
             return
         for node in nodes:
+            if self._is_source_node(node):
+                # 起点节点（图片源）不参与按图片归档，见 _is_source_node 的说明
+                continue
             store = self._get_node_params_store(node)
             snapshot = dict(node.params)
             # 空字典不存：既省内存，也避免往 params 里灌 None 导致后面切片报错
@@ -775,6 +777,9 @@ class MainWindow:
         :param image_key: 图片标识。
         """
         for node in nodes:
+            if self._is_source_node(node):
+                # 起点节点（图片源）的参数不跟着图片走，切图时保持原样（见 _is_source_node）
+                continue
             store = self._get_node_params_store(node)
             # 先清空：这张图片以前没设置过的话，就保持空，
             # 各处的 .get(参数名, 默认值) 会自动取默认值（ROI 的默认宽高就是当前这张图的尺寸）
@@ -859,7 +864,7 @@ class MainWindow:
         self.last_detected_data = None
         self._update_execution_log([])
 
-    def _execute_static(self, frame, mode, node=None):
+    def _execute_static(self, frame, mode, node=None, adopt_frame=True):
         """
         对一张静态图片执行检测并把结果显示出来。
         只有"单步执行"、"连续执行"两个按钮会调用它。
@@ -867,12 +872,18 @@ class MainWindow:
         以后再切回这张图片时可以直接显示这次的结果，不用再点按钮。
 
         :param frame: OpenCV BGR 原图。
-        :param mode: "step" 单步执行（只跑 node 这一个节点）；"continuous" 连续执行（跑整个流程图）。
+        :param mode: "step" 单步执行（跑 node 及其上游）；"continuous" 连续执行（跑整个流程图）。
         :param node: 单步执行时要执行的节点。
+        :param adopt_frame: 是否把这一帧记成"当前静态图片"。
+               从"打开的图片 / 图库 / 视频"来的帧传 True（老行为）；
+               从**图片源节点兜底**来的帧传 False——它只是"这一轮驱动流程用的帧"，
+               不该篡改"主窗口当前打开的是哪张图"（否则用户换了图片源的文件、
+               再点执行时还会拿旧的那张，用户实测报过这个问题）。
         :return: 检测到的数据列表 data。
         """
-        # 保证"当前静态图片"就是这次要算的图，后面再点执行按钮时用的还是它
-        self.current_static_image = frame
+        if adopt_frame:
+            # 保证"当前静态图片"就是这次要算的图，后面再点执行按钮时用的还是它
+            self.current_static_image = frame
 
         # 复制图像处理，防止污染原图
         work_frame = frame.copy()
@@ -904,6 +915,10 @@ class MainWindow:
         self.last_detected_data = data  # 保存给以后打开的窗口使用
         if self.current_dialog and self.current_dialog.isVisible():
             self.current_dialog.update_result_count(data)
+
+        # 图片源节点用到的图片也放进图库列表（用户 2026.10.5 要求：不管是"打开文件"导入的，
+        # 还是图片源节点指定的，都要在图库里看得见）
+        self._ensure_source_images_in_gallery()
 
         return data
 
@@ -1163,7 +1178,9 @@ class MainWindow:
         if whole_key and params.get(whole_key, False):
             return 0, 0, img_w, img_h, roi_shape, ""
 
-        if params.get("roi_inherit", False):
+        # 默认就是"继承上游"（2026.10.5 用户要求把缺省从"绘制"改成"继承上游"）；
+        # 方案里明确存过 False 的节点才走"用本节点参数里的 ROI"那条路。
+        if params.get("roi_inherit", True):
             margin = int(params.get("roi_margin", 0))
             source = params.get("roi_source", "roi")     # 默认：继承上游那一轮用的 ROI 框
             bbox = None
@@ -1245,6 +1262,13 @@ class MainWindow:
         if out_img is None:
             # 万一某个算子忘了返回图像，就当它不改图像，保证下游还有图可用
             out_img = in_img
+        if spec.kind == KIND_SOURCE:
+            # 起点节点（图片源）没有"处理区域"这个概念：它的有效 ROI 就是**它自己输出的整张图**。
+            # 这样 ① 画面上不会出现一个莫名其妙的黄框（用户实测到过"512×512 的怪框"——
+            # 那是对话框把主窗口当前图的尺寸写进了 ROI 参数留下的）；② 下游"继承上游 ROI"
+            # 拿到的是整张图，而不是那个过时的尺寸。
+            out_h, out_w = out_img.shape[:2]
+            roi_info = (0, 0, out_w, out_h, True, roi_shape, "")
         return out_img, results, roi_info, spec
 
     def _format_result_text(self, node, results, roi_info, spec):
@@ -1254,7 +1278,9 @@ class MainWindow:
         if spec is None:
             return "模块未实现，图像原样传给下游"
         text = spec.format_result(results)
-        if node.params.get("roi_inherit", False):
+        # 缺省也是"继承上游"（2026.10.5 起），所以这里要用 True 兜底，
+        # 否则默认继承的节点不会把"继承到没继承到"写进日志，用户就看不出来了。
+        if node.params.get("roi_inherit", True):
             # 勾了"继承上游"之后到底继承到了什么，必须让用户看见（否则会以为继承生效了）。
             # 注意：单步执行 / 视频每帧都会走到这里，所以只能用日志文案、不能弹窗；
             # 文案也要尽量短——"结果数据"那一列显示不全会被截断。
@@ -1284,6 +1310,10 @@ class MainWindow:
             if results and spec is not None and spec.draw is not None:
                 # 检测类算子的结果画到显示层
                 spec.draw(display, results, node.params)
+            if spec is not None and spec.kind == KIND_SOURCE:
+                # 起点节点（图片源）没有"处理区域"，不画它的 ROI 框——
+                # 否则画面上会出现一个跟检测毫无关系、还可能是过时尺寸的框（用户实测反馈过）
+                continue
             rois_to_draw.append(roi_info)
 
         # 结果全部画完之后再统一画 ROI 框，避免黄框被后面的算法当成图像内容
@@ -1313,29 +1343,88 @@ class MainWindow:
         :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
         """
         img = frame.copy()              # 全局图像源（数据层的起点）
-        out_images = {SOURCE_KEY: img}  # {图像源标识: 图像输出}
-        results_of = {}                 # {节点: 它产出的结果数据}
-        roi_of = {}                     # {节点: 它这一轮实际用的 ROI}，供下游"继承"用
-        executed = []                   # [(节点, 结果, roi_info, spec), ...]，按执行顺序
-        all_data = []                   # 所有节点结果汇总（给结果计数用）
-        exec_info = []                  # 执行日志
-
         if not self.flow_nodes:
             # 画布上一个方框都没有，没什么可执行的
-            return img, all_data, exec_info
+            return img, [], []
 
-        # 1、拓扑排序：父节点一定排在子节点前面
+        # 拓扑排序：父节点一定排在子节点前面
         order, parents, skipped = self._build_execution_order(self.flow_nodes, self.flow_edges)
         if not order:
             # 有方框，但一条能跑的链路都没有：给一行提示，而不是静默什么都不做
-            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
-                              "没有可执行的流程：请先用连线把模块连起来"))
-            return img, all_data, exec_info
+            return img, [], [("-", time.strftime("%H:%M:%S"), "提示", "-",
+                              "没有可执行的流程：请先用连线把模块连起来")]
+        # 真正的执行 + 渲染都在 _run_nodes 里：
+        # 连续执行 = 全部节点；单步执行 = 目标节点 + 它的上游（同一段代码，保证逻辑一致）
+        return self._run_nodes(order, parents, img, skipped)
+
+
+    def _parent_nodes(self, node):
+        """
+        当前页面里直接连到 node 的上游节点（按连线顺序）。
+        "图像源 = 自动"时引擎取最后一个上游（见 _resolve_input），这里保持一致。
+        """
+        parents = []
+        for edge in self.flow_edges:
+            if edge.end_node is node and edge.start_node in self.flow_nodes:
+                parents.append(edge.start_node)
+        return parents
+
+    def _node_input_frame(self, node, _depth=0):
+        """
+        这个节点这一轮**实际会收到的图**——沿着它声明的"图像源"往上追到起点。
+
+        对话框用它来取"上游整张图"的尺寸当 ROI 宽高默认值
+        （老实现只看主窗口当前那张图，所以"绑了图片源"的下游节点，ROI 默认尺寸
+        和上游图片源那张图对不上——用户实测反馈过）。
+
+        :return: BGR 图；追不到返回 None
+        """
+        if node is None or _depth > 20:
+            return None
+        # 起点节点（图片源）自己就是图的来源：直接问它要图，别去问"主窗口当前图"
+        spec = get_spec(node.name)
+        if spec is not None and spec.kind == KIND_SOURCE:
+            frame, _results = spec.run(self.detector, None, (0, 0, 0, 0), node.params)
+            return frame
+        binding = getattr(node, "input_source", None)
+        if isinstance(binding, NodeItem):
+            # 绑到了某个上游节点：继续往上追（处理类不改图像尺寸，追到起点就够）
+            return self._node_input_frame(binding, _depth + 1)
+        if isinstance(binding, str) and binding == SOURCE_KEY:
+            return self.current_static_image if self.current_static_image is not None \
+                else self._source_node_frame()
+        # "自动"（没显式绑定）：跟引擎一样取最后一个上游；一个上游都没有才是全局图像源
+        parents = self._parent_nodes(node)
+        if parents:
+            return self._node_input_frame(parents[-1], _depth + 1)
+        return self.current_static_image if self.current_static_image is not None \
+            else self._source_node_frame()
+
+    def _run_nodes(self, order, parents, frame, skipped=None, base_node=None):
+        """
+        按给定的拓扑顺序执行一串节点。
+
+        连续执行和单步执行**共用这一段**，两边的取输入 / ROI 继承 / 日志文案完全一致
+        （老实现单步是自己另写一套，于是出了"单步不按图像源绑定取图"的问题）。
+
+        :param order: 要执行的节点列表（必须已按拓扑序排好）
+        :param parents: {节点: [上游节点]}，来自 _build_execution_order
+        :param frame: 数据层起点那一帧（全局图像源）
+        :param skipped: 没有执行的节点（只在连续执行时给一行提示）
+        :param base_node: 显示底图用哪个节点的输出；None = 用"当前选中的节点"（点谁看谁）
+        :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
+        """
+        out_images = {SOURCE_KEY: frame}   # {图像源标识: 图像输出}
+        results_of = {}                    # {节点: 它产出的结果数据}
+        roi_of = {}                        # {节点: 它这一轮实际用的 ROI}，供下游"继承"用
+        executed = []                      # [(节点, 结果, roi_info, spec), ...]，按执行顺序
+        all_data = []                      # 所有节点结果汇总（给结果计数用）
+        exec_info = []                     # 执行日志
 
         seq = 1
         for node in order:
-            # 2、按"图像源"绑定取本节点的输入（数据层）
-            source_key, source_label = self._resolve_input(node, parents[node], out_images)
+            # 1、按"图像源"绑定取本节点的输入（数据层）
+            source_key, source_label = self._resolve_input(node, parents.get(node, []), out_images)
             in_img = out_images.get(source_key)
             if in_img is None:
                 # 绑定的图像源这一轮不存在，退回全局图像源
@@ -1345,14 +1434,14 @@ class MainWindow:
             in_results = results_of.get(source_key)
             in_roi = roi_of.get(source_key)   # 上游没有结果时，下游继承它这块处理区域
 
-            # 3、执行节点；它的图像输出挂到 out_images 上，供下游当图像源
+            # 2、执行节点；它的图像输出挂到 out_images 上，供下游当图像源
             out_img, results, roi_info, spec = self._execute_node(node, in_img, in_results, in_roi)
             out_images[node] = out_img
             results_of[node] = results
             roi_of[node] = roi_info
             executed.append((node, results, roi_info, spec))
 
-            # 4、汇总结果 + 记一行日志（图像源也记下来，方便排查数据流走向）
+            # 3、汇总结果 + 记一行日志（图像源也记下来，方便排查数据流走向）
             if results:
                 all_data.extend(results)
             exec_info.append((seq, time.strftime("%H:%M:%S"), node.name, source_label,
@@ -1365,40 +1454,75 @@ class MainWindow:
             exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
                               "以下节点未执行（没有连线，或者连线成环）：" + names))
 
-        # 5、渲染层：底图取"当前选中的节点"的图像输出（点谁看谁），叠加也只画到它为止；
-        #    没选中、或者选中的节点这一轮没执行，就退回用最后一个执行节点的输出（原来的行为）。
-        base_node = self.selected_node
-        if base_node in out_images:
-            shown = executed[:order.index(base_node) + 1]
+        # 4、渲染层：底图取 base_node（单步执行 = 目标节点；连续执行 = 当前选中的节点），
+        #    没选中 / 选中的节点这一轮没执行，就退回用最后一个执行节点的输出。
+        pick = base_node if base_node is not None else self.selected_node
+        if pick in out_images:
+            shown = executed[:order.index(pick) + 1]
         else:
-            base_node = order[-1]
+            pick = order[-1]
             shown = executed
-        display = self._render_display(out_images[base_node], shown)
+        display = self._render_display(out_images[pick], shown)
         return display, all_data, exec_info
 
+    def _binding_origin(self, node, _depth=0):
+        """
+        沿着"图像源"绑定一直往上追，返回这条链最上头的**起点节点**（图片源）；
+        如果这条链最终落到"全局图像源"，返回 None。
+        只用于给执行日志写清楚"这一轮吃的到底是哪张图"。
+        """
+        if node is None or _depth > 20:
+            return None
+        spec = get_spec(node.name)
+        if spec is not None and spec.kind == KIND_SOURCE:
+            return node
+        binding = getattr(node, "input_source", None)
+        if isinstance(binding, NodeItem):
+            return self._binding_origin(binding, _depth + 1)
+        if isinstance(binding, str) and binding == SOURCE_KEY:
+            return None
+        parents = self._parent_nodes(node)
+        if parents:
+            return self._binding_origin(parents[-1], _depth + 1)
+        return None
 
     def _run_flow_pipeline_step(self, frame, target_node):
         """
-        单步执行：只从全局图像源跑选中的这一个节点，不跑流程图上其它的模块
-        （沿用 2026.7.25 定下的规则："不管流程图中其他的流程，只执行选中的节点"）。
+        单步执行：**只跑选中的这一个节点**（沿用 2026.7.25 定的规则："不管流程图中其他的流程，
+        只执行选中的节点"），它的输入按自己声明的"图像源"取 —— 沿绑定往上追到起点：
+        起点是"图片源"就用它那张图，是"全局图像源"就用当前图。
 
-        所以如果这个节点开了"ROI 继承"，单步执行时上游没有结果可用，
-        _resolve_roi() 会自动退回参数里手画的 ROI。
+        **为什么不把上游链一起跑**：那样"单步执行"和"连续执行"的结果会一模一样
+        （用户 2026.10.5 实测报过这个"最致命的错误"）。单步执行的用处是**单独调试这一个算子**：
+        改参数、点执行，立刻看到这个算子对"流程输入图"做了什么；
+        要看整条链的结果就用连续执行。
 
-        :param frame: OpenCV BGR 原图
+        :param frame: 数据层起点那一帧（全局图像源用它；追不到绑定链时也用它）
         :param target_node: 要执行的节点
-        :return: (显示用图像, 这个节点的结果数据, 一行执行日志)
+        :return: (显示用图像, 目标节点的结果数据, 一行执行日志)
         """
-        img = frame.copy()
         if target_node is None:
-            return img, [], []
+            return frame.copy(), [], []
 
+        # 输入帧：优先"这个节点声明的图像源"那张图（沿绑定追到起点），追不到才用传进来的当前帧
+        in_img = self._node_input_frame(target_node)
+        if in_img is None:
+            in_img = frame
+            source_label = "全局图像源（单步：只跑本节点）"
+        else:
+            origin = self._binding_origin(target_node)
+            if origin is not None:
+                source_label = "节点：{0}（单步：只跑本节点）".format(origin.name)
+            else:
+                source_label = "全局图像源（单步：只跑本节点）"
+
+        img = in_img.copy()
         out_img, results, roi_info, spec = self._execute_node(target_node, img, None)
         display = self._render_display(out_img, [(target_node, results, roi_info, spec)])
 
         # 单步执行也产出一行日志：否则切图回来会出现"画面有结果、日志表却是空的"，
         # 缓存里的（画面 + 结果数据 + 日志）三者就对不上了。
-        exec_info = [(1, time.strftime("%H:%M:%S"), target_node.name, "全局图像源（单步）",
+        exec_info = [(1, time.strftime("%H:%M:%S"), target_node.name, source_label,
                       self._format_result_text(target_node, results, roi_info, spec))]
         return display, results, exec_info
 
@@ -1667,51 +1791,103 @@ class MainWindow:
         else:
             self.current_node_label.setText("未选中节点")
 
+    # ------------------------------------------------------------------
+    # 执行入口（UI 上所有"单步执行 / 连续执行"都从这里走）
+    # ------------------------------------------------------------------
+    def _source_node_frame(self):
+        """
+        当前页面里"图像源类节点"这一轮能给出的图（没有就返回 None）。
+
+        只用于兜底：图库为空、也没打开任何图时，只要流程里放了"图片源"并指定了图片
+        （或选了测试图），点执行照样能跑——跑的就是它那张图。
+        """
+        for node in list(self.flow_nodes):
+            spec = get_spec(node.name)
+            if spec is None or spec.kind != KIND_SOURCE:
+                continue
+            try:
+                # 图像源节点不看传入的图与 ROI（"当前图像"这个来源会把传入的 None 原样返回）
+                frame, _results = spec.run(self.detector, None, (0, 0, 0, 0), node.params)
+            except Exception:
+                frame = None
+            if frame is not None:
+                return frame
+        return None
+
+    def _flow_source_frame(self):
+        """
+        决定"这一轮流程从哪张帧开始跑"（只决定**全局图像源**那一帧；绑到图片源 / 上游节点的
+        节点各自按自己的绑定取图，见 _run_nodes）：
+            ① 主窗口已经打开图片 / 视频 / 摄像头 → 就用它（老行为一个字不变）；
+            ② 都没有，但当前页面里有图像源节点能给出图 → 用那张图兜底（图库为空也能跑）；
+            ③ 什么都没有 → 返回 (None, 提示语)，由调用方弹提示。
+        :return: (frame, 提示语, 这一帧是不是"图片源兜底"来的)
+        """
+        if self.current_static_image is not None:
+            return self.current_static_image, "", False
+        frame = self._source_node_frame()
+        if frame is not None:
+            return frame, "", True
+        return None, "请先导入图片/视频或者打开摄像头，或者在流程图里放一个“图片源”节点并指定图片！", True
+
+    def run_flow_step(self, target_node):
+        """
+        UI 的"单步执行"统一入口：主界面的"单步执行"按钮、参数窗口的"执行 / 确定"都调它。
+        :return: True = 真的执行了；False = 没有可用的图（已经弹过提示）
+        """
+        frame, reason, from_source = self._flow_source_frame()
+        if frame is None:
+            QMessageBox.warning(self.main_window, "提示", reason)
+            return False
+        # 执行"target_node + 它声明的上游链"；计算、显示、写缓存、刷新日志都在 _execute_static 里完成。
+        # 帧来自"图片源兜底"时不把它记成"当前图片"，否则换了图片源的文件还会拿旧图跑。
+        self._execute_static(frame, "step", target_node, adopt_frame=not from_source)
+        return True
+
+    def run_flow_continuous(self):
+        """
+        UI 的"连续执行"统一入口：主界面的"连续执行"按钮、参数窗口的"连续执行"都调它。
+        :return: True = 真的执行了；False = 没有可用的图（已经弹过提示）
+        """
+        frame, reason, from_source = self._flow_source_frame()
+        if frame is None:
+            QMessageBox.warning(self.main_window, "提示", reason)
+            return False
+        # 跑完整个流程图；计算、显示、刷新日志表格都在 _execute_static 里完成
+        self._execute_static(frame, "continuous", adopt_frame=not from_source)
+        return True
+
     def on_step_execute(self):
         """点击单步执行按钮时触发：只执行当前选中的节点"""
-        # 前置检查
-        if self.current_static_image is None and self.cap is None:
-            # 检测是否导入图片 / 视频 或者打开摄像头
-            QMessageBox.warning(self.main_window, "提示", "请先导入图片/视频或者打开摄像头！")
+        # 视频 / 摄像头模式：老行为不变（切单步 + 立刻刷一帧，让用户马上看到效果）
+        if self.current_static_image is None and self.cap is not None and self.cap.isOpened():
+            if self.selected_node is None:
+                QMessageBox.warning(self.main_window, "提示", "请先在流程图中单击选择一个节点！")
+                return
+            self.video_processing_mode = "step"
+            self.video_step_node = self.selected_node
+            self.update_frame()
             return
+
         if self.selected_node is None:
             # 检测是否选中节点
             QMessageBox.warning(self.main_window, "提示", "请先在流程图中单击选择一个节点！")
             return
 
-        # 处理静态图片模式
-        if self.current_static_image is not None:
-            # 仅执行选中的这个节点；计算、显示、写缓存、保存数据都在 _execute_static 里完成
-            self._execute_static(self.current_static_image, "step", self.selected_node)
-            return
-
-        # 处理视频 / 摄像头模式
-        if self.cap is not None and self.cap.isOpened():
-            # 设置状态
-            self.video_processing_mode = "step"
-            self.video_step_node = self.selected_node
-            # 立即主动刷新一帧画面，让用户立刻看到变成了单步检测的效果
-            self.update_frame()
+        # 静态图：有当前图就用当前图；图库为空但流程里有"图片源"就用它那张（内部判定）
+        self.run_flow_step(self.selected_node)
 
     def on_continuous_execute(self):
         """点击连续执行按钮时触发：按整个流程图顺序执行"""
-        if self.current_static_image is None and self.cap is None:
-            QMessageBox.warning(self.main_window, "提示", "请先导入图片/视频或者打开摄像头！")
-            return
-
-        # 静态图片模式：直接完整执行一次
-        if self.current_static_image is not None:
-            # 计算、显示、刷新日志表格都在 _execute_static 里完成
-            self._execute_static(self.current_static_image, "continuous")
-            return
-
-        # 视频 / 摄像头模式
-        if self.cap is not None and self.cap.isOpened():
-            # 恢复连续执行状态
+        # 视频 / 摄像头模式：老行为不变
+        if self.current_static_image is None and self.cap is not None and self.cap.isOpened():
             self.video_processing_mode = "continuous"
             self.video_step_node = None
-            # 立即主动刷新一帧画面，恢复完整流程图检测效果
             self.update_frame()
+            return
+
+        # 静态图 / "图片源"兜底
+        self.run_flow_continuous()
 
     # 用表格显示执行日志，execution_log可更新的执行记录
     def _update_execution_log(self, exec_info):
@@ -1788,6 +1964,109 @@ class MainWindow:
         """
         if img_bgr is not None:
             self._show_static_image(img_bgr)
+
+    def _on_gallery_path_selected(self, path):
+        """
+        点图库缩略图时，如果这张图来自某个文件，就把当前页"图片源"节点的路径同步过去
+        （用户 2026.10.5 的要求：图库列表和图片源节点是统一的——点哪张图，图片源就吃哪张）。
+        """
+        self._sync_source_nodes_to_path(path)
+
+    def _sync_source_nodes_to_path(self, path):
+        """
+        把当前页面里所有"图片源"节点的路径改成 path（图库点选后调用）。
+
+        :param path: 图片文件路径；空字符串 / None 表示这张图没有对应文件（摄像头帧、测试图），忽略。
+        """
+        if not path:
+            return
+        changed = False
+        for node in list(self.flow_nodes):
+            spec = get_spec(node.name)
+            if spec is None or spec.kind != KIND_SOURCE:
+                continue
+            if node.params.get("source_type") == "图片" and node.params.get("source_path") == path:
+                continue
+            node.params["source_type"] = "图片"
+            node.params["source_path"] = path
+            changed = True
+        if changed:
+            # 参数被改了，这一页要标成"有改动"，免得用户关页时丢东西
+            self.flow_page_mgr.mark_dirty()
+
+    def _ensure_source_images_in_gallery(self):
+        """
+        把当前页"图片源"节点用的那张图也加进图库列表（已经有的不重复加）。
+
+        这样"图片源指定的图"和"打开文件导入的图"一样，都能在图库里看到、点选。
+        """
+        if not hasattr(self, 'gallery_widget') or self.gallery_widget is None:
+            return
+        for node in list(self.flow_nodes):
+            spec = get_spec(node.name)
+            if spec is None or spec.kind != KIND_SOURCE:
+                continue
+            path = node.params.get("source_path") or ""
+            if not path:
+                continue
+            if node.params.get("source_type") == "文件夹":
+                # 文件夹来源：把里面所有图片都放进图库（内部按路径去重、坏文件静默跳过），
+                # 这样点图库缩略图就能在同一个文件夹的图片之间切换
+                self.import_folder_path(path)
+                continue
+            if self.gallery_widget.has_path(path):
+                continue
+            frame, _results = spec.run(self.detector, None, (0, 0, 0, 0), node.params)
+            if frame is not None:
+                self.gallery_widget.add_image(frame, path)
+
+    def import_image_path(self, path):
+        """
+        把一个图片文件加进图库（已经有的不重复加）。
+
+        用户要求：读不出来的**直接跳过、不弹任何提示**。
+        :return: [(frame, path)]；失败返回 []
+        """
+        if not path or not os.path.isfile(path):
+            return []
+        frame = cv2.imread(path)
+        if frame is None:
+            return []                      # 读不出来就跳过，不提示
+        if not (hasattr(self, 'gallery_widget') and self.gallery_widget.has_path(path)):
+            if hasattr(self, 'gallery_widget'):
+                self.gallery_widget.add_image(frame, path)
+        return [(frame, path)]
+
+    def import_folder_path(self, folder):
+        """
+        把一个文件夹里的图片全部加进图库（不递归子目录；坏文件自动跳过、不弹提示）。
+        :return: [(frame, path), ...]，按文件名排序
+        """
+        if not folder or not os.path.isdir(folder):
+            return []
+        exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+        loaded = []
+        for name in sorted(os.listdir(folder)):
+            if name.lower().endswith(exts):
+                loaded.extend(self.import_image_path(os.path.join(folder, name)))
+        return loaded
+
+    def import_paths(self, paths):
+        """
+        统一导入入口：传进来的每一项可能是**图片文件**也可能是**文件夹**。
+        图片 → 导入这一张；文件夹 → 导入里面所有图片。失败自动跳过，**全程不弹任何提示**（用户要求）。
+
+        :return: 成功导入的 [(frame, path), ...]（不切换主画面，切画面由调用方决定）
+        """
+        if not paths:
+            return []
+        loaded = []
+        for path in paths:
+            if os.path.isdir(path):
+                loaded.extend(self.import_folder_path(path))
+            else:
+                loaded.extend(self.import_image_path(path))
+        return loaded
 
 
     # 流程图多页面（页面管理在 FlowPages.py）

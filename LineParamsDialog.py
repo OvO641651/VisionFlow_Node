@@ -342,7 +342,9 @@ class LineParamsDialog(QDialog):
 
 
         # 加载节点已有的参数
-        self.roi_draw.setChecked(True) # "ROI创建"滑动条 默认为 "绘制" 打开
+        # "ROI创建"默认选"继承上游"（用户 2026.10.5 要求：新节点默认继承上游的处理区域，
+        # 想自己画框的点一下"绘制"即可，两档都还在）
+        self.roi_inherit.setChecked(True)
         self._load_params() # 设置 XYWH 的默认值
         self._update_shape_layout(self.shape_combo.currentText()) # 强制执行一次 UI 布局对齐
 
@@ -438,15 +440,22 @@ class LineParamsDialog(QDialog):
             self.spin_roi_x.setValue(params.get("roi_x", 0))
             self.spin_roi_y.setValue(params.get("roi_y", 0))
 
-            # 设定没有图片或者视频时的 WH 默认值
+            # 设定 ROI 宽高的默认值：**优先取"这个节点实际会收到的图"的尺寸**——
+            # 也就是沿它声明的"图像源"往上追到的起点那张图（图片源指定的文件 / 主窗口当前图）。
+            # 老实现只看主窗口当前图，于是"图像源绑到图片源"的下游节点，
+            # ROI 默认尺寸与上游那张图对不上（用户实测反馈：读不到上游图像源的整图大小）。
             default_w = 640
             default_h = 480
 
-            # 尝试获取当前主窗口加载的图像或视频尺寸
             if self.main_window:
-                # 当前打开的是静态图片，current_static_image = True 表示当前静态图片存在
-                if self.main_window.current_static_image is not None:
-                    h, w = self.main_window.current_static_image.shape[:2]
+                input_frame = None
+                if self.node is not None and hasattr(self.main_window, "_node_input_frame"):
+                    input_frame = self.main_window._node_input_frame(self.node)
+                if input_frame is None:
+                    # 追不到上游（比如起点节点自己）：退回"主窗口当前图"
+                    input_frame = self.main_window.current_static_image
+                if input_frame is not None:
+                    h, w = input_frame.shape[:2]
                     default_w, default_h = w, h
 
                 # 当前打开的是摄像头或视频流
@@ -471,7 +480,8 @@ class LineParamsDialog(QDialog):
             self.shape_combo.setCurrentText(saved_shape)
 
             # 读取并恢复"ROI创建"的选择：绘制 = 手动画 ROI；继承 = 用上游结果的包围盒当 ROI
-            if params.get("roi_inherit", False):
+            # 默认"继承上游"（用户 2026.10.5 要求）；方案里明确存过 False 的才回到"绘制"
+            if params.get("roi_inherit", True):
                 self.roi_inherit.setChecked(True)
             else:
                 self.roi_draw.setChecked(True)
@@ -541,27 +551,31 @@ class LineParamsDialog(QDialog):
             return False
 
         if self.main_window:
-            # 静态图片单步执行：统一交给主窗口的 _execute_static 处理
-            # （计算 -> 显示 -> 写结果缓存 -> 更新日志，全项目只有这一条执行路径，
-            #  所以从配置窗口点"执行"和从主界面点"单步执行"，结果完全一致）
-            if self.main_window.current_static_image is not None:
-                data = self.main_window._execute_static(
-                    self.main_window.current_static_image, "step", self.node)  # noqa
-                # 更新检查到的直线的数量
-                self.update_result_count(data)
-                # 执行成功，用于判断ROI区域是否数值为 0，如果不为 0 然后点击"确定"按钮则关闭窗口
-                return True
+            main_window = self.main_window
+            # 当前没有静态图、但有视频/摄像头时，才走视频那条路
+            video_ready = (main_window.current_static_image is None
+                           and main_window.cap is not None and main_window.cap.isOpened())
+            if not video_ready:
+                # 静态图统一走主窗口的执行入口（它决定用哪张帧：
+                # 有当前图就用当前图；图库为空但流程里有"图片源"就用它那张）
+                # 计算 -> 显示 -> 写结果缓存 -> 更新日志，全项目只有这一条执行路径，
+                # 所以从配置窗口点"执行"和从主界面点"单步执行"，结果完全一致。
+                if main_window.run_flow_step(self.node):
+                    # 更新检查到的直线的数量
+                    self.update_result_count(main_window.last_detected_data)
+                    # 执行成功，用于判断ROI区域是否数值为 0，如果不为 0 然后点击"确定"按钮则关闭窗口
+                    return True
+                # 既没有图、流程里也没有可用的图片源：run_flow_step 已经弹过提示，窗口保持不关闭
+                return False
 
-            # 视频/摄像头单步执行
-            elif self.main_window.cap is not None:
-                # 告诉主窗口切换为"单步执行"状态
-                self.main_window.video_processing_mode = "step"
-                # 指定当前要单步执行的节点
-                self.main_window.video_step_node = self.node
-                # 主动触发刷新一帧画面，让视频流立刻响应单步检测
-                self.main_window.update_frame()
-                # 执行成功，用于判断ROI区域是否数值为 0，如果不为 0 然后点击"确定"按钮则关闭窗口
-                return True
+            # 视频 / 摄像头单步执行（老行为）
+            # 告诉主窗口切换为"单步执行"状态
+            main_window.video_processing_mode = "step"
+            # 指定当前要单步执行的节点
+            main_window.video_step_node = self.node
+            # 主动触发刷新一帧画面，让视频流立刻响应单步检测
+            main_window.update_frame()
+            return True
 
         # 如果因为没有图片/视频而导致无法执行，也保持窗口不关闭
         return False
@@ -576,21 +590,24 @@ class LineParamsDialog(QDialog):
             return
 
         if self.main_window:
-            # 静态图片连续执行：同样统一走 _execute_static
-            # （它会跑完整个流程图、显示结果、写结果缓存、刷新日志表格）
-            if self.main_window.current_static_image is not None:
-                data = self.main_window._execute_static(
-                    self.main_window.current_static_image, "continuous")  # noqa
-                # 更新检查到的直线的数量
-                self.update_result_count(data)
+            main_window = self.main_window
+            # 当前没有静态图、但有视频/摄像头时，才走视频那条路
+            video_ready = (main_window.current_static_image is None
+                           and main_window.cap is not None and main_window.cap.isOpened())
+            if not video_ready:
+                # 静态图（或"图片源"兜底）：统一走主窗口的连续执行入口
+                # （它会跑完整个流程图、显示结果、写结果缓存、刷新日志表格）
+                if main_window.run_flow_continuous():
+                    # 更新检查到的直线的数量
+                    self.update_result_count(main_window.last_detected_data)
 
-            # 视频/摄像头连续执行
-            elif self.main_window.cap is not None:
+            # 视频 / 摄像头连续执行（老行为）
+            else:
                 # 告诉主窗口切换为"连续执行"状态
-                self.main_window.video_processing_mode = "continuous"
-                self.main_window.video_step_node = None
+                main_window.video_processing_mode = "continuous"
+                main_window.video_step_node = None
                 # 主动触发刷新一帧画面，恢复完整的流程图检测
-                self.main_window.update_frame()
+                main_window.update_frame()
 
     def on_ok(self):
         """点击确定：执行一次单步检测并关闭配置窗口"""
@@ -694,9 +711,17 @@ class LineParamsDialog(QDialog):
     def refresh_size(self):
         """允许外部主窗口在加载图片后，手动触发对话框重新计算尺寸"""
         if self.main_window:
-            # 如果当前是静态图片
-            if self.main_window.current_static_image is not None:
-                h, w = self.main_window.current_static_image.shape[:2]
+            # 优先用"这个节点实际会收到的图"的尺寸（沿图像源绑定追到起点那张）——
+            # 这样"图像源绑到图片源"的节点，ROI 尺寸跟着上游那张图，而不是主窗口当前图
+            frame = None
+            if self.node is not None and hasattr(self.main_window, "_node_input_frame"):
+                frame = self.main_window._node_input_frame(self.node)
+            if frame is None:
+                frame = self.main_window.current_static_image
+
+            # 如果拿到静态图片
+            if frame is not None:
+                h, w = frame.shape[:2]
                 # 直接强制赋值，避免被 node.params 里可能存在的旧值覆盖
                 self.spin_roi_w.setValue(w)
                 self.spin_roi_h.setValue(h)
@@ -719,12 +744,18 @@ class LineParamsDialog(QDialog):
         # 获取当前选中的形状类型
         shape_text = self.shape_combo.currentText()
 
-        # 优先取主窗口的静态图片
-        if self.main_window is not None and self.main_window.current_static_image is not None:
-            img_bgr = self.main_window.current_static_image
+        # 优先取"这个节点实际会收到的图"——沿它声明的"图像源"往上追到起点：
+        # 绑了"图片源"就用图片源那张图，没绑就用主窗口当前那张图。
+        # （这样图库里没有图片、只放了"图片源"节点时，框选也能用——用户实测报过这里弹提示。）
+        if self.main_window is not None:
+            if hasattr(self.main_window, "_node_input_frame"):
+                img_bgr = self.main_window._node_input_frame(self.node)
+            if img_bgr is None:
+                img_bgr = self.main_window.current_static_image
 
-        # 没有静态图片，但有开启的摄像头/视频流
-        elif self.main_window is not None and self.main_window.cap is not None and self.main_window.cap.isOpened():
+        # 还是没有静态图，但有开启的摄像头/视频流
+        if img_bgr is None and self.main_window is not None \
+                and self.main_window.cap is not None and self.main_window.cap.isOpened():
             # 为了框选画面时画面不跳动，先暂定主窗口的视频刷新定时器
             timer = self.main_window.timer
             if timer is not None and timer.isActive():
