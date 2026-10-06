@@ -138,7 +138,15 @@ class GenericProcessDialog(LineParamsDialog):
         options = options or {}
         if kind == "combo":
             widget = QComboBox()
-            widget.addItems([str(item) for item in options.get("options", [])])
+            entries = [str(item) for item in options.get("options", [])]
+            widget.addItems(entries)
+            # "预留"选项：在下拉框里**占位置灰**（看得见、但选不了）。
+            # 声明方式：param_specs 的 options 里加 "disabled": ["网络相机（预留）", ...]。
+            for index, text in enumerate(entries):
+                if text in [str(item) for item in options.get("disabled", [])]:
+                    model_item = widget.model().item(index)
+                    if model_item is not None:
+                        model_item.setEnabled(False)
             default = options.get("default")
             if default is not None:
                 widget.setCurrentText(str(default))

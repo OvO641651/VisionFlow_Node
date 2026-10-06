@@ -81,6 +81,21 @@ class MainWindow:
         self._video_playing = False
         self._video_tick_running = False
 
+        # 相机源（目标3-M4，2026.10.7）——相机是**无界流**：没有帧游标、没有末尾、不循环，
+        # 所以单独一个"正在出相机画面"的标志；_video_timer 与视频播放共用（同一时刻只播一种）。
+        self._camera_playing = False
+        # 一轮执行**只读一次**相机：读到的这一帧既当流程起点、又给"相机源"节点当输入
+        # （否则一次执行会从设备里抠走两帧，画面和实际算的不是同一张）。
+        self._camera_round = 0
+        self._camera_frame_round = -1
+        self._camera_round_frame = None
+        # 当前 self.cap 对应的相机编号（换编号时才知道要不要重开设备）
+        self._camera_device_id = None
+        # 方案 A（用户 2026.10.7 拍板）：相机源节点**复用主窗口相机** —— 主窗口注入一个
+        # "取最新一帧"的取帧器，节点自己不碰设备（局部导入，避免与"注册表 ← 分类模块"的顺序纠缠）。
+        from SourceOps import set_camera_frame_provider
+        set_camera_frame_provider(self._latest_camera_frame)
+
         # 每张图片上一次的执行结果缓存
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
         # 切换回某张图片时，如果这里存着它上一次的结果，就直接显示出来，不用再点执行按钮
@@ -980,18 +995,23 @@ class MainWindow:
         self._update_execution_log(exec_info)
 
         # 显示处理后的图像；传图片标识让每张图片的缩放互相独立
-        # （缓存键用 _image_key_of；画面键用 _display_key_of —— 视频帧的画面键整段共用）
+        # （缓存键用 _image_key_of；画面键用 _display_key_of —— 视频帧/相机帧的画面键整段共用）
         image_key = self._image_key_of(frame)
-        self._display_image(work_frame, self._display_key_of(frame))
+        camera_used = self._camera_used_by(node, mode)
+        display_key = self._camera_display_key(node, mode) if camera_used else None
+        self._display_image(work_frame, display_key or self._display_key_of(frame))
 
-        # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
-        # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
-        # work_frame 本来就是 frame 的独立副本，直接存起来即可。
-        self.result_cache[self._result_cache_key(image_key, mode)] = {
-            "frame": work_frame,
-            "data": data,
-            "exec_info": exec_info,
-        }
+        # ★ 相机帧**不进结果缓存**（用户 2026.10.7 定）：相机是无界流，每一帧都是新内容，
+        #   缓存既没有"切回来还能看到上次结果"的意义，又会让内存随运行时间线性增长。
+        if not camera_used:
+            # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
+            # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
+            # work_frame 本来就是 frame 的独立副本，直接存起来即可。
+            self.result_cache[self._result_cache_key(image_key, mode)] = {
+                "frame": work_frame,
+                "data": data,
+                "exec_info": exec_info,
+            }
 
         # 保存数据并同步窗口
         self.last_detected_data = data  # 保存给以后打开的窗口使用
@@ -1001,6 +1021,13 @@ class MainWindow:
         # 图片源节点用到的图片也放进图库列表（用户 2026.10.5 要求：不管是"打开文件"导入的，
         # 还是图片源节点指定的，都要在图库里看得见）
         self._ensure_source_images_in_gallery()
+        # 相机源（目标3-M4，2026.10.7）：相机是**无界流**——
+        #   · 没有帧游标可以推进（视频那套 "一次执行 = 前进一帧" 不适用）；
+        #   · 参数**复用视频槽**（用户定："相机和视频共用一份参数"），跑完把这份存回槽里；
+        #   · 勾了"自动切换"就接着自动出画面（走 _maybe_start_video_playback 里分派的那条相机分支）。
+        if self._camera_used_by(node, mode):
+            self._save_node_params(self.flow_nodes, VIDEO_ROI_KEY)
+            self._maybe_start_video_playback(node, mode)
         # "一次执行 = 前进一帧"（用户 2026.10.6 定）：这一轮真的用到视频源的话，把帧号 +1。
         # 放在"执行结束"这里而不是 run() 里，是为了让同一轮里多个节点共用同一帧。
         if self._video_used_by(node, mode):
@@ -1034,18 +1061,94 @@ class MainWindow:
         self.image_view.set_image(img, image_key)
 
 
+    # ------------------------------------------------------------------
+    # 相机设备开关（内部 API，目标3-M4 抽出来的，2026.10.7）
+    #
+    # 为什么单独抽一层：主窗口原来那个"打开摄像头 / 关闭"按钮以后可能删掉（用户 2026.10.7 说），
+    # 相机源节点要靠这两个函数自己开关设备，不能再依赖按钮那条老路径。
+    # ------------------------------------------------------------------
+    def _open_camera_device(self, camera_id=0, quiet=True):
+        """
+        打开相机设备（内部 API）。
+
+        · 已经开着、而且就是同一个编号 ⇒ **直接复用**，不重开（方案 A：节点复用主窗口相机）；
+        · 开着别的编号 ⇒ 先关掉再开新的；
+        · 打不开 ⇒ 返回 False；quiet=False 时才弹原来那个警告小窗口（按钮路径用）。
+        :return: True = 相机可用
+        """
+        camera_id = int(camera_id or 0)
+        cap = self.cap
+        if cap is not None and cap.isOpened():
+            if getattr(self, "_camera_device_id", None) == camera_id:
+                return True
+            self._release_camera_device()
+        new_cap = cv2.VideoCapture(camera_id)
+        if not new_cap.isOpened():
+            try:
+                new_cap.release()
+            except Exception:
+                pass
+            if not quiet:
+                # 如果识别不到摄像头标签，则弹出警告的小窗口
+                QMessageBox.warning(self.main_window, "错误", "无法打开摄像头，请检查设备连接")
+            return False
+        self.cap = new_cap
+        self._camera_device_id = camera_id
+        self._camera_round_frame = None
+        self.camera_id = camera_id          # 和主窗口老变量（设置菜单里那个编号）保持一致
+        return True
+
+    def _release_camera_device(self):
+        """
+        关闭相机设备、释放资源（内部 API）——用户 2026.10.7 定的分工：
+        **"停止"不关相机（只停画面，保留最后一帧），"删除"才关相机**。
+        """
+        if self.timer is not None:
+            self.timer.stop()
+            self.timer = None
+        cap, self.cap = self.cap, None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        self._camera_device_id = None
+        # 丢掉"这一轮读到的那一帧"：相机都关了，别让取帧器再把它交出去
+        self._camera_round_frame = None
+        self._camera_frame_round = -1
+        # 重置视频标注
+        self._is_video_file = False
+
+    def _latest_camera_frame(self):
+        """
+        "相机最新一帧"（**注入给"相机源"节点用的取帧器**）——方案 A：节点复用主窗口相机。
+
+        · 相机没开 ⇒ 返回 None（节点会原样透传 + 日志写说明，不弹窗、也不自己乱开设备）；
+        · 一轮执行里只读一次：`_begin_camera_round()` 之后第一次读到的帧会被记住，
+          同一个编号的后续调用直接返回它（这一帧既当流程起点、又给相机源节点当输入）。
+        """
+        if self._camera_round_frame is not None and self._camera_frame_round == self._camera_round:
+            return self._camera_round_frame
+        cap = self.cap
+        if cap is None or not cap.isOpened():
+            return None
+        try:
+            ret, frame = cap.read()
+        except Exception:
+            return None
+        if not ret or frame is None:
+            return None
+        self._camera_round_frame = frame
+        self._camera_frame_round = self._camera_round
+        return frame
+
     def open_camera(self):
-        """打开摄像头并启动视频刷新"""
+        """打开摄像头并启动视频刷新（主窗口"打开摄像头"按钮的老行为，界面表现一个字不变）"""
         # 原本不管是图片还是视频，点击打开摄像头后都会清空原本的画面
         self.close_camera()
 
-        self.cap = cv2.VideoCapture(self.camera_id)
-        if not self.cap.isOpened():
-            # 如果识别不到摄像头标签，则弹出警告的小窗口
-            QMessageBox.warning(self.main_window, "错误", "无法打开摄像头，请检查设备连接")
-            self.cap = None
+        if not self._open_camera_device(self.camera_id, quiet=False):
             return
-
 
         # 摄像头/视频是独立的一个"图片槽"，把各节点的运行参数切到它自己那一份
         self._switch_image_params(self.VIDEO_ROI_KEY)
@@ -1057,15 +1160,7 @@ class MainWindow:
 
     def close_camera(self):
         """关闭摄像头，停止定时器，清空显示区域，包括导入的视频和图片"""
-        if self.timer is not None:
-            self.timer.stop()
-            self.timer = None
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-
-        # 重置视频标注
-        self._is_video_file = False
+        self._release_camera_device()
 
         # 关闭时清空静态图片缓存
         self.current_static_image = None
@@ -1108,6 +1203,9 @@ class MainWindow:
 
         work_frame = frame.copy()
 
+        # 让"相机源"节点也能用到主窗口这一帧（方案 A：节点复用主窗口相机，不重复读设备）
+        self._camera_round_frame = frame
+        self._camera_frame_round = self._camera_round
 
         # 根据模式选择执行管道
         if self.video_processing_mode == "step" and self.video_step_node:
@@ -1891,17 +1989,30 @@ class MainWindow:
     # ------------------------------------------------------------------
     # 执行入口（UI 上所有"单步执行 / 连续执行"都从这里走）
     # ------------------------------------------------------------------
-    def _source_node_frame(self):
+    def _source_node_frame(self, allow_camera_open=False):
         """
         当前页面里"图像源类节点"这一轮能给出的图（没有就返回 None）。
 
         只用于兜底：图库为空、也没打开任何图时，只要流程里放了"图片源"并指定了图片
         （或选了测试图），点执行照样能跑——跑的就是它那张图。
+
+        :param allow_camera_open: 轮到"相机源"时，要不要**顺手把相机打开**。
+                只有执行路径（`_flow_source_frame()`）传 True。
+                为什么需要它（用户 2026.10.7 实测报的 bug）：画布上只有"相机源"、而且**没连线**时，
+                `_ensure_camera_open_for_run()` 的判据是"这一轮真用到相机源"（要有一条下游连线）
+                ⇒ 判成"没用到" ⇒ 设备压根没开 ⇒ 这里问它要图只能拿到 None ⇒ 点"连续执行"
+                会弹"请先导入图片/视频…"，而点"单步执行"（选中相机源，走了 `_camera_used_by` 的
+                `node is camera` 分支）却正常 —— 两条入口表现不一致，就是这里漏的。
+                改成"走到相机源这一项、真要向它取图时再开"，判据就从"有没有连线"变成"是不是轮到它取图"。
         """
         for node in list(self.flow_nodes):
             spec = get_spec(node.name)
             if spec is None or spec.kind != KIND_SOURCE:
                 continue
+            if allow_camera_open and node is self._camera_source_node():
+                # 轮到相机源取图了：先把设备准备好（已经开着同一编号就复用；用户关掉了
+                # "执行时自动打开相机"就不开，那样这里问它要图只会拿到 None，由调用方如实提示）
+                self._ensure_camera_device_open(node)
             try:
                 # 图像源节点不看传入的图与 ROI（"当前图像"这个来源会把传入的 None 原样返回）
                 frame, _results = spec.run(self.detector, None, (0, 0, 0, 0), node.params)
@@ -1922,16 +2033,37 @@ class MainWindow:
         """
         if self.current_static_image is not None:
             return self.current_static_image, "", False
-        frame = self._source_node_frame()
+        # 允许"走到相机源时顺手开设备"：画布上只有相机源、又没连线时，这一步就是唯一能开相机的时机
+        frame = self._source_node_frame(allow_camera_open=True)
         if frame is not None:
             return frame, "", True
-        return None, "请先导入图片/视频、打开摄像头，或者在流程图里放一个“图片源”/“视频源”节点并给它指定图片 / 视频！", True
+        return None, "请先导入图片/视频、打开摄像头，或者在流程图里放一个“图片源”/“视频源”/“相机源”节点并给它指定图片 / 视频 / 相机编号！", True
+
+    def _legacy_camera_preview_active(self):
+        """
+        主窗口"打开摄像头"按钮那套**老预览**还在跑吗？（目标3-M4，2026.10.7 修）
+
+        老预览 = `self.timer` 那个 30ms 定时器直接读设备、直接刷帧；**只有在用它的时候**，
+        单步 / 连续执行才该走 `update_frame()` 那条老路。相机源节点是流程里的起点节点，
+        必须走引擎正常路径，否则"画面键整段共用 / 相机帧不进缓存 / 参数复用视频槽 / 自动出画面"
+        这套 M4 语义全被绕过。
+
+        （实测踩到：相机源一自动打开相机，第二次点"连续执行"就被老分支接走了 ——
+        走的是 update_frame()，_execute_static 压根没执行。）
+        """
+        return (self.current_static_image is None
+                and self.cap is not None and self.cap.isOpened()
+                and self.timer is not None
+                and self._camera_source_node() is None)
 
     def run_flow_step(self, target_node):
         """
         UI 的"单步执行"统一入口：主界面的"单步执行"按钮、参数窗口的"执行 / 确定"都调它。
         :return: True = 真的执行了；False = 没有可用的图（已经弹过提示）
         """
+        # 相机源（M4）：本轮开始（这一轮只读一次相机）+ 真用到相机就先把它打开（没开才开、开着就复用）
+        self._begin_camera_round()
+        self._ensure_camera_open_for_run(target_node, "step")
         frame, reason, from_source = self._flow_source_frame()
         if frame is None:
             QMessageBox.warning(self.main_window, "提示", reason)
@@ -1946,6 +2078,9 @@ class MainWindow:
         UI 的"连续执行"统一入口：主界面的"连续执行"按钮、参数窗口的"连续执行"都调它。
         :return: True = 真的执行了；False = 没有可用的图（已经弹过提示）
         """
+        # 相机源（M4）：同上（连续执行这一轮也可能只有相机这一个来源）
+        self._begin_camera_round()
+        self._ensure_camera_open_for_run(None, "continuous")
         frame, reason, from_source = self._flow_source_frame()
         if frame is None:
             QMessageBox.warning(self.main_window, "提示", reason)
@@ -1957,7 +2092,7 @@ class MainWindow:
     def on_step_execute(self):
         """点击单步执行按钮时触发：只执行当前选中的节点"""
         # 视频 / 摄像头模式：老行为不变（切单步 + 立刻刷一帧，让用户马上看到效果）
-        if self.current_static_image is None and self.cap is not None and self.cap.isOpened():
+        if self._legacy_camera_preview_active():
             if self.selected_node is None:
                 QMessageBox.warning(self.main_window, "提示", "请先在流程图中单击选择一个节点！")
                 return
@@ -1977,7 +2112,7 @@ class MainWindow:
     def on_continuous_execute(self):
         """点击连续执行按钮时触发：按整个流程图顺序执行"""
         # 视频 / 摄像头模式：老行为不变
-        if self.current_static_image is None and self.cap is not None and self.cap.isOpened():
+        if self._legacy_camera_preview_active():
             self.video_processing_mode = "continuous"
             self.video_step_node = None
             self.update_frame()
@@ -2114,10 +2249,16 @@ class MainWindow:
         gallery = getattr(self, "gallery_widget", None)
         if gallery is None:
             return
-        # ★ 删除前先停掉正在播放的视频：否则下面把视频路径清掉之后，播放定时器还在每一格
+        # ★ 删除前先停掉正在播放的视频/相机：否则下面把视频路径清掉之后，播放定时器还在每一格
         #   去取帧、每格都会弹一次"请先导入图片/视频…"（用户实测：点完 OK 又弹一个，无限弹）。
         if self._video_playing:
-            self._stop_video_playback("视频已被删除")
+            self._stop_video_playback("相机已被删除" if self._camera_playing else "视频已被删除")
+        # ★ 相机源（M4）：点"删除"要把相机**关掉**（用户 2026.10.7 定："停止不关、删除才关"），
+        #   同时把画布清掉；但**不动相机源节点里的参数**（编号 / 分辨率留着，下次执行会重新打开）。
+        camera = self._camera_source_node()
+        if camera is not None and (self.cap is not None and self.cap.isOpened()):
+            self._release_camera_device()
+            self._append_log_hint("已关闭相机（相机源节点里的参数保留）")
         if item is None:
             # 列表里**没有可删的条目**（典型场景：画布上放的是"视频源"的帧，帧不进图库）⇒
             # 退化成"清空画布"：顺便把视频源节点里的路径也清掉，免得下次执行又把它跑出来
@@ -2313,20 +2454,59 @@ class MainWindow:
 
     def _maybe_start_video_playback(self, node, mode):
         """
-        勾了"自动切换"时：这一轮执行结束后**接着按原帧率自动播放**（用户 2026.10.6 的要求）。
+        勾了"自动切换"时：这一轮执行结束后**接着自动出画面**（用户 2026.10.6 的要求）。
 
-        只在"这一轮真的用到视频源"、而且当前**不是**播放中的那一帧 tick 时才启动，
+        只在"这一轮真的用到视频源 / 相机源"、而且当前**不是**播放中的那一帧 tick 时才启动，
         避免播放 tick 再套一层播放。
+
+        M4 起这里兼作**分派口**：相机源走 _start_camera_playback（无界流），视频源走
+        _start_video_playback（有帧号、有末尾、可循环）。
         """
         if self._video_playing or self._video_tick_running:
             return False
         gallery = getattr(self, "gallery_widget", None)
         if gallery is None or not gallery.auto_switch():
             return False
+        if self._camera_used_by(node, mode):
+            self._start_camera_playback(node, mode)
+            return True
         if not self._video_used_by(node, mode):
             return False
         self._start_video_playback(node, mode)
         return True
+
+    def _start_camera_playback(self, node, mode):
+        """
+        开始"相机画面"的自动刷新（用户 2026.10.7：勾了"自动切换"再点执行 ⇒ 连续出画面）。
+
+        相机是**无界流**：没有帧号、没有末尾、不循环 —— 一直出到用户点"停止"为止；
+        "停止"只停画面（最后一帧留在画布上），**不关相机**（用户定："停止不关、删除才关"）。
+        定时器与视频自动播放**共用同一个**（同一时刻只会播一种）。
+        """
+        if self._video_timer is None:
+            self._video_timer = QTimer(self.main_window)
+            self._video_timer.setSingleShot(False)
+        try:
+            self._video_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        # 相机读不到帧率就按 30ms 一格（和主窗口原来的相机刷新间隔一致）
+        fps = 0.0
+        try:
+            cap = self.cap
+            if cap is not None and cap.isOpened():
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            fps = 0.0
+        interval = int(1000.0 / fps) if fps and fps > 1 else 30
+        interval = max(5, min(interval, 1000))
+        self._video_timer.setInterval(interval)
+        self._video_timer.timeout.connect(lambda: self._video_tick(node, mode))
+        self._batch_stop = False
+        self._video_playing = True
+        self._camera_playing = True
+        self._video_timer.start()
+        self._append_log_hint("开始显示相机画面（点“停止”可停；相机保持打开）")
 
     def _display_key_of(self, frame):
         """
@@ -2345,12 +2525,114 @@ class MainWindow:
             return "video:" + video.params["video_path"]
         return id(frame)
 
+    def _camera_display_key(self, node, mode):
+        """
+        相机帧的**画面（缩放/平移）键**：整段共用一个（"camera:编号"）——目标3-M4，2026.10.7。
+
+        为什么不并进 `_display_key_of()`：相机帧每一帧都是 `run_camera()` 返回的**新副本**，
+        用对象同一性认不出来；这里直接按"这一轮是不是真的用到相机源、而且相机真的开着"判定，更稳。
+        视频那条（"video:路径"）是同一个目的：别让显示层把每一帧都当成"新图片"、每帧复位一次缩放。
+        :return: 键字符串；这一轮不是相机帧就返回 None（调用方退回 _display_key_of）
+        """
+        if not self._camera_used_by(node, mode):
+            return None
+        if self.cap is None or not self.cap.isOpened():
+            return None
+        camera = self._camera_source_node()
+        return "camera:{0}".format(
+            camera.params.get("camera_id", 0) if camera is not None else 0)
+
     def _video_source_node(self):
         """当前页的"视频源"节点（没有就返回 None）"""
         for node in self.flow_nodes:
             if getattr(node, "name", "") == "视频源":
                 return node
         return None
+
+    def _camera_source_node(self):
+        """当前页的"相机源"节点（没有就返回 None）"""
+        for node in self.flow_nodes:
+            if getattr(node, "name", "") == "相机源":
+                return node
+        return None
+
+    def _begin_camera_round(self):
+        """
+        每开始一轮执行就让"相机读数"作废一次（目标3-M4，2026.10.7）。
+
+        用处：一轮执行里 `_flow_source_frame()` 和"相机源"节点都会去要一帧，
+        没有这个计数器就会从设备里抠走两帧（画面和实际算的不是同一张）。
+        """
+        self._camera_round += 1
+        self._camera_round_frame = None
+        self._camera_frame_round = -1
+
+    def _ensure_camera_device_open(self, camera_node):
+        """
+        把某个"相机源"节点要用的设备准备好（已经开着同一编号就**复用**，不重开）。
+
+        两条路径共用：① 执行前按"这一轮真用到相机源"预开（`_ensure_camera_open_for_run()`）；
+        ② `_source_node_frame()` 轮到相机源取图时顺手开（画布上只有相机源、又没连线的场景）。
+        "执行时自动打开相机"这个开关在这里统一判断，免得两条路各写一份、判据不一致。
+        :return: True = 相机可用
+        """
+        if camera_node is None:
+            return False
+        if camera_node.params.get("open_on_run", True) is False:
+            return False
+        if self.cap is not None and self.cap.isOpened():
+            return True
+        if not self._open_camera_device(int(camera_node.params.get("camera_id") or 0), quiet=True):
+            return False
+        # 相机 / 视频是同一个"图片槽"，把各节点的运行参数切到它自己那一份
+        self._switch_image_params(VIDEO_ROI_KEY)
+        self._append_log_hint("已自动打开相机 {0}（参数与视频共用一份）".format(
+            int(camera_node.params.get("camera_id") or 0)))
+        return True
+
+    def _ensure_camera_open_for_run(self, node, mode):
+        """
+        执行前准备相机：这一轮**真的用到**"相机源"、而相机还没开 ⇒ **自动打开**（用户 2026.10.7 定）。
+
+        · 节点上的"执行时自动打开相机"没勾 ⇒ 不自动开（取不到帧就原样透传 + 日志写说明）；
+        · 已经开着同一个编号 ⇒ 复用，不重开（方案 A："节点复用主窗口相机"）；
+        · 打开时顺带把各节点参数切到"视频槽"——相机和视频**共用一份参数**（用户定）。
+        :return: True = 相机可用
+        """
+        camera = self._camera_source_node()
+        if camera is None:
+            return False
+        if self.cap is not None and self.cap.isOpened():
+            return True
+        if not self._camera_used_by(node, mode):
+            return False
+        return self._ensure_camera_device_open(camera)
+
+    def _camera_used_by(self, node, mode):
+        """
+        这一轮执行有没有**真的用到**相机源（判定方式和 _video_used_by 一致）。
+
+        · 单步：从被执行的节点沿"父节点"往上追，能追到相机源才算用到；
+        · 连续：按拓扑序跑全部节点，相机源只要有下游（连进了流程）就算用到。
+        """
+        camera = self._camera_source_node()
+        if camera is None:
+            return False
+        if mode == "step":
+            if node is None:
+                return False
+            seen, stack = set(), [node]
+            while stack:
+                cur = stack.pop()
+                if cur is camera:
+                    return True
+                if id(cur) in seen:
+                    continue
+                seen.add(id(cur))
+                stack.extend(self._parent_nodes(cur) or [])
+            return False
+        return any(getattr(edge, "start_node", None) is camera
+                   for edge in getattr(self, "flow_edges", []))
 
     def _video_used_by(self, node, mode):
         """
@@ -2418,18 +2700,60 @@ class MainWindow:
             fps if fps and fps > 0 else 25.0))
 
     def _stop_video_playback(self, reason):
-        """停止自动播放（"停止"按钮 / 播到末尾都会走这里）"""
+        """
+        停止自动出画面（"停止"按钮 / 视频播到末尾 / 相机被关掉都会走这里）。
+
+        M4 起兼管相机：相机这条路**只停画面、保留最后一帧、不关设备**（用户 2026.10.7 定）。
+        """
         self._video_playing = False
+        self._camera_playing = False
         if self._video_timer is not None and self._video_timer.isActive():
             self._video_timer.stop()
         self._append_log_hint("停止播放：{0}".format(reason))
 
+    def _camera_tick(self, node, mode):
+        """
+        相机画面的一格（M4）：不像视频那样有帧号可判，只检查"相机还在不在"，
+        然后用和手点一模一样的那条路径（run_flow_step / run_flow_continuous）跑一遍。
+        """
+        camera = self._camera_source_node()
+        if camera is None:
+            self._stop_video_playback("相机源节点已不存在")
+            return
+        if self.cap is None or not self.cap.isOpened():
+            # 相机被关掉了（典型场景：用户点了"删除"）⇒ **只停播、不弹提示**，
+            # 和视频那套"删掉就只停播、别再弹窗"的处理保持一致。
+            self._stop_video_playback("相机已关闭")
+            return
+        self._video_tick_running = True
+        self._video_log_throttle = True        # 出画面期间不刷执行日志（不然每格都重写表格）
+        try:
+            try:
+                label = getattr(getattr(self, "gallery_widget", None), "count_label", None)
+                if label is not None:
+                    label.setText("相机画面")
+            except Exception:
+                pass
+            if mode == "step":
+                # 实时取当前选中的节点（和视频播放一样：播放中途换选中项，后续帧按新的跑）
+                target = getattr(self, "selected_node", None) or node
+                if target is not None:
+                    self.run_flow_step(target)
+            else:
+                self.run_flow_continuous()
+        finally:
+            self._video_tick_running = False
+            self._video_log_throttle = False
+
     def _video_tick(self, node, mode):
-        """自动播放的一帧：先看要不要停，再按原来的执行方式跑一帧（帧号由 _execute_static 统一推进）"""
+        """自动播放的一帧：先看要不要停；是相机就走相机那条，否则按原来的执行方式跑一帧"""
         if not self._video_playing:
             return
         if self._batch_stop:
             self._stop_video_playback("用户停止")
+            return
+        if self._camera_playing:
+            self._camera_tick(node, mode)
             return
         from SourceOps import video_info
         video = self._video_source_node()

@@ -4601,7 +4601,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    让"删除"在列表为空时也能把意图传达给主窗口。
 二、main.py delete_gallery_item()：item is None 时**退化为"清空画布"**——
    current_static_image = None + image_view.set_image(None)（摘掉图像图元）+
-   **把"视频源"节点里的 ideo_path 也清掉**（免得下次执行又把它跑出来）+ 日志写"已清除画布内容
+   **把"视频源"节点里的 video_path 也清掉**（免得下次执行又把它跑出来）+ 日志写"已清除画布内容
    （图像列表里没有可删除的条目）"；列表里有条目时行为不变（正常删该条目）。
 
 验证（2026.10.6 23:46，实跑；4 帧测试视频）：
@@ -4667,7 +4667,7 @@ un_flow_step(target)。
 2、**参数整段共用一份**：_execute_static() 里"用到视频源"的分支中，跑完调用
    _save_node_params(self.flow_nodes, VIDEO_ROI_KEY) 把当前参数存进"视频槽"
    （常量名用 globals() 兜底为 "video"），换图 / 切页回来不会丢。
-3、**播放不刷执行日志**：新增 self._video_log_throttle，_video_tick() 置位、inally 复位，
+3、**播放不刷执行日志**：新增 self._video_log_throttle，_video_tick() 置位、finally 复位，
    _update_execution_log() 见到它就直接返回（否则播放时每格重写表格、刷屏又卡）。
 4、**进度标签**：播放每一格把工具栏标签写成 视频帧 (n/N)（复用"图像源 (n/N)"那个控件，零新增控件）。
 5、**技术文档**：升到 **v1.19**（新增 §变更第 23 条"视频源 P0 收尾"），并**新增《九、想法（未开发）》**，
@@ -4691,11 +4691,11 @@ un_flow_step(target)。
 存在问题（用户实测）：IDE 报"未解析的引用 'VIDEO_ROI_KEY' :1006"。
 
 原因分析：上一轮做"视频参数整段共用一份"时，我为了不引入未知常量名，写成了
-   ideo_key = VIDEO_ROI_KEY if "VIDEO_ROI_KEY" in globals() else "video" —— **运行时能跑**（兜底成 "video"），
+   video_key = VIDEO_ROI_KEY if "VIDEO_ROI_KEY" in globals() else "video" —— **运行时能跑**（兜底成 "video"），
    但这个常量在 main.py 里**从来没有定义过**，所以静态检查直接报"未解析的引用"，而且这种写法本身就不干净。
 
 修改（main.py 两处）：
-1、在文件顶部（rom collections import deque 之后）**正式定义**：
+1、在文件顶部（from collections import deque 之后）**正式定义**：
        VIDEO_ROI_KEY = "video"   # 视频（视频源节点 / 摄像头帧）"整段共用一份参数"用的槽键
 2、把 _execute_static() 里那句 globals() 兜底换回直接用常量：
        self._save_node_params(self.flow_nodes, VIDEO_ROI_KEY)
@@ -4715,7 +4715,7 @@ un_flow_step(target)。
 存在问题（用户实测）："我在视频运行时点击了'删除'按钮，弹出了画布上没有图片的弹窗提示，而且这个弹窗提示我点击
    OK 后还是会再弹出一个新的…我希望运行时点击删除按钮后不再弹出这个弹出，只需要清除画布上的视频即可。"
 
-原因分析：删除把视频源节点里的 ideo_path 清空 / 画布清空，但**播放定时器还在跑**——
+原因分析：删除把视频源节点里的 video_path 清空 / 画布清空，但**播放定时器还在跑**——
    _video_tick() 每一格仍然去 
 un_flow_step() / 
 un_flow_continuous()，而"没有可用帧"时会走
@@ -4854,3 +4854,322 @@ un_flow_continuous()，而"没有可用帧"时会走
 验证：py_compile 四个源文件 exit 0；十六套用例结果见本轮命令输出（期望全部"失败项：无"）。
 
 遗留：M3 的"想法（未开发）"都在方案《九》里；下一步 = M4 相机源 → 输出节点 / 每 N 帧检测。
+
+2026.10.7 01:26
+存在问题（用户指出）："我怎么没看到技术文档里面有 M3 视频源的详细内容，只更新到了 M2，是不是没有修改
+   技术文档" + "在如图所示的批次4 目标下方加一个表格，用来列出目标3 中 M1,M2,M3,M4 的内容"。
+
+原因分析：M3 的内容**确实只记在变更说明（第 23 条）与《九、想法（未开发）》里，没有 §5 的正文小节**——
+   每次都是"顺手在变更说明记一条"，导致正文里 M3 是空的（M1/M2 都有 §5.x 正文）。这是我的疏漏。
+
+修改（只改方案文档，不动代码）：方案升到 **v1.20**（plan\VisionFlowNode_批次4技术方案_v1.20_2026.10.6.md），
+   并同步到 backups：
+1、**在第 1 节"批次4 的目标"表下方新增《批次4 目标3「独立"图像源"节点」的子里程碑》表**：
+   M1 图片源节点（✅）/ M2 图像列表工具栏（✅）/ M3 视频源·视频流（✅，详见 §5.14）/ M4 相机源（⬜），
+   每行写清内容与状态（含轮次与版本区间）；
+2、**新增 §5.14「目标3-M3 视频源（视频流）」实现要点**：① 节点与四个参数（video_path / frame_index /
+   auto_next / loop）；② SourceOps 侧实现（cap 自缓存各读各的、run_video 只读不前进、loop 与容错、
+   format_video 日志"第 N 帧 / 共 M 帧"）；③ 执行语义（**一次执行 = 前进一帧**、**自动播放**（QTimer 按
+   1000/fps）、播放中换节点即时生效、停止停播、播放不刷日志 + 视频帧 (n/N) 标签）；④ **两个键分开**
+   （结果缓存键 视频路径#帧号 + 上限 400 条；画面键 "video:路径" 整段共用）；⑤ 参数整段共用
+   （视频槽 + 换视频时载回一次）；⑥ 删除行为（清画布 + 清 video_path + 播放中先停播 + 不弹窗）；
+   ⑦ 验证（M3 六套用例 + 十六套 392 项断言全过）；
+3、**变更说明追加第 24 条**记录本次补写。
+
+验证：文档已改名 v1.20 并同步 backups；§5.14 标题、子里程碑表 4 行、变更第 24 条均已在文件中
+   （见本轮命令输出的检查结果）。
+
+   补正：上一次插入子里程碑表时用的锚点文本没匹配上（而当时的"存在性检查"是假阳性——它匹配到了别处的
+   同名字符串），所以表其实没插进去。现已改成**按行定位**（找到含"为什么要这个顺序"的那一行，把表插在它后面），
+   并复核：子里程碑表 4 行（M1~M4）、§5.14 存在、文档已是 v1.20，已同步到 backups。
+
+2026.10.7 02:06
+存在问题（用户要求）："现在修改代码，实现上述内容（M4 相机源：方案 A + 停止不关/删除才关），并完成日志和技术方案的更新。"
+
+进度（**本轮只完成了 SourceOps 侧与树项，main.py 的接线还没做**，如实说明）：
+1、**SourceOps.py 已加好相机算子**：CAMERA_FRAME_PROVIDER / set_camera_frame_provider()
+   （主窗口注入"相机最新一帧"的取帧器 —— 方案 A：节点复用主窗口相机，不自己开设备）/
+   run_camera()（读取帧器；取不到 ⇒ **原样透传 + 结果带说明、不弹窗**；拿到帧 ⇒ **frame.copy() 后返回**，
+   绝不留引用，因为主窗口缓冲会被下一帧覆盖）/ format_camera()；并把
+   {"name": "相机源"} 追加进 SOURCE_SPECS（参数 = camera_type【USB 相机 + 两个"预留"项】/
+   camera_id / resolution【只存不生效】/ open_on_run【默认开】）。
+2、**main.ui 已加树项**：树"采集"分组下现在是 **图片源 / 视频源 / 相机源** 三项
+   （顺手把上一轮插入"视频源"时多缩进的一格也修正了）。
+
+**还没做（下一轮继续，属于 main.py 接线）**：
+   · 注入取帧器：_latest_camera_frame()（读主窗口 cap 最新一帧；没开且 open_on_run ⇒ **自动打开**）
+     + 构造时 set_camera_frame_provider(...)；
+   · 相机分支：_camera_source_node() / _camera_used_by()（复用"起点节点是否真被用到"的判定）、
+     _execute_static() 末尾接上（**参数复用视频槽** VIDEO_ROI_KEY、**相机帧不进结果缓存**、
+     **不做帧游标推进**）、_display_key_of() 加相机分支（"camera:编号" 整段共用 ⇒ 缩放稳定）；
+   · 播放/停止/删除：_maybe_start_video_playback() 与 _video_tick() 支持相机（无界流：不判末尾/循环）；
+     「停止」= 停播并**把最后一帧留在画布上**（不关相机）；「删除」= 停播 + **关相机（cap.release()）**
+     + 清画布，**不清节点参数**；
+   · 验证、截图、方案 §5.15 + 子里程碑表 M4 行 + 升版 v1.21 + 快照。
+
+当前状态是"**可注册、可拖进画布、不崩**"：相机源节点已经能被拖出来、参数窗口正常显示，
+但因为取帧器还没注入，执行时只会"原样透传 + 日志写'没有可用的相机画面'"（不会崩、不会误开设备）。
+
+
+2026.10.7 02:15
+存在问题（用户要求）："现在修改代码，实现上述内容（M4 相机源）。并完成日志和技术方案的更新。"
+本轮把上一轮列的 main.py 接线清单**全部做完**，另外**实测抓出一个真 bug**并修掉，还补完一条
+"用户要求过、上次只在注释里写了却其实没实现"的功能。
+
+一、main.py 接线（目标3-M4，方案 A：节点复用主窗口相机）
+1、相机设备开关抽成内部 API（用户 2026.10.7："主窗口那两个启动/停止按钮以后可能删掉"）：
+   _open_camera_device(camera_id=0, quiet=True)（已经开着、而且就是同一个编号 ⇒ **复用不重开**；
+   开着别的编号 ⇒ 先关再开；打不开 ⇒ 返回 False，quiet=False 时才弹原来那个警告小窗口）/
+   _release_camera_device()。open_camera() / close_camera() 改成调它们，**界面表现一个字不变**。
+2、构造时注入取帧器：
+        from SourceOps import set_camera_frame_provider
+        set_camera_frame_provider(self._latest_camera_frame)
+   _latest_camera_frame()：相机没开 ⇒ None（节点原样透传 + 日志写说明）；**一轮执行只读一次**——
+   _begin_camera_round() 之后第一次读到的帧被记住，同一轮后续调用直接返回它；否则
+   _flow_source_frame() 和"相机源"节点会各读一帧，画面和实际算的不是同一张。
+3、执行分支：_camera_source_node() / _camera_used_by(node, mode)（判定式与 _video_used_by 完全一致：
+   单步沿父节点往上追、连续看相机源有没有下游）；run_flow_step() / run_flow_continuous() 开头加
+        self._begin_camera_round()
+        self._ensure_camera_open_for_run(target_node_or_None, mode)
+   _ensure_camera_open_for_run()：**这一轮真用到相机 + 勾着"执行时自动打开" + 相机还没开 ⇒ 自动打开**，
+   并把各节点参数切到"视频槽"（相机/视频共用一份）。
+4、_execute_static()：
+        camera_used = self._camera_used_by(node, mode)
+        display_key = self._camera_display_key(node, mode) if camera_used else None
+        self._display_image(work_frame, display_key or self._display_key_of(frame))
+
+        # ★ 相机帧**不进结果缓存**
+        if not camera_used:
+            self.result_cache[self._result_cache_key(image_key, mode)] = {...}
+   末尾新增相机分支：只做 _save_node_params(self.flow_nodes, VIDEO_ROI_KEY)（**参数复用视频槽**）+
+   _maybe_start_video_playback()，**不推进任何帧游标**（相机是无界流，没有"帧号"这个概念）。
+   _camera_display_key() 返回 "camera:编号"（画面/缩放整段共用）。
+   为什么不并进 _display_key_of()：**相机帧每一帧都是 run_camera() 返回的新副本**，用对象同一性认不出来；
+   这里按"这一轮是不是真的用到相机源、而且相机真的开着"判定，更稳。
+5、"自动出画面"（勾"自动切换"+点执行）：_maybe_start_video_playback() 改成**分派口** ——
+   相机 ⇒ _start_camera_playback()（无界流：没有帧号/末尾/循环，一直出到点"停止"；读不到帧率按 30ms 一格）；
+   视频 ⇒ 原来的 _start_video_playback()；两者**共用同一个 QTimer**（同一时刻只会播一种）。
+   _video_tick() 顶部加相机分支 → _camera_tick()（只查"相机还在不在"，再用 run_flow_step /
+   run_flow_continuous 跑一格；单步时实时取当前选中节点）；_stop_video_playback() 同时清 _camera_playing。
+6、"停止不关、删除才关"（用户拍板）：delete_gallery_item() 开头新增 —— 本页有相机源节点、而且
+   相机开着 ⇒ _release_camera_device() + 日志"已关闭相机（相机源节点里的参数保留）"；
+   **"停止"那条路径完全不碰 cap**，所以最后一帧留在画布上。
+
+二、★ 实测抓出的真 bug：相机开着以后，执行被"老摄像头预览"分支整段接走
+   现象（我自己写的用例先报出来的）：相机源自动打开相机之后，**第二次点"连续执行"就不走引擎了**。
+   根因：on_continuous_execute() / on_step_execute() 开头那段
+        if self.current_static_image is None and self.cap is not None and self.cap.isOpened():
+            self.update_frame(); return
+   是主窗口"打开摄像头"按钮那套老预览的入口，它**只看 cap 开着**，于是把相机源节点的执行截走
+   （走 update_frame()，_execute_static 压根没执行 ⇒ 画面键 / 不进缓存 / 参数共用 / 自动出画面
+   这套 M4 语义全被绕过，而且结果缓存还会被 update_frame 悄悄改）。
+   修法：抽出 _legacy_camera_preview_active()——老预览的判据是**"self.timer 那个 30ms 定时器在跑"**，
+   而且**本页没有相机源节点**：
+        return (self.current_static_image is None
+                and self.cap is not None and self.cap.isOpened()
+                and self.timer is not None
+                and self._camera_source_node() is None)
+   两个入口都改用它。老按钮那条路（open_camera() 会起 timer）判据依旧成立，界面表现不变。
+
+三、补完"用户要求过、上次只在注释里写了、其实没实现"的一条：预留相机类型**置灰**
+   之前 SOURCE_SPECS 只把三个选项列出来，两个"预留"项也是能选的。现在
+   GenericProcessDialog._make_widget() 的 combo 支持 options["disabled"]：
+            entries = [str(item) for item in options.get("options", [])]
+            widget.addItems(entries)
+            for index, text in enumerate(entries):
+                if text in [str(item) for item in options.get("disabled", [])]:
+                    model_item = widget.model().item(index)
+                    if model_item is not None:
+                        model_item.setEnabled(False)
+   SOURCE_SPECS 里给 camera_type 加 "disabled": ["网络相机（预留）", "工业相机（预留）"]；
+   SourceOps.run_camera() 再兜一层：相机类型不是 "USB 相机" ⇒ 原样透传 + "暂不支持…"
+   （方案文件可能是手改的，防脏数据）。
+
+四、验证（无头 + 假相机，**不需要真设备**）
+   把 cv2.VideoCapture 换成假设备（read() 返回一整张填充指定灰度的图），走"用户会点的按钮"真实路径。
+   用例 %TEMP%\dsh_m4_camera_check.py，**41 项全 PASS**（失败项：无）：
+     · 注册 kind=source、四项参数、相机类型两个预留项 isEnabled()==False
+     · 相机没开 + 勾"执行时自动打开" ⇒ 点连续执行**自动打开**（编号取节点里的 camera_id=0）；同一台不重开
+     · **像素级**：数据层"取反"后 = 255-200 = **55.0**（抓 _render_display 的底图，避开 ROI 叠加那层）；
+       换成 60 ⇒ **195.0**（证明流程真的吃的是相机那一帧，不是别的图）
+     · 相机帧**不进结果缓存**（result_cache 长度 0）
+     · 画面键 = "camera:0"；显示层 _current_key 稳定；逐帧执行后缩放 1.4 不被复位
+     · 相机开着时再点执行**仍走引擎**（shown 条数 +1 且键还是 camera:0）—— 防上面那个 bug 回归
+     · 勾"自动切换" ⇒ 定时器开着；连出 3 格都按最新画面算（255-120 = **135.0**）
+     · 「停止」= **不关相机**（cap 还开着）+ 最后一帧留在画布（pixmap_item 还是原来那个）
+     · 「删除」= cap.release() **真被调用** + 清画布 + **节点参数一个都没变** + 再点执行会重新打开
+     · "执行时自动打开"不勾 ⇒ 不开设备；取不到帧时**原样透传**（225.0）+ 日志写"没有可用的相机画面"
+     · 旧路径回归：老"打开摄像头/关闭"按钮照旧（编号取设置里那个、起 30ms 定时器、切视频槽、关闭后清画布）
+   截图 3 张（backups\_ui_preview）：m4_camera_tree.png（树里"采集"下有相机源 / 画布 相机源→二值化 /
+   执行日志两行）、m4_camera_dialog.png（相机源只留"运行参数"页 + 只有"确定"按钮）、
+   m4_camera_types_gray.png（下拉展开，两个"预留"项**肉眼看是灰的**）。
+
+五、顺手改掉 3 条我自己写错的断言（改了必重跑）
+   · dsh_source_check.py："采集"组应含**三项**（原写两项）⇒ 35/35
+   · dsh_m3_video_check.py：同上 ⇒ 18/18
+   · dsh_m3_video3_check.py：原来断言 `len(display_keys()) <= 1`，**列表为空时也算过（假 pass）**；
+     改成断言显示层 _current_key 就是视频那个键 ⇒ 3/3
+   另有 8 套历史留档用例（引用 M2 已经删掉的 gallery_run_all / run_all_button / MainWindow.project_path）
+   本来就跑不过，与本次改动无关，不动它们。
+
+六、遗留
+   相机 V1 的分辨率只是"存着不生效"；多相机切换、真实帧率上限、掉线重连都留后续。
+
+
+2026.10.7 02:47
+存在问题（用户实测报的 2 条）：
+1、"删除日志关于批次4 目标3-M4「相机源」整体总结的内容，总结是要我完成验收时再让你写的内容，
+   我没有说时你只需要书写你这次修改的内容。"
+2、"使用相机源节点后，在画布上没有图片时，点击连续执行按钮，会弹出图1的窗口，没办法打开摄像头。
+   点击单步执行后会截取一幅图到画布上，不会出现这个弹窗。"
+
+一、问题 1：删掉日志里的 M4 整体总结（并立成规矩）
+  已从 pyside6.txt 删除《总结：批次4 目标3-M4「相机源」整体总结》整段（207876 → 205431 字符）。
+  规矩（**本轮起生效**）：**整体总结只在用户明确要求（验收时）才写**；用户没说时，日志只写
+  "本次修改的内容"（存在问题 / 原因分析 / 修改 / 验证 / 遗留），**不要自己加阶段总结**。
+  顺手修正上一条里"历史留档用例 = 5 套"的笔误（实际 8 套）。
+
+二、问题 2：画布上只有"相机源"、又没连线时，连续执行打不开摄像头（真 bug，已修）
+  原因分析：连续执行走 _ensure_camera_open_for_run()，它的判据是"这一轮**真用到**相机源"，
+  而 _camera_used_by(None, "continuous") 的实现是"相机源有没有下游连线"。画布上只有一个相机源、
+  又没连线 ⇒ 判成"没用到" ⇒ 设备压根没开 ⇒ _source_node_frame() 问它要图只能拿到 None
+  ⇒ 弹"请先导入图片/视频…"。而单步执行选中相机源时，_camera_used_by(cam, "step") 里的
+  `node is camera` 分支直接成立 ⇒ 正常打开 —— 于是两条入口表现不一致，正是用户报的现象。
+  修改（main.py 三处）：
+  1、_source_node_frame(allow_camera_open=False)：轮到"相机源"这一项、而且允许开设备时，
+     先 _ensure_camera_device_open(node) 再问它要图 —— 判据从"有没有连线"改成"是不是轮到它取图"；
+     _flow_source_frame()（唯一的执行路径）传 allow_camera_open=True。
+  2、把"打开这个相机源节点的设备（含 open_on_run 判断 + 复用同一编号 + 切视频槽 + 日志）"
+     抽成 _ensure_camera_device_open(camera_node)，_ensure_camera_open_for_run() 复用它，
+     免得两条路各写一份、开关判据不一致。
+  3、其它入口的 _source_node_frame() 调用（_node_input_frame 取默认 ROI 尺寸）保持默认 False
+     —— **打开参数窗口绝不顺手开设备**。
+
+三、验证
+  复现脚本（修前）：场景"只有一个相机源、没连线" ⇒ cap=None、弹窗 1 次、0 条画面；
+  同场景单步 ⇒ cap 打开、0 弹窗、1 条画面 —— 与用户描述完全一致。
+  修后同脚本 ⇒ 连续执行 cap 打开、0 弹窗、1 条画面；有连线的场景照旧。
+  新增回归用例 %TEMP%\dsh_m4_cont_check.py，**16 项全 PASS**：
+   · 孤立相机源 + 没图片 ⇒ 连续执行自动开相机、不弹窗、有画面，日志如实写"没有可执行的流程"
+   · 同场景单步执行也正常（两条入口表现一致）
+   · 有连线时照旧打开、数据层取反 55.0、同一台不重复开设备
+   · **守卫**：_node_input_frame()（对话框取默认 ROI 尺寸）与 _source_node_frame() 默认路径
+     **都不会**开相机；相机没开时如实返回 None、不崩
+   · **守卫**：画布上已经有图片、相机源又没连线 ⇒ 不打开相机（不白占设备）
+   · 没勾"执行时自动打开相机" ⇒ 不开设备，这种情况才允许弹提示
+  跑门禁（18 套 + 本轮新增 1 套 = 19 套）**失败项：无**。
+  顺手修掉日志里 3 处历史控制字符错字（`\video_path` / `\video_key` 被 \v 吃掉成 "ideo_path"），
+  现 pyside6.txt 里除 \t \n \r 外**控制字符总数为 0**。
+
+四、遗留
+  同上一轮：相机 V1 的分辨率只是"存着不生效"；多相机切换、真实帧率上限、掉线重连都留后续。
+
+
+总结：批次4 目标3-M4「相机源」整体总结（2026.10.7 02:54，用户要求时写）
+   ★ 里程碑口径：目标3 分 M1 图片源 / M2 图像列表工具栏 / M3 视频源 / M4 相机源；**M4 是最后一个子里程碑**
+     （2026.10.7 02:06 ~ 02:47，共 3 轮：节点本体 → main.py 全接线 → 用户实测报的 bug 修复）。
+     **目标3 四个子里程碑至此全部完成**。
+
+一、原定目标与最终落地情况
+   用户 2026.10.7 定的 M4 范围与语义：① 树"采集"下加独立**相机源**节点，**V1 只适配 USB 相机**
+   （相机编号），"相机类型"下拉框里其他类型是**预留项、要置灰**；② **分辨率只存不生效**；
+   ③ **相机帧不进结果缓存**；④ **方案 A：节点复用主窗口相机**；⑤ **参数复用视频槽**；
+   ⑥ **相机没开就自动打开**；⑦ **「停止」不关相机、「删除」才关**；
+   ⑧ 主窗口"启动 / 停止"按钮后续可能删除 ⇒ 先把开关相机抽成内部 API。
+   最终落地：
+   · **相机源节点**（起点类 `KIND_SOURCE`，窗口只留"运行参数"页 + "确定"），参数 = 相机类型(combo：
+     USB 相机 / 网络相机（预留）/ 工业相机（预留），后两项**置灰**，默认 USB 相机) / 相机编号(int 0~9) /
+     分辨率(combo：默认 / 640×480 / 1280×720 / 1920×1080，**只存不生效**) / 执行时自动打开相机(bool，
+     默认开)。**没有**帧游标 / 循环参数 —— 相机是**无界流**。
+   · **方案 A**：`SourceOps.py` 提供 `CAMERA_FRAME_PROVIDER` + `set_camera_frame_provider()`，主窗口构造时
+     注入"取最新一帧"的取帧器；`run_camera()` 只读它、**返回副本**（主窗口缓冲会被下一帧覆盖，绝不交出
+     引用）；取不到帧 ⇒ **原样透传 + 结果带说明**（不弹窗）；相机类型不是"USB 相机" ⇒ 透传 + "暂不支持…"
+     （防手工改过的方案文件）。
+   · **内部开关相机 API**：`_open_camera_device(camera_id, quiet=True)`（已经开着、而且就是同一个编号 ⇒
+     **复用不重开**；开着别的编号先关再开；打不开返回 False，`quiet=False` 才弹老警告窗）/
+     `_release_camera_device()`；老 `open_camera()` / `close_camera()` 改成调它们 ⇒
+     **老按钮界面表现一个字不变**（回归用例覆盖）。
+   · **自动打开**：`_ensure_camera_device_open(camera_node)` 统一判断 `open_on_run` + 复用同一编号 +
+     切"视频槽" + 写日志，**两条路径共用**：① `run_flow_step()` / `run_flow_continuous()` 开头
+     `_ensure_camera_open_for_run()`（按"这一轮真用到相机源"预开）；② `_source_node_frame(allow_camera_open=True)`
+     （**轮到相机源取图时顺手开**，只有执行路径传 True）。
+   · **不进结果缓存**：`_execute_static()` 里 `if not camera_used:` 才写 `result_cache`。
+   · **参数复用视频槽**：相机分支只做 `_save_node_params(flow_nodes, VIDEO_ROI_KEY)`，**不推进帧游标**。
+   · **画面稳定**：`_camera_display_key()` = `"camera:编号"` 整段共用 ⇒ 逐帧刷新时缩放 / 平移不被复位。
+   · **自动出画面**：勾「自动切换」+ 点执行 ⇒ `_start_camera_playback()`（读不到帧率按 30ms 一格），
+     与视频播放**共用同一个 QTimer**；`_video_tick()` 转 `_camera_tick()`；单步时实时取当前选中节点。
+   · **「停止」= 暂停**：只停画面，**完全不碰 `cap`**，最后一帧留在画布上；
+     **「删除」= 关相机**：`_release_camera_device()` + 清画布，**不动节点参数**（下次执行会重新打开）。
+   · **预留项置灰**：`GenericProcessDialog` 的 combo 支持 `options["disabled"]`（声明式，
+     以后别的算子的预留档位能直接复用）。
+
+二、返工记录（3 轮；两轮由用户实测驱动，一轮由我自己的用例先报出来）
+   1、（02:06）**只做完 SourceOps 侧 + 树项**，当时如实说明"可注册、可拖、不崩、但未接线"
+      （取帧器没注入 ⇒ 执行只透传 + 日志写"没有可用的相机画面"）。
+   2、（02:15）**main.py 全接线**（取帧器注入 / 相机分支 / 画面键 / 自动出画面 / 停止与删除语义 /
+      参数复用视频槽 / 不进缓存），并补完"用户要求过、上一轮只在注释里写了却其实没实现"的**预留项置灰**。
+      同轮我自己的用例先报出**真 bug**：相机被相机源自动打开之后，**第二次点执行被主窗口"老摄像头预览"
+      分支整段接走** —— `on_step_execute()` / `on_continuous_execute()` 开头那条 `cap.isOpened()` 判据
+      只看**共享资源状态**，走 `update_frame()` 时 `_execute_static` 压根没执行，M4 那套语义全被绕过
+      ⇒ 抽出 `_legacy_camera_preview_active()`（判据 = **`self.timer` 那个 30ms 定时器在跑** 且
+      **本页没有相机源节点**）。另一处**设计返工**：相机帧的画面键本想用对象同一性认
+      （`frame is self._camera_round_frame`），但 `run_camera()` 返回的是**副本** ⇒ 认不出来，
+      改成按"这一轮是否真用到相机源 + 相机是否真开着"判定。
+   3、（02:47）**用户实测报**："使用相机源节点后，在画布上没有图片时，点击连续执行按钮，会弹出
+      '请先导入图片/视频…'的窗口，没办法打开摄像头。点击单步执行后会截取一幅图到画布上，不会出现弹窗。"
+      根因：`_ensure_camera_open_for_run()` 用"**有没有下游连线**"判"真用到相机源"，画布上只有一个相机源、
+      又没连线时判成"没用到" ⇒ 设备压根没开 ⇒ `_source_node_frame()` 问它要图只能拿到 None ⇒ 弹提示；
+      而单步执行选中相机源时 `_camera_used_by(cam, "step")` 里的 `node is camera` 分支直接成立 ⇒ 正常。
+      修法：把"轮到相机源取图时顺手开设备"放进 `_source_node_frame(allow_camera_open=True)`，
+      判据从"有没有连线"改成"**是不是轮到它取图**"；设备准备抽成 `_ensure_camera_device_open()` 两路共用。
+      **守卫**：`_node_input_frame()`（对话框取默认 ROI 尺寸）走默认 False ⇒ **打开参数窗口绝不开设备**；
+      画布上已经有图片 + 相机源又没连线 ⇒ 也不开（不白占设备）。
+      同轮按用户要求**删掉我自行添加的 M4 整体总结**，并把"**整体总结只在用户要求（验收）时才写**"
+      立成规矩（写进项目准则）。同轮还修掉日志里 3 处历史控制字符错字
+      （`\video_path` / `\video_key` 被 \v 吃掉成 "ideo_path"），现日志除 \t \n \r 外控制字符总数为 0。
+
+三、涉及文件
+   · **SourceOps.py**：`CAMERA_FRAME_PROVIDER` / `set_camera_frame_provider()` / `run_camera()` /
+     `format_camera()` + `SOURCE_SPECS` 增"相机源"一条（含 `"disabled"` 置灰声明）。
+   · **main.py**：`_open_camera_device()` / `_release_camera_device()` / `_latest_camera_frame()` /
+     `_begin_camera_round()` / `_camera_source_node()` / `_camera_used_by()` / `_camera_display_key()` /
+     `_ensure_camera_device_open()` / `_ensure_camera_open_for_run()` / `_start_camera_playback()` /
+     `_camera_tick()` / `_legacy_camera_preview_active()`；`_source_node_frame()` 加 `allow_camera_open` 参数；
+     另改 `_flow_source_frame()` / `_execute_static()` / `_maybe_start_video_playback()` / `_video_tick()` /
+     `_stop_video_playback()` / `_display_key_of()` / `delete_gallery_item()` / `open_camera()` /
+     `close_camera()` / `update_frame()` / `on_step_execute()` / `on_continuous_execute()`。
+   · **GenericProcessDialog.py**：combo 支持 `options["disabled"]`（把"预留"档位置灰）。
+   · **main.ui**：树"采集"下加"相机源"（现为 图片源 / 视频源 / 相机源）。
+   · **方案**：`plan\VisionFlowNode_批次4技术方案_v1.22_2026.10.7.md`（§5.15 正文 + "六、修复"小节 +
+     子里程碑表 M4 行 ✅ + 头部状态 + 变更说明第 25 / 26 条）。
+
+四、验证（累计）
+   · M4 节点与接线：`dsh_m4_camera_check.py` **41 项全过**（把 `cv2.VideoCapture` 换成假设备，
+     **不需要真摄像头**）；M4 修复：`dsh_m4_cont_check.py` **16 项全过**；
+   · **门禁 19 套 454 项断言全部"失败项：无"**；
+   · 关键行为都用可判据断言：**像素级** 数据层"取反" = 255-200 = **55.0**（spy `_render_display` 取底图，
+     避开 ROI 叠加那层）与 255-60 = **195.0**、自动出画面每格 255-120 = **135.0**、取不到帧原样透传 **225.0**；
+     `result_cache` 长度 0（不进缓存）；画面键 / 显示层 `_current_key` = `camera:0` 且逐帧执行缩放 1.4
+     不被复位；「停止」后 `cap` 仍开着且最后一帧还在（`pixmap_item` 不变）；「删除」后 `release()` 计数 +1、
+     `pixmap_item` 为 None、**节点参数一个都没变**；两条守卫（参数窗口、以及"有图片时的孤立相机源"
+     都**不开**设备）；老"打开摄像头 / 关闭"按钮路径回归。
+   · 截图 4 张（backups\_ui_preview）：m4_camera_tree.png（树项 + 画布 + 日志两行）/
+     m4_camera_dialog.png（只留"运行参数"页 + 只有"确定"）/ m4_camera_types_gray.png（下拉展开，
+     两个"预留"项**肉眼看是灰的**）/ m4_camera_continuous_fixed.png（修复后：画布上只有一个相机源、
+     没连线，点连续执行也能开相机出画面）。
+
+五、回退点（E:\opencv_python_3_8\backups）
+   at_20261006_2235（M3 之前）→ at_20261007_0025（M3 收尾）→ **at_20261007_0215**（M4 main.py 全接线：
+   main.py / SourceOps.py / GenericProcessDialog.py / ImageGalleryWidget.py / main.ui / pyside6.txt / 方案 v1.21）
+   → **at_20261007_0247**（M4 修复 + 方案 v1.22）。回退 M4 用 **0247**；只想退回"没修那个 bug"的状态用 0215。
+
+六、遗留 / 后续待办（**M4 功能上没有遗漏**，只剩下面这些）
+   1、相机 V1 的**分辨率只是"存着不生效"**（没真去设设备分辨率）；多相机切换 / 真实帧率上限 /
+      掉线重连 / 相机参数（曝光、增益）都留后续；
+   2、目标3 四个子里程碑全部完成；下一个里程碑 = **目标4「参数校验」**（决策 d 待拍板：
+      "能纠正的自动纠正 + 日志" vs 一律拦住）；
+   3、目标3 期间攒下的想法都在方案《九、想法（未开发）》：**9.1 输出节点（用户原话）**、
+      **9.2 每 N 帧检测一次（用户原话要点）**、9.3~9.7 视频源的播放 / 导出 / 来源 / 性能 / ROI 行为；
+   4、未接入口：`run_selected_image()`（菜单"运行选中"备用）；单步"逐步执行到该节点"备选语义待拍板；
+   5、小待办：除灰度外算子"作用于整图"、"另存为"是否同步改页签名、save_test 老多页方案是否拆页、
+      "圆"窗口比通用窗口宽 51px、图库高度写死 85px。

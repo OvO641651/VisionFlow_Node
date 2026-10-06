@@ -210,11 +210,16 @@
              <string>图片源</string>
             </property>
            </item>
-            <item>
-             <property name="text">
-              <string>视频源</string>
-             </property>
-            </item>
+           <item>
+            <property name="text">
+             <string>视频源</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>相机源</string>
+            </property>
+           </item>
           </item>
           <item>
            <property name="text">
