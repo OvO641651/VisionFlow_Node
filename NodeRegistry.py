@@ -42,6 +42,7 @@ AUTO_SOURCE = "__auto__"
 KIND_PROCESS = "process"    # 处理类：会改写数据层图像
 KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果
 KIND_SOURCE = "source"      # 图像源类：流程的起点，自己"造"图（读文件 / 当前图像 / 测试图），没有上游
+KIND_SINK = "sink"          # 输出类：图像**原样透传**，只把结果送出去（写磁盘等）——M5「输出图像」
 
 
 class NodeSpec(object):
@@ -78,10 +79,23 @@ class NodeSpec(object):
     def modifies_image(self):
         """
         这个算子的输出图像会不会和输入不一样。
-        处理类 = True；图像源类 = True（它读出来的是新图）；检测类 = False（原样透传）。
-        main.py 在多上游时用它挑"真正产出新图像"的那一支当默认图像源。
+        处理类 = True；图像源类 = True（它读出来的是新图）；检测类 = False（原样透传）；
+        输出类（KIND_SINK）= False（**原样透传**，它只是把结果送出去）。
+        main.py 在多上游时用它挑"真正产出新图像"的那一支当默认图像源
+        —— 输出类必须算 False，否则"中间插一个输出节点"会被误当成真正改图的那一支。
         """
         return self.kind in (KIND_PROCESS, KIND_SOURCE)
+
+    @property
+    def is_flow_level(self):
+        """
+        这个节点的参数是不是**流程级配置**（不按图片归档）。
+
+        起点节点（图片源 / 视频源 / 相机源）的"来源 / 路径"属于流程图本身；
+        输出类节点（输出图像）的"输出目录 / 文件名"同理 —— 它们都不该跟着"当前是哪张图"变。
+        必须跳过按图归档，否则用户换一张图之后这些参数会被清掉（见 main.py）。
+        """
+        return self.kind in (KIND_SOURCE, KIND_SINK)
 
 
 # ----------------------------------------------------------------------
@@ -196,9 +210,11 @@ def _register_category(entries, kind):
 # 放在文件末尾 import：避免循环导入（注册表 ←→ 分类模块）
 from ProcessOps import PROCESS_SPECS  # noqa: E402
 from SourceOps import SOURCE_SPECS    # noqa: E402
+from OutputOps import OUTPUT_SPECS    # noqa: E402
 
 _register_category(PROCESS_SPECS, KIND_PROCESS)   # 处理类：灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取
-_register_category(SOURCE_SPECS, KIND_SOURCE)     # 图像源类：图片源（第一版）
+_register_category(SOURCE_SPECS, KIND_SOURCE)     # 图像源类：图片源 / 视频源 / 相机源
+_register_category(OUTPUT_SPECS, KIND_SINK)       # 输出类：输出图像（M5）
 
 
 def get_spec(name):

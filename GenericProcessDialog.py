@@ -34,7 +34,7 @@ from PySide2.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QSpinBox, QVBoxLayout, QWidget)
 
 from LineParamsDialog import LineParamsDialog
-from NodeRegistry import KIND_SOURCE, get_spec
+from NodeRegistry import KIND_SINK, KIND_SOURCE, get_spec
 
 # 直线专用、但要被通用窗口藏起来的控件（它们的值对处理类算子没有意义）
 LINE_ONLY_WIDGETS = ("canny_low", "canny_high", "spin_canny_low", "spin_canny_high",
@@ -62,7 +62,13 @@ class GenericProcessDialog(LineParamsDialog):
             # 所以只留"运行参数"页；同时去掉"执行 / 连续执行"两个按钮（见 _remove_run_buttons）。
             self._remove_basic_tab()
             self._remove_run_buttons()
+        elif getattr(self.spec, "kind", None) == KIND_SINK:
+            # 输出类节点（"输出图像"，M5，用户 2026.10.7 要求"参考图像源节点，只保留运行参数页面"）：
+            # 它的输入是"上游给什么就存什么"，ROI / 继承那套在它身上没有意义，所以基本参数页也去掉。
+            # 注意**保留**"执行 / 连续执行"按钮 —— 它能用来单独存一张，用户没让去掉。
+            self._remove_basic_tab()
         self._load_params()           # 再加载一次：这回把动态控件也灌上值
+        self._apply_dynamic_defaults()   # 最后补"动态默认值"（必须在 _load_params() 之后，否则被空默认值冲掉）
 
     # ------------------------------------------------------------------
     # 生成界面
@@ -133,6 +139,46 @@ class GenericProcessDialog(LineParamsDialog):
             layout.addLayout(row)
         layout.addStretch(1)
 
+    def _apply_dynamic_defaults(self):
+        """
+        给 `default_from` 声明的参数补"动态默认值"（**必须在 `_load_params()` 之后跑**）。
+
+        为什么不能放在建控件那一步：`_load_params()` 会拿 `options["default"]`（空串）再去
+        `setText("")`，把这里填好的默认值又冲掉（实测踩到）。
+        也已经存过值的参数一律不动 —— 用户改过的名字不能被默认值覆盖。
+        """
+        controls = getattr(self, "param_controls", None) or {}
+        for key, _label, kind, options in list(getattr(self.spec, "param_specs", None) or []):
+            widget = controls.get(key)
+            if widget is None or self.node is None:
+                continue
+            if self.node.params.get(key):
+                continue                      # 这个节点存过值了，别覆盖用户的选择
+            self._apply_source_default(widget, kind, options)
+
+    def _apply_source_default(self, widget, kind, options):
+        """
+        把 param_specs 里 `default_from` 声明的"动态默认值"填进控件。
+
+        目前只有一种：`default_from = "input_image_name"`
+        —— "输出图像"节点的"输出文件名"默认就是**这一轮输入图片的文件名**（用户 2026.10.7 要求）。
+        主窗口拿不到名字（没开图 / 相机帧 / 测试图）时就保持空，界面上会显示 placeholder 说明留空的含义。
+        """
+        if (options or {}).get("default_from") != "input_image_name":
+            return
+        win = self.main_window
+        if win is None or self.node is None or not hasattr(win, "input_image_name_of_node"):
+            return
+        name = win.input_image_name_of_node(self.node) or ""
+        if not name:
+            return
+        if kind == "text":
+            if not widget.text():             # 控件里已经有内容就别动
+                widget.setText(str(name))
+        elif kind == "dir":
+            if not widget.edit.text():
+                widget.edit.setText(str(name))
+
     def _make_widget(self, key, kind, options):
         """按控件类型造控件；造不出来返回 None（该参数就当不存在，界面不崩）"""
         options = options or {}
@@ -180,6 +226,25 @@ class GenericProcessDialog(LineParamsDialog):
             row.addWidget(edit)
             row.addWidget(browse)
             widget.edit = edit          # 取值时用它（见 _widget_value）
+        elif kind == "text":
+            # 纯文本输入（M5「输出图像」的"输出文件名"用它）。
+            # **不能用 file 顶替**：file 的"浏览…"在非起点节点上弹的是"选图片"，
+            # 还会顺手把选中的图导进图库（副作用完全不对）。
+            widget = QLineEdit(str(options.get("default", "")))
+            if options.get("placeholder"):
+                widget.setPlaceholderText(str(options["placeholder"]))
+        elif kind == "dir":
+            # 选目录（M5「输出图像」的"输出目录"用它）：和 file 同形，只是弹"选择文件夹"
+            widget = QWidget()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            edit = QLineEdit(str(options.get("default", "")))
+            browse = QPushButton("选择目录…")
+            browse.clicked.connect(
+                lambda _checked=False, target=edit: self._browse_dir(target))
+            row.addWidget(edit)
+            row.addWidget(browse)
+            widget.edit = edit
         else:
             return None
 
@@ -234,6 +299,17 @@ class GenericProcessDialog(LineParamsDialog):
         if self.main_window is not None and hasattr(self.main_window, "import_image_path"):
             self.main_window.import_image_path(path)            # 静默导入，读不出来就跳过
         edit.setText(path)
+
+    def _browse_dir(self, edit):
+        """dir 类型参数右边那个"选择目录…"按钮（M5「输出图像」的输出目录用）
+
+        用**系统原生**的选文件夹对话框；选完只把路径填进输入框，**不做任何别的动作**
+        （不导入、不建目录、不弹提示）——建目录留到真正保存那一刻。
+        """
+        folder = QFileDialog.getExistingDirectory(self, "选择输出目录", edit.text())
+        if not folder:
+            return
+        edit.setText(folder)
 
     def _remove_result_tab(self):
         """处理类没有结构化结果 → 去掉"显示结果"页（那页是结果计数）"""
@@ -305,9 +381,10 @@ class GenericProcessDialog(LineParamsDialog):
                     "min_line_length", "max_line_gap"):
             self.node.params.pop(key, None)
 
-        if getattr(self.spec, "kind", None) == KIND_SOURCE:
-            # 起点节点（图片源）没有"处理区域"这个概念：把父类写进来的 ROI 参数一并清掉，
-            # 免得方案文件里留一堆没用的 roi_x / roi_w —— 画面上那个莫名其妙的黄框就是这么来的
+        if getattr(self.spec, "kind", None) in (KIND_SOURCE, KIND_SINK):
+            # 起点节点（图片源）和输出类节点（输出图像）都没有"处理区域"这个概念：
+            # 把父类写进来的 ROI 参数一并清掉，免得方案文件里留一堆没用的 roi_x / roi_w
+            # —— 画面上那个莫名其妙的黄框就是这么来的
             # （对话框曾经把"主窗口当前图的尺寸"当成 ROI 默认值写了进去，用户实测看到 512×512 的怪框）。
             for key in ("roi_x", "roi_y", "roi_w", "roi_h", "roi_shape", "roi_inherit",
                         "roi_margin", "roi_source", "hide_roi"):
@@ -333,6 +410,10 @@ class GenericProcessDialog(LineParamsDialog):
             widget.setChecked(bool(value))
         elif kind == "file":
             widget.edit.setText(str(value))
+        elif kind == "text":
+            widget.setText(str(value))
+        elif kind == "dir":
+            widget.edit.setText(str(value))
 
     def _widget_value(self, kind, widget):
         if kind == "combo":
@@ -344,5 +425,9 @@ class GenericProcessDialog(LineParamsDialog):
         if kind == "bool":
             return widget.isChecked()
         if kind == "file":
+            return widget.edit.text()
+        if kind == "text":
+            return widget.text()
+        if kind == "dir":
             return widget.edit.text()
         return None

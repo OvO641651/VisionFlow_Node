@@ -26,7 +26,10 @@ from GrayParamsDialog import GrayParamsDialog
 from GenericProcessDialog import GenericProcessDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
-from NodeRegistry import KIND_SOURCE, SOURCE_KEY, get_spec, result_bbox
+from NodeRegistry import KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec, result_bbox
+from OutputOps import (SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO,
+                       close_all_recordings, close_recording, set_input_name_provider,
+                       set_overlay_frame_provider, set_round_info_provider)
 
 
 uiloader = QUiLoader()
@@ -95,6 +98,16 @@ class MainWindow:
         # "取最新一帧"的取帧器，节点自己不碰设备（局部导入，避免与"注册表 ← 分类模块"的顺序纠缠）。
         from SourceOps import set_camera_frame_provider
         set_camera_frame_provider(self._latest_camera_frame)
+        # 输出类节点（M5「输出图像」）的"文件名默认值"要跟着"输入图片的文件名"走：
+        # 节点自己拿不到图片路径（run() 只收到图像数组），所以由主窗口在每一轮执行前准备好，
+        # 这里注入一个"取这一轮来源图片名"的取名字器（做法与上面那套一致）。
+        self._current_input_name = ""
+        # "带检测叠加"那张图（只有"输出图像"节点、而且保存内容选了叠加时才会有值）
+        self._current_overlay_frame = None
+        # "这一轮的执行上下文"：哪个节点、来源是图片/视频/相机、源帧率多少
+        # （输出节点要靠它决定"自动"档存图片还是存视频、录制文件的标称帧率）
+        self._round_info = {}
+        self._bind_output_providers()
 
         # 每张图片上一次的执行结果缓存
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
@@ -848,6 +861,19 @@ class MainWindow:
         spec = get_spec(node.name)
         return spec is not None and spec.kind == KIND_SOURCE
 
+    def _is_flow_level_node(self, node):
+        """
+        这个节点的参数是不是**流程级配置**（不按图片归档）。
+
+        除了起点节点（图片源 / 视频源 / 相机源），输出类节点（"输出图像"，M5，2026.10.7）也一样：
+        它的"输出目录 / 文件名"属于**这个节点自己的配置**，跟"当前打开的是哪张图"没有任何关系。
+        为什么必须跳过：`_load_node_params()` 是**先 `node.params.clear()` 再载入**，
+        如果它跟着图片走，用户一换图（新图名下没有快照）这些参数就被清空了 ——
+        和当年"图片源路径被切图清掉"是同一类坑（用户实测报过）。
+        """
+        spec = get_spec(node.name)
+        return spec is not None and spec.is_flow_level
+
     def _save_node_params(self, nodes, image_key):
         """
         把一批节点的当前参数存到某个图片名下。
@@ -857,8 +883,8 @@ class MainWindow:
         if image_key is None:
             return
         for node in nodes:
-            if self._is_source_node(node):
-                # 起点节点（图片源）不参与按图片归档，见 _is_source_node 的说明
+            if self._is_flow_level_node(node):
+                # 流程级配置（起点节点 / 输出节点）不参与按图片归档，见 _is_flow_level_node
                 continue
             store = self._get_node_params_store(node)
             snapshot = dict(node.params)
@@ -873,8 +899,8 @@ class MainWindow:
         :param image_key: 图片标识。
         """
         for node in nodes:
-            if self._is_source_node(node):
-                # 起点节点（图片源）的参数不跟着图片走，切图时保持原样（见 _is_source_node）
+            if self._is_flow_level_node(node):
+                # 流程级配置（起点节点 / 输出节点）不跟着图片走，切图时保持原样
                 continue
             store = self._get_node_params_store(node)
             # 先清空：这张图片以前没设置过的话，就保持空，
@@ -985,7 +1011,9 @@ class MainWindow:
 
         if mode == "continuous":
             # 调用连续执行_run_flow_pipeline，接收返回的 data 和日志 exec_info
-            work_frame, data, exec_info = self._run_flow_pipeline(work_frame)
+            # stop_at = 当前选中的节点：连续执行只跑到它为止（用户 2026.10.7 定的语义）
+            work_frame, data, exec_info = self._run_flow_pipeline(
+                work_frame, stop_at=self.selected_node)
         else:
             # 调用单步执行_run_flow_pipeline_step，只执行 node 这一个节点
             # （单步执行现在也会返回一行日志，否则"画面有结果、日志表却是空的"）
@@ -1102,6 +1130,8 @@ class MainWindow:
         """
         关闭相机设备、释放资源（内部 API）——用户 2026.10.7 定的分工：
         **"停止"不关相机（只停画面，保留最后一帧），"删除"才关相机**。
+
+        M5-2 起：相机一关，正在录的视频也跟着收尾（流没了，文件必须 release）。
         """
         if self.timer is not None:
             self.timer.stop()
@@ -1112,6 +1142,7 @@ class MainWindow:
                 cap.release()
             except Exception:
                 pass
+        self._close_recordings("相机已关闭")
         self._camera_device_id = None
         # 丢掉"这一轮读到的那一帧"：相机都关了，别让取帧器再把它交出去
         self._camera_round_frame = None
@@ -1213,7 +1244,9 @@ class MainWindow:
             work_frame, data, exec_info = self._run_flow_pipeline_step(work_frame, self.video_step_node)
         else:
             # 处于连续执行模式（或未指定节点），执行完整流程图，解包三个值
-            work_frame, data, exec_info = self._run_flow_pipeline(work_frame)
+            # 同样截到"当前选中节点"为止（和按钮那条路保持一致）
+            work_frame, data, exec_info = self._run_flow_pipeline(
+                work_frame, stop_at=self.selected_node)
 
         # 更新日志：视频是每 30ms 一帧，用"节流版"，内容没变就完全不重画表格
         self._update_execution_log_throttled(exec_info)
@@ -1487,7 +1520,7 @@ class MainWindow:
                 text += "  ← 继承未生效（改用本节点 ROI）"
         return text
 
-    def _render_display(self, base_img, executed):
+    def _render_display(self, base_img, executed, draw_roi=True):
         """
         渲染层：把数据层的图像复制一份，再按执行顺序把各节点的结果和 ROI 框画上去。
 
@@ -1496,6 +1529,9 @@ class MainWindow:
 
         :param base_img: 数据层底图（取最后一个执行节点的图像输出）
         :param executed: [(节点, 结果, roi_info, spec), ...]，按执行顺序
+        :param draw_roi: 要不要把 ROI 黄框 / 洋红框也画上。
+                屏幕上要（方便调参）；**"输出图像"节点存"带检测叠加"时不要** ——
+                那是辅助线，存进文件里没意义（用户 2026.10.7 要求存的是"检测的内容"）。
         :return: 可以直接显示的图像
         """
         display = base_img.copy()
@@ -1512,20 +1548,21 @@ class MainWindow:
             rois_to_draw.append(roi_info)
 
         # 结果全部画完之后再统一画 ROI 框，避免黄框被后面的算法当成图像内容
-        for rx, ry, rw, rh, hide, roi_shape, inherited in rois_to_draw:
-            if hide:
-                continue
-            # 继承来的 ROI 用洋红色，和手动画的黄色区分开，一眼能看出这块是从上游结果来的
-            color = (255, 0, 255) if inherited else (0, 255, 255)
-            if roi_shape == "圆":
-                cv2.circle(display, (rx + rw // 2, ry + rh // 2), rw // 2, color, 2)
-            else:
-                cv2.rectangle(display, (rx, ry), (rx + rw, ry + rh), color, 2)
+        if draw_roi:
+            for rx, ry, rw, rh, hide, roi_shape, inherited in rois_to_draw:
+                if hide:
+                    continue
+                # 继承来的 ROI 用洋红色，和手动画的黄色区分开，一眼能看出这块是从上游结果来的
+                color = (255, 0, 255) if inherited else (0, 255, 255)
+                if roi_shape == "圆":
+                    cv2.circle(display, (rx + rw // 2, ry + rh // 2), rw // 2, color, 2)
+                else:
+                    cv2.rectangle(display, (rx, ry), (rx + rw, ry + rh), color, 2)
 
         return display
 
 
-    def _run_flow_pipeline(self, frame):
+    def _run_flow_pipeline(self, frame, stop_at=None):
         """
         连续执行：按连线做拓扑排序，让图像数据顺着连线在各模块之间流动。
 
@@ -1535,6 +1572,10 @@ class MainWindow:
         渲染层：_render_display() 最后统一画，不参与任何算法。
 
         :param frame: OpenCV BGR 原图（内部只用副本，不会污染原图）
+        :param stop_at: **执行到哪个节点为止（含它）**；None = 跑完整条。
+                连续执行的入口（按钮 / 摄像头老预览）传 self.selected_node ——
+                用户 2026.10.7 定："连续执行 = 选中哪个节点就执行到那个节点，不再往下执行"
+                （这样"输出图像"只有在选中它自己或它后面的节点时才会存文件）。
         :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
         """
         img = frame.copy()              # 全局图像源（数据层的起点）
@@ -1549,8 +1590,8 @@ class MainWindow:
             return img, [], [("-", time.strftime("%H:%M:%S"), "提示", "-",
                               "没有可执行的流程：请先用连线把模块连起来")]
         # 真正的执行 + 渲染都在 _run_nodes 里：
-        # 连续执行 = 全部节点；单步执行 = 目标节点 + 它的上游（同一段代码，保证逻辑一致）
-        return self._run_nodes(order, parents, img, skipped)
+        # 连续执行 = 全部节点（截到 stop_at 为止）；单步执行 = 目标节点 + 它的上游（同一段代码，保证逻辑一致）
+        return self._run_nodes(order, parents, img, skipped, stop_at=stop_at)
 
 
     def _parent_nodes(self, node):
@@ -1595,7 +1636,7 @@ class MainWindow:
         return self.current_static_image if self.current_static_image is not None \
             else self._source_node_frame()
 
-    def _run_nodes(self, order, parents, frame, skipped=None, base_node=None):
+    def _run_nodes(self, order, parents, frame, skipped=None, base_node=None, stop_at=None):
         """
         按给定的拓扑顺序执行一串节点。
 
@@ -1607,6 +1648,10 @@ class MainWindow:
         :param frame: 数据层起点那一帧（全局图像源）
         :param skipped: 没有执行的节点（只在连续执行时给一行提示）
         :param base_node: 显示底图用哪个节点的输出；None = 用"当前选中的节点"（点谁看谁）
+        :param stop_at: **执行到哪个节点为止（含它）**；None = 把 order 全跑完。
+                用户 2026.10.7 定："连续执行 = 选中哪个节点就执行到那个节点，不再往下执行"
+                —— 由连续执行的入口（_run_flow_pipeline）显式传进来，**不在引擎里偷偷读选中项**
+                （直接调引擎的地方，例如测试里验"取输入 / 图像源绑定"的，仍旧跑完整条）。
         :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
         """
         out_images = {SOURCE_KEY: frame}   # {图像源标识: 图像输出}
@@ -1615,6 +1660,16 @@ class MainWindow:
         executed = []                      # [(节点, 结果, roi_info, spec), ...]，按执行顺序
         all_data = []                      # 所有节点结果汇总（给结果计数用）
         exec_info = []                     # 执行日志
+
+        # ★ 截断：连续执行只跑到"当前选中的节点"为止（用户 2026.10.7 定的语义）。
+        #   为什么要有它：画面本来就只画到选中节点（下面的 shown = executed[:选中节点]），
+        #   但执行却一直跑到底 ⇒ "选中中间的节点、点连续执行"时，末尾的"输出图像"照样存了文件
+        #   （用户实测报的）。现在把执行也截到同一个边界，引擎与画面才一致。
+        not_run = []
+        if stop_at is not None and stop_at in order:
+            cut = order.index(stop_at) + 1
+            not_run = list(order[cut:])
+            order = order[:cut]
 
         seq = 1
         for node in order:
@@ -1630,6 +1685,24 @@ class MainWindow:
             in_roi = roi_of.get(source_key)   # 上游没有结果时，下游继承它这块处理区域
 
             # 2、执行节点；它的图像输出挂到 out_images 上，供下游当图像源
+            #    （执行前把"这一轮的来源图片名"准备好：输出类节点要用它当默认文件名）
+            self._current_input_name = self._origin_image_name(node)
+            #    "输出图像"节点存"带检测叠加"时，还要把"这一轮上游检测出来的绿线 / 红圆"画好交给它
+            #    （只画检测结果、**不画 ROI 辅助框**；拿不到就让它退回数据层图像）
+            node_spec = get_spec(node.name)
+            self._current_overlay_frame = None
+            self._round_info = {}
+            if node_spec is not None and node_spec.kind == KIND_SINK:
+                # "这一轮的执行上下文"：录制文件按节点分开、来源种类决定"自动"档存图片还是视频、
+                # 源帧率当录制的标称帧率（只有输出节点用得上，所以只对它算）
+                self._round_info = {
+                    "node_key": id(node),
+                    "source_kind": self._source_kind_of(node),
+                    "source_fps": self._source_fps_of(node),
+                }
+                if self._wants_overlay(node):
+                    self._current_overlay_frame = self._render_display(
+                        in_img, executed, draw_roi=False)
             out_img, results, roi_info, spec = self._execute_node(node, in_img, in_results, in_roi)
             out_images[node] = out_img
             results_of[node] = results
@@ -1649,6 +1722,14 @@ class MainWindow:
             exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
                               "以下节点未执行（没有连线，或者连线成环）：" + names))
 
+        if not_run:
+            # "连续执行到选中节点为止"截掉的那些节点，也要如实写一行 ——
+            # 否则用户会以为"流程跑完了、后面的节点怎么没结果"（用户 2026.10.7 定的截断语义）
+            names = "、".join(node.name for node in not_run)
+            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
+                              "连续执行到「{0}」为止，以下节点本次未执行：{1}".format(
+                                  stop_at.name, names)))
+
         # 4、渲染层：底图取 base_node（单步执行 = 目标节点；连续执行 = 当前选中的节点），
         #    没选中 / 选中的节点这一轮没执行，就退回用最后一个执行节点的输出。
         pick = base_node if base_node is not None else self.selected_node
@@ -1659,6 +1740,115 @@ class MainWindow:
             shown = executed
         display = self._render_display(out_images[pick], shown)
         return display, all_data, exec_info
+
+    def _bind_output_providers(self):
+        """
+        把"输出类节点要用的两个取名字 / 取图器"绑到**当前正在执行的那个主窗口**上。
+
+        OutputOps 里那两个 provider 是模块级的，而"一个进程里可能同时存在多个 MainWindow"
+        （测试里就是这样）：谁最后构造谁就把 provider 抢过去了。所以每开始一轮执行都重新绑一次，
+        保证输出节点读到的一定是**正在跑的这个窗口**的数据。
+        """
+        set_input_name_provider(lambda: self._current_input_name)
+        set_overlay_frame_provider(lambda: self._current_overlay_frame)
+        set_round_info_provider(lambda: self._round_info)
+
+    def _source_kind_of(self, node):
+        """
+        这个节点这一轮的图"从哪来"：图片 / 视频 / 相机。
+
+        给"输出图像"节点的「输出类型 = 自动」用（用户 2026.10.7：图片源存图片、视频/相机存视频）。
+        判据：沿"图像源"绑定追到这条链最上头的起点节点是谁；追不到（用全局图像源）就算"图片"。
+        """
+        origin = self._binding_origin(node)
+        name = getattr(origin, "name", "") if origin is not None else ""
+        if name == "视频源":
+            return SOURCE_VIDEO
+        if name == "相机源":
+            return SOURCE_CAMERA
+        return SOURCE_IMAGE
+
+    def _source_fps_of(self, node):
+        """
+        这一轮的"来源帧率"，给录制当标称帧率用（用户在参数窗口里手填的优先，见 OutputOps._resolve_fps）。
+            · 视频源 → 读它那段视频的 fps（读不到 SourceOps 内部已兜 25）；
+            · 相机源 → 读设备帧率，读不到按 30（主窗口老摄像头预览就是这个节奏）；
+            · 图片 / 全局图像源 → 用不上，返回 0。
+        """
+        origin = self._binding_origin(node)
+        name = getattr(origin, "name", "") if origin is not None else ""
+        if name == "视频源":
+            try:
+                from SourceOps import video_info
+                _count, fps = video_info(origin.params.get("video_path") or "")
+                return float(fps or 0)
+            except Exception:
+                return 0.0
+        if name == "相机源":
+            try:
+                cap = self.cap
+                if cap is not None and cap.isOpened():
+                    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                    if fps > 0.5:
+                        return fps
+            except Exception:
+                pass
+            return 30.0
+        return 0.0
+
+    def _close_recordings(self, reason):
+        """
+        收尾所有正在录制的视频文件，并把结果写进执行日志。
+
+        「停止」/ 视频播到末尾 / 换页 / 删节点 / 关程序 / 关闭相机 都会调它
+        （用户 2026.10.7 拍板："下一次录制开始、旧文件要不要收尾"这套生命周期按推荐做）。
+        """
+        for message in close_all_recordings(reason):
+            self._append_log_hint(message)
+
+    @staticmethod
+    def _wants_overlay(node):
+        """
+        "输出图像"节点的「保存内容」是不是"带检测叠加"。
+
+        默认就是叠加：没有检测结果的流程（纯处理链）两者像素完全一样，
+        有检测结果的流程只有叠加才看得到绿线 / 红圆（用户 2026.10.7 报的"检测内容存不下来"）。
+        """
+        return (node.params.get("save_content") or SAVE_OVERLAY) == SAVE_OVERLAY
+
+    def _origin_image_name(self, node):
+        """
+        这个节点这一轮的"来源图片"叫什么名字（**不含扩展名**）—— 给"输出图像"节点当默认文件名用
+        （用户 2026.10.7 要求："输出文件名的默认值修改成输入图片的文件名"）。
+
+        怎么找：沿着"图像源"绑定往上追到这条链最上头的起点
+            · 起点是"图片源" → 用它的 `source_path`
+            · 起点是"视频源" → 用它的 `video_path`（帧号由"自动编号"去区分）
+            · 追不到（用全局图像源）→ 用主窗口当前那张图的路径
+            · 相机帧 / 测试图 / 还没开图 → 返回空串（界面显示 placeholder，保存时兜底成 output）
+        :return: 名字字符串（不含扩展名）
+        """
+        origin = self._binding_origin(node)
+        path = ""
+        if origin is not None:
+            path = origin.params.get("source_path") or origin.params.get("video_path") or ""
+        if not path and self.current_static_image is not None:
+            key = self._image_key_of(self.current_static_image)
+            if isinstance(key, str):
+                path = key
+        if not path:
+            return ""
+        path = path.split("#")[0]          # 视频帧的键是"路径#帧号"，取路径那半截
+        if "\\" not in path and "/" not in path:
+            return ""                      # 不是文件路径（例如 id(原图)）就别当名字
+        return os.path.splitext(os.path.basename(path))[0]
+
+    def input_image_name_of_node(self, node):
+        """给参数窗口用的公开入口：这个节点"输入图片的文件名"（没有就返回空串）"""
+        try:
+            return self._origin_image_name(node)
+        except Exception:
+            return ""
 
     def _binding_origin(self, node, _depth=0):
         """
@@ -1712,6 +1902,19 @@ class MainWindow:
                 source_label = "全局图像源（单步：只跑本节点）"
 
         img = in_img.copy()
+        # 单步执行也要把"这一轮的来源图片名"准备好（输出类节点要用它当默认文件名；
+        # 单步执行选中"输出图像"时存的就是这张起点原图，名字自然也是它的名字）
+        self._bind_output_providers()
+        self._current_input_name = self._origin_image_name(target_node)
+        # 单步执行**不叠检测结果**：这一轮只跑了选中的那一个节点，没有任何上游检测结果可叠，
+        # 所以"带检测叠加"会自然等于数据层图像（和"要存处理后的图请用连续执行"是同一条口径）。
+        self._current_overlay_frame = None
+        # 单步执行选中"输出图像"时也可能要录一帧（"自动"档靠来源种类判断存图片还是存视频）
+        self._round_info = {
+            "node_key": id(target_node),
+            "source_kind": self._source_kind_of(target_node),
+            "source_fps": self._source_fps_of(target_node),
+        }
         out_img, results, roi_info, spec = self._execute_node(target_node, img, None)
         display = self._render_display(out_img, [(target_node, results, roi_info, spec)])
 
@@ -1724,7 +1927,8 @@ class MainWindow:
 
 
     def close_event(self,event):
-        """窗口关闭时释放摄像头"""
+        """窗口关闭时释放摄像头 + **收尾正在录制的视频文件**（否则文件没 release、打不开）"""
+        self._close_recordings("关闭程序")
         self.close_camera()
         event.accept() # 允许窗口关闭
 
@@ -1812,6 +2016,12 @@ class MainWindow:
         if node_to_delete not in self.flow_nodes:
             # 检测节点是否存在
             return
+        # 删掉的如果是"输出图像"节点，它正在录制的文件要先收尾（否则是一个打不开的半个文件）
+        spec = get_spec(getattr(node_to_delete, "name", ""))
+        if spec is not None and spec.kind == KIND_SINK:
+            message = close_recording(id(node_to_delete), "节点已删除")
+            if message:
+                self._append_log_hint(message)
         edges_to_remove = []
         for edge in self.flow_edges:
             # 找出任何起点或终点是当前要删除节点的连线
@@ -2704,11 +2914,13 @@ class MainWindow:
         停止自动出画面（"停止"按钮 / 视频播到末尾 / 相机被关掉都会走这里）。
 
         M4 起兼管相机：相机这条路**只停画面、保留最后一帧、不关设备**（用户 2026.10.7 定）。
+        M5-2 起还要**收尾正在录制的视频文件** —— 流都停了，文件必须 release，否则打不开。
         """
         self._video_playing = False
         self._camera_playing = False
         if self._video_timer is not None and self._video_timer.isActive():
             self._video_timer.stop()
+        self._close_recordings(reason)
         self._append_log_hint("停止播放：{0}".format(reason))
 
     def _camera_tick(self, node, mode):
@@ -2798,10 +3010,16 @@ class MainWindow:
             self._video_log_throttle = False
 
     def stop_batch(self):
-        """菜单"停止"：中断正在跑的批量执行；如果视频正在自动播放，也一起停掉"""
+        """
+        菜单 / 工具栏"停止"：中断正在跑的批量执行；视频正在自动播放也一起停掉；
+        **顺手收尾正在录制的视频文件**（用户 2026.10.7："停止"就是结束录制、把文件收好）。
+        """
         self._batch_stop = True
         if self._video_playing:
             self._stop_video_playback("用户停止")
+        else:
+            # 没在播放（例如一帧一帧点着录）也要能收尾，否则用户点了"停止"文件还是打不开
+            self._close_recordings("用户停止")
 
     def _sync_source_nodes_to_path(self, path):
         """
@@ -2953,6 +3171,8 @@ class MainWindow:
         if old_page is not None:
             old_page["selected_node"] = self.selected_node
             self._save_node_params(old_page["nodes"], self.current_image_key)
+            # 换页了：上一页那个"输出图像"节点正在录的视频必须收尾（不然文件没写完、打不开）
+            self._close_recordings("切换页面")
 
         # 2、把"当前页"的引用换成新页面的
         self._bind_current_flow_page()

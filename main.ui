@@ -220,6 +220,11 @@
              <string>相机源</string>
             </property>
            </item>
+           <item>
+            <property name="text">
+             <string>输出图像</string>
+            </property>
+           </item>
           </item>
           <item>
            <property name="text">
