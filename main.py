@@ -1,4 +1,8 @@
 from collections import deque  # 拓扑排序要用到的队列（数据流引擎按连线顺序执行）
+
+# 视频（视频源节点 / 摄像头帧）**整段共用一份参数**用的"视频槽"键：
+# 参数按图片归档时用它当键，这样一段视频里每帧共用同一份参数（中途改参数、后面的帧按新的跑）。
+VIDEO_ROI_KEY = "video"
 from PySide2 import QtWidgets
 from PySide2.QtWidgets import (
     QApplication, QMessageBox, QDialog, QFileDialog
@@ -72,6 +76,10 @@ class MainWindow:
         self._removed_paths = set()
         # 批量执行的"停止"标志：菜单里的"停止"把它置 True，批量循环每张之前检查一次
         self._batch_stop = False
+        # 视频"自动播放"（勾了"自动切换"时点执行就按原帧率连续播）：定时器 + 两个状态标志
+        self._video_timer = None
+        self._video_playing = False
+        self._video_tick_running = False
 
         # 每张图片上一次的执行结果缓存
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
@@ -780,7 +788,16 @@ class MainWindow:
         """
         if frame is None:
             return None
-        return self._frame_paths.get(id(frame), id(frame))
+        known = self._frame_paths.get(id(frame))
+        if known:
+            return known
+        video = self._video_source_node()
+        if video is not None and video.params.get("video_path"):
+            # 视频帧：**结果缓存**按"路径#帧号"分开（这样回看得到某一帧的结果，也不会几千帧共用一个键）；
+            # 画面缩放/平移走 _display_key_of()（整段共用一个键）——两者刻意分开，别混。
+            index = int(video.params.get("frame_index") or 0)
+            return "{0}#{1}".format(video.params["video_path"], index)
+        return id(frame)
 
     @staticmethod
     def _node_params_by_image(node):
@@ -963,9 +980,9 @@ class MainWindow:
         self._update_execution_log(exec_info)
 
         # 显示处理后的图像；传图片标识让每张图片的缩放互相独立
-        # （标识优先用文件路径，见 _image_key_of）
+        # （缓存键用 _image_key_of；画面键用 _display_key_of —— 视频帧的画面键整段共用）
         image_key = self._image_key_of(frame)
-        self._display_image(work_frame, image_key)
+        self._display_image(work_frame, self._display_key_of(frame))
 
         # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
         # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
@@ -984,6 +1001,21 @@ class MainWindow:
         # 图片源节点用到的图片也放进图库列表（用户 2026.10.5 要求：不管是"打开文件"导入的，
         # 还是图片源节点指定的，都要在图库里看得见）
         self._ensure_source_images_in_gallery()
+        # "一次执行 = 前进一帧"（用户 2026.10.6 定）：这一轮真的用到视频源的话，把帧号 +1。
+        # 放在"执行结束"这里而不是 run() 里，是为了让同一轮里多个节点共用同一帧。
+        if self._video_used_by(node, mode):
+            self._advance_video_cursor()
+            # 视频的**参数整段共用一份**（用户 2026.10.6 定的语义）：跑完把当前这份参数存进"视频槽"
+            # （VIDEO_ROI_KEY，模块顶部已定义），这样切去别的图、再切回来点视频执行时，参数不会被清空。
+            self._save_node_params(self.flow_nodes, VIDEO_ROI_KEY)
+            # 结果缓存加个上限（尾巴之二，2026.10.7 补）：视频逐帧跑会不断新增键，
+            # 超过 400 条就把最旧的丢掉（FIFO 近似 LRU），免得越跑越吃内存。
+            if len(self.result_cache) > 400:
+                for old_key in list(self.result_cache)[:-400]:
+                    self.result_cache.pop(old_key, None)
+            # 勾了"自动切换"时：这一轮结束后**接着自动播放**（用户 2026.10.6 要求：
+            # "点自动切换后再点执行，视频会转成自动播放，不用一帧一帧点；点停止就停"）。
+            self._maybe_start_video_playback(node, mode)
 
         return data
 
@@ -1893,7 +1925,7 @@ class MainWindow:
         frame = self._source_node_frame()
         if frame is not None:
             return frame, "", True
-        return None, "请先导入图片/视频或者打开摄像头，或者在流程图里放一个“图片源”节点并指定图片！", True
+        return None, "请先导入图片/视频、打开摄像头，或者在流程图里放一个“图片源”/“视频源”节点并给它指定图片 / 视频！", True
 
     def run_flow_step(self, target_node):
         """
@@ -1979,6 +2011,10 @@ class MainWindow:
         """
         if not self.execution_log:
             # 如果控件不存在
+            return
+        if getattr(self, "_video_log_throttle", False):
+            # 视频自动播放中：不每格重写表格（不然日志刷屏、播放也变卡），
+            # 播放进度看工具栏那个"视频帧 (n/N)"标签；停播时会另写一行说明。
             return
         if getattr(self, "_log_accumulate", False):
             # "运行全部"期间：**不清空**表格，逐张往后累积（用户 2026.10.6 定的规则）
@@ -2076,7 +2112,25 @@ class MainWindow:
         （用户 2026.10.6 定的规则）——不清的话，图片标识被后面的图复用时会把参数串过去。
         """
         gallery = getattr(self, "gallery_widget", None)
-        if gallery is None or item is None:
+        if gallery is None:
+            return
+        # ★ 删除前先停掉正在播放的视频：否则下面把视频路径清掉之后，播放定时器还在每一格
+        #   去取帧、每格都会弹一次"请先导入图片/视频…"（用户实测：点完 OK 又弹一个，无限弹）。
+        if self._video_playing:
+            self._stop_video_playback("视频已被删除")
+        if item is None:
+            # 列表里**没有可删的条目**（典型场景：画布上放的是"视频源"的帧，帧不进图库）⇒
+            # 退化成"清空画布"：顺便把视频源节点里的路径也清掉，免得下次执行又把它跑出来
+            # （用户 2026.10.6 实测："点击删除按钮无法清除画布上的视频"）。
+            self.current_static_image = None
+            self.current_image_key = None
+            view = getattr(self, "image_view", None)
+            if view is not None:
+                view.set_image(None)
+            video = self._video_source_node()
+            if video is not None:
+                video.params["video_path"] = ""
+            self._append_log_hint("已清除画布内容（图像列表里没有可删除的条目）")
             return
         frame = gallery.item_frame(item)
         path = gallery.item_path(item)
@@ -2239,9 +2293,191 @@ class MainWindow:
         self.run_flow_continuous()
         return 1
 
+    def _maybe_load_video_params(self):
+        """
+        视频参数"整段共用一份"的**载入侧**（尾巴之一，2026.10.7 补）：
+
+        换了一段视频（或第一次对某段视频动手）时，把"视频槽"里存过的那份参数载回来；
+        同一段视频只在**换路径时载一次**，绝不每帧载 —— 否则会把用户播放中刚改的参数覆盖掉。
+        """
+        video = self._video_source_node()
+        path = (video.params.get("video_path") or "") if video is not None else ""
+        if not path or path == getattr(self, "_video_params_path", None):
+            return
+        self._video_params_path = path
+        has_store = any(VIDEO_ROI_KEY in (getattr(n, "params_per_image", None) or {})
+                        for n in self.flow_nodes)
+        if has_store:
+            self._load_node_params(self.flow_nodes, VIDEO_ROI_KEY)
+            self._append_log_hint("已载回这段视频上一次的参数（视频参数整段共用一份）")
+
+    def _maybe_start_video_playback(self, node, mode):
+        """
+        勾了"自动切换"时：这一轮执行结束后**接着按原帧率自动播放**（用户 2026.10.6 的要求）。
+
+        只在"这一轮真的用到视频源"、而且当前**不是**播放中的那一帧 tick 时才启动，
+        避免播放 tick 再套一层播放。
+        """
+        if self._video_playing or self._video_tick_running:
+            return False
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is None or not gallery.auto_switch():
+            return False
+        if not self._video_used_by(node, mode):
+            return False
+        self._start_video_playback(node, mode)
+        return True
+
+    def _display_key_of(self, frame):
+        """
+        **画面（缩放/平移）**用的键 —— 与"结果缓存键"分开：
+
+        · 来自文件的图：还是用它的路径（每张图的缩放仍然各自独立）；
+        · 视频帧：整段视频**共用一个键**（"video:路径"）。否则每帧都是新对象 ⇒ 显示层把每帧都当
+          "新图片" ⇒ 每帧复位默认缩放 ⇒ 播放时"画面一大一小"、鼠标滚轮的缩放也被下一帧覆盖掉
+          （用户 2026.10.6 实测报的这两个现象，根因就是同一个）。
+        """
+        known = self._frame_paths.get(id(frame))
+        if known:
+            return known
+        video = self._video_source_node()
+        if video is not None and video.params.get("video_path"):
+            return "video:" + video.params["video_path"]
+        return id(frame)
+
+    def _video_source_node(self):
+        """当前页的"视频源"节点（没有就返回 None）"""
+        for node in self.flow_nodes:
+            if getattr(node, "name", "") == "视频源":
+                return node
+        return None
+
+    def _video_used_by(self, node, mode):
+        """
+        这一轮执行有没有**真的用到**视频源（没用到就不该吃掉一帧，用户 2026.10.6 的要求）。
+
+        · 单步：从被执行的节点沿"父节点"往上追，能追到视频源才算用到；
+        · 连续：按拓扑序跑全部节点，视频源只要有下游（连进了流程）就算用到。
+        """
+        video = self._video_source_node()
+        if video is None or not video.params.get("video_path"):
+            return False
+        if mode == "step":
+            if node is None:
+                return False
+            seen, stack = set(), [node]
+            while stack:
+                cur = stack.pop()
+                if cur is video:
+                    return True
+                if id(cur) in seen:
+                    continue
+                seen.add(id(cur))
+                stack.extend(self._parent_nodes(cur) or [])
+            return False
+        return any(getattr(edge, "start_node", None) is video
+                   for edge in getattr(self, "flow_edges", []))
+
+    def _advance_video_cursor(self):
+        """"执行后前进一帧"：把视频源的 frame_index +1（一次执行只 +1 一次）"""
+        video = self._video_source_node()
+        if video is None or not video.params.get("video_path"):
+            return
+        if video.params.get("auto_next", True) is False:
+            return
+        video.params["frame_index"] = int(video.params.get("frame_index") or 0) + 1
+
+    def _start_video_playback(self, node, mode):
+        """
+        开始"自动播放"视频（用户 2026.10.6 要求：勾了"自动切换"后点执行 ⇒ 自动播，不用一帧一帧点）。
+
+        · 帧间隔 = 原帧率（`1000 / fps` 毫秒）；fps 读不到就按 25 兜底；
+        · 用 QTimer 驱动（不是死循环）⇒ 界面不卡，"停止"按钮任意两帧之间都能立刻停；
+        · 播到末尾：节点参数"到末尾回到开头"勾着 ⇒ 回到第 0 帧继续（反复播放）；
+          没勾 ⇒ 自动停。
+        """
+        if self._video_timer is None:
+            self._video_timer = QTimer(self.main_window)
+            self._video_timer.setSingleShot(False)
+        self._maybe_load_video_params()           # 换了视频就先把"视频槽"那份参数载回来（只载一次）
+        from SourceOps import video_info          # 局部导入，避免与"注册表 ← 分类模块"的顺序纠缠
+        video = self._video_source_node()
+        _count, fps = video_info(video.params.get("video_path") or "" if video else "")
+        interval = int(1000.0 / (fps if fps and fps > 0 else 25.0))
+        interval = max(5, min(interval, 1000))
+        try:
+            self._video_timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._video_timer.setInterval(interval)
+        self._video_timer.timeout.connect(lambda: self._video_tick(node, mode))
+        self._batch_stop = False
+        self._video_playing = True
+        self._video_timer.start()
+        self._append_log_hint("开始自动播放视频（原帧率约 {0:.1f} fps，点“停止”可停）".format(
+            fps if fps and fps > 0 else 25.0))
+
+    def _stop_video_playback(self, reason):
+        """停止自动播放（"停止"按钮 / 播到末尾都会走这里）"""
+        self._video_playing = False
+        if self._video_timer is not None and self._video_timer.isActive():
+            self._video_timer.stop()
+        self._append_log_hint("停止播放：{0}".format(reason))
+
+    def _video_tick(self, node, mode):
+        """自动播放的一帧：先看要不要停，再按原来的执行方式跑一帧（帧号由 _execute_static 统一推进）"""
+        if not self._video_playing:
+            return
+        if self._batch_stop:
+            self._stop_video_playback("用户停止")
+            return
+        from SourceOps import video_info
+        video = self._video_source_node()
+        if video is None:
+            self._stop_video_playback("视频源节点已不存在")
+            return
+        count, _fps = video_info(video.params.get("video_path") or "")
+        if not (video.params.get("video_path") or ""):
+            # 视频已被删除 / 路径被清空：**只停播、不弹提示**（用户要求：
+            # "运行时点击删除按钮后不再弹出这个弹窗，只需要清除画布上的视频即可"）
+            self._stop_video_playback("视频源没有可用的视频")
+            return
+        index = int(video.params.get("frame_index") or 0)
+        if count and index >= count:
+            if video.params.get("loop"):
+                video.params["frame_index"] = 0          # 反复播放
+            else:
+                self._stop_video_playback("已播到末尾")
+                return
+        self._video_tick_running = True
+        self._video_log_throttle = True        # 播放中不刷执行日志（不然每格都重写表格）
+        try:
+            # 状态标签顺带显示帧进度（复用"图像源 (n/N)"那个标签，播放时它就是"视频帧 (n/N)"）
+            try:
+                label = getattr(getattr(self, "gallery_widget", None), "count_label", None)
+                if label is not None:
+                    label.setText("视频帧 ({0}/{1})".format(
+                        min(int(video.params.get("frame_index") or 0), count or 0), count or "?"))
+            except Exception:
+                pass
+            if mode == "step":
+                # 单步播放时**实时取当前选中的节点**：用户播放中途换选中项（例如从"二值化"改成"取反"），
+                # 后续帧就该按新选中的节点跑；如果用启动时捕获的那个节点，换选中项只会影响手点的那一帧
+                # （用户 2026.10.6 实测报过："自动切换"状态下单步运行切不了其他节点）。
+                target = getattr(self, "selected_node", None) or node
+                if target is not None:
+                    self.run_flow_step(target)
+            else:
+                self.run_flow_continuous()
+        finally:
+            self._video_tick_running = False
+            self._video_log_throttle = False
+
     def stop_batch(self):
-        """菜单"停止"：中断正在跑的批量执行（run_all_images 的循环每张之前检查这个标志）"""
+        """菜单"停止"：中断正在跑的批量执行；如果视频正在自动播放，也一起停掉"""
         self._batch_stop = True
+        if self._video_playing:
+            self._stop_video_playback("用户停止")
 
     def _sync_source_nodes_to_path(self, path):
         """
@@ -2281,6 +2517,9 @@ class MainWindow:
                 continue
             if self._path_key(node.params.get("source_path") or "") == key:
                 node.params["source_path"] = ""
+            # 视频源节点用的是 video_path，也要一起清（用户要求：删掉这段视频就别再拿它跑）
+            if self._path_key(node.params.get("video_path") or "") == key:
+                node.params["video_path"] = ""
 
     def _ensure_source_images_in_gallery(self):
         """

@@ -258,10 +258,14 @@ class ImageGalleryWidget(QWidget):
         return bool(self.collapse_button.isChecked())
 
     def _on_delete_clicked(self):
-        """点"删除"：把当前选中的条目交给主窗口处理（主窗口负责清参数 / 结果 / 缩放）"""
-        item = self.gallery_list.currentItem()
-        if item is not None:
-            self.delete_requested.emit(item)
+        """
+        点"删除"：把当前选中的条目交给主窗口处理（主窗口负责清参数 / 结果 / 缩放）。
+
+        注意：列表里**没有选中项 / 列表为空**时也要把信号发出去（item 为 None）——
+        例如画布上放的是"视频源"的帧（帧不进图库），此时"删除"应当退化为"清空画布"，
+        否则用户点了删除什么都不会发生（用户 2026.10.6 实测报过）。
+        """
+        self.delete_requested.emit(self.gallery_list.currentItem())
 
     # ------------------------------------------------------------------
     # 给主窗口用的小接口
