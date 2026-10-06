@@ -64,6 +64,14 @@ class MainWindow:
         # 当前图片的标识，用于"参数和检测结果按图片分别保存"
         # 静态图片用 id(原图)；视频/摄像头统一用 VIDEO_ROI_KEY；None 表示还没有显示过任何图片/视频
         self.current_image_key = None
+        # {id(原图): 文件路径}：把"图片标识"从内存 id 换成文件路径（跨会话稳定、可进方案文件）
+        self._frame_paths = {}
+        # "运行全部"执行期间为 True：此时执行日志**逐张累积**而不是每张覆盖
+        self._log_accumulate = False
+        # 用户在图库里**主动删掉**过的图片路径：以后执行时不要再自动加回图库（删了又回来是 bug）
+        self._removed_paths = set()
+        # 批量执行的"停止"标志：菜单里的"停止"把它置 True，批量循环每张之前检查一次
+        self._batch_stop = False
 
         # 每张图片上一次的执行结果缓存
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
@@ -216,6 +224,14 @@ class MainWindow:
             self.gallery_widget.image_selected.connect(self._on_gallery_image_selected)
             # 点图库时顺便知道"这张图来自哪个文件"，用来同步"图片源"节点的路径
             self.gallery_widget.image_path_selected.connect(self._on_gallery_path_selected)
+            # 工具栏（main.ui 里摆好、由 ImageGalleryWidget 收编）的几个信号
+            self.gallery_widget.add_requested.connect(self.open_file)
+            self.gallery_widget.add_folder_requested.connect(self.add_folder_to_gallery)
+            self.gallery_widget.delete_requested.connect(self.delete_gallery_item)
+            self.gallery_widget.run_all_requested.connect(self.run_all_images)
+            # 菜单"停止"（急停）；"运行选中"在 v1.17 改成"范围模式"的选择，不再直接执行，
+            # 所以这里只接 stop（run_selected_image() 保留为备用入口，当前 UI 没接）。
+            self.gallery_widget.stop_requested.connect(self.stop_batch)
 
 
 
@@ -308,6 +324,9 @@ class MainWindow:
             # 批量导入时主画面默认显示第一张，其余的点击图库缩略图切换
             # 新导入的图片还没有执行过，所以这里只显示原图
             self._show_static_image(loaded[0][0])
+            if hasattr(self, "gallery_widget"):
+                # 顺便把第一张点亮，让"图像源 (n/N)"标签显示正确
+                self.gallery_widget.select_frame(loaded[0][0])
 
             # 如果此时刚好有配置窗口开着，通知它刷新尺寸为图片的实际大小
             if self.current_dialog and self.current_dialog.isVisible():
@@ -426,6 +445,9 @@ class MainWindow:
                 "y": round(float(pos.y()), 2),
                 "input_source": binding,
                 "params": dict(node.params),
+                # 顺便把"按文件路径存的其它图片参数"也存进方案文件，
+                # 这样"运行全部"给每张图调好的参数下次打开还在（原来是只存当前那一份）
+                "params_by_image": self._node_params_by_image(node),
             })
         edges_data = []
         for edge in page["edges"]:
@@ -620,11 +642,14 @@ class MainWindow:
                 except (TypeError, ValueError):
                     x, y = 0.0, 0.0
                 params = raw.get("params")
+                # "按图片（文件路径）存的其它参数"：原样带进来，供 _apply_project 还原到节点上
+                params_by_image = raw.get("params_by_image")
                 nodes.append({
                     "name": name,
                     "x": x,
                     "y": y,
                     "params": dict(params) if isinstance(params, dict) else {},
+                    "params_by_image": dict(params_by_image) if isinstance(params_by_image, dict) else {},
                     "input_source": raw.get("input_source", None),
                     "old_id": raw.get("id"),
                 })
@@ -683,6 +708,12 @@ class MainWindow:
                     mark_dirty=False)
                 node.params.clear()
                 node.params.update(node_model["params"])
+                # 还原"按图片（文件路径）存的参数"：以后切到同一张图就能拿回各自那一份
+                store = self._get_node_params_store(node)
+                store.clear()
+                for key, value in (node_model.get("params_by_image") or {}).items():
+                    if isinstance(key, str) and isinstance(value, dict):
+                        store[key] = dict(value)
                 created.append(node)
             for index, node_model in enumerate(page_model["nodes"]):
                 binding = node_model["input_source"]
@@ -729,6 +760,39 @@ class MainWindow:
         self.update_all_edges()
         if self.current_static_image is not None:
             self._execute_static(self.current_static_image, "continuous")
+
+    @staticmethod
+    def _path_key(path):
+        """路径比较用的键（绝对化 + 大小写不敏感），用于"用户删过的图别再自动加回来"这类判断"""
+        return os.path.normcase(os.path.abspath(path)) if path else ""
+
+    def _is_removed_path(self, path):
+        """这张图是不是被用户在图像列表里主动删掉过"""
+        key = self._path_key(path)
+        return bool(key) and key in getattr(self, "_removed_paths", set())
+
+    def _image_key_of(self, frame):
+        """
+        这张图在"参数存档 / 结果缓存 / 缩放记录"里用的标识。
+
+        2026.10.6 起优先用**文件路径**（跨会话稳定，也能写进方案文件让"每图一套参数"持久化）；
+        没有路径的（摄像头帧、测试图、测试视频帧）才退回 id(frame)。
+        """
+        if frame is None:
+            return None
+        return self._frame_paths.get(id(frame), id(frame))
+
+    @staticmethod
+    def _node_params_by_image(node):
+        """
+        取一个节点"按图片存的参数"里**键是文件路径**的那部分（存进方案文件用）。
+
+        id(原图) 这种键跨进程没有意义，所以只导出字符串键（路径 / 视频槽）的那几份。
+        """
+        store = getattr(node, "params_per_image", None)
+        if not isinstance(store, dict):
+            return {}
+        return {key: dict(value) for key, value in store.items() if isinstance(key, str)}
 
     def _get_node_params_store(self, node):
         """
@@ -839,10 +903,9 @@ class MainWindow:
         self.current_static_image = frame
 
         # 切换图片：把每个节点的运行参数按图片分别存档 / 载入
-        self._switch_image_params(id(frame))
-
-        # 传 id(frame) 作为图片标识，保证每张图片的缩放互相独立
-        image_key = id(frame)
+        # （标识优先用文件路径，见 _image_key_of：跨会话稳定、能写进方案文件）
+        image_key = self._image_key_of(frame)
+        self._switch_image_params(image_key)
 
         # 取"这张图片 × 这一页流程图"上一次的执行结果：
         # 优先取连续执行（整条流程，画面和日志表最完整），没有连续结果时才取单步执行的
@@ -899,13 +962,15 @@ class MainWindow:
         # 更新执行日志表格：单步 / 连续都走这里
         self._update_execution_log(exec_info)
 
-        # 显示处理后的图像；传 id(frame) 让每张图片的缩放互相独立
-        self._display_image(work_frame, id(frame))
+        # 显示处理后的图像；传图片标识让每张图片的缩放互相独立
+        # （标识优先用文件路径，见 _image_key_of）
+        image_key = self._image_key_of(frame)
+        self._display_image(work_frame, image_key)
 
         # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
         # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
         # work_frame 本来就是 frame 的独立副本，直接存起来即可。
-        self.result_cache[self._result_cache_key(id(frame), mode)] = {
+        self.result_cache[self._result_cache_key(image_key, mode)] = {
             "frame": work_frame,
             "data": data,
             "exec_info": exec_info,
@@ -1886,6 +1951,21 @@ class MainWindow:
             self.update_frame()
             return
 
+        # 方案 B（用户 2026.10.6 拍板）：**范围只看下拉框**（运行全部 / 运行选中）——
+        # "自动切换"不参与范围判定，它只管"执行时是否跟随选中项"（见 run_all_images）。
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is not None and gallery.count() > 0 and gallery.scope_all():
+            self.run_all_images("continuous")
+            return
+
+        # 范围 = "运行选中"（或图库为空）→ 走单张。先把"图片源"节点同步到图库里当前选中的那一张，
+        # 否则流程会按图片源节点里上次留下的路径去跑（范围说"当前"，跑的却是上一张）。
+        if gallery is not None and gallery.count() > 0:
+            entries = gallery.items()
+            idx = gallery.current_index()
+            if 0 <= idx < len(entries) and entries[idx][2]:
+                self._sync_source_nodes_to_path(entries[idx][2])
+
         # 静态图 / "图片源"兜底
         self.run_flow_continuous()
 
@@ -1900,8 +1980,14 @@ class MainWindow:
         if not self.execution_log:
             # 如果控件不存在
             return
-        # 根据执行记录的数量设置表格的行数，自动清空旧数据并调整表格高度
-        self.execution_log.setRowCount(len(exec_info))
+        if getattr(self, "_log_accumulate", False):
+            # "运行全部"期间：**不清空**表格，逐张往后累积（用户 2026.10.6 定的规则）
+            offset = self.execution_log.rowCount()
+            self.execution_log.setRowCount(offset + len(exec_info))
+        else:
+            # 单张执行：清空旧数据再填（原来的行为）
+            offset = 0
+            self.execution_log.setRowCount(len(exec_info))
         # 遍历每一条执行记录，row 为行号（从 0 开始）
         for row, info in enumerate(exec_info):
             info = tuple(info)
@@ -1922,7 +2008,7 @@ class MainWindow:
                 item = QtWidgets.QTableWidgetItem(text)
                 # 将表格项放入指定行和列的单元格中
                 # 如果该单元格已有内容，会自动替换；如果之前没有，会创建新单元格
-                self.execution_log.setItem(row, col, item)
+                self.execution_log.setItem(offset + row, col, item)
 
 
     def _update_execution_log_throttled(self, exec_info):
@@ -1972,6 +2058,191 @@ class MainWindow:
         """
         self._sync_source_nodes_to_path(path)
 
+    # ------------------------------------------------------------------
+    # 图像列表工具栏（控件在 main.ui 里、由 ImageGalleryWidget 收编，这里负责干活）
+    # ------------------------------------------------------------------
+    def add_folder_to_gallery(self):
+        """工具栏"＋文件夹"：弹系统原生的"选择文件夹"，把里面的图片静默导进图库"""
+        folder = QFileDialog.getExistingDirectory(self.main_window, "选择文件夹")
+        if not folder:
+            return
+        self.import_folder_path(folder)
+        if hasattr(self, "gallery_widget"):
+            self.gallery_widget.refresh_count()
+
+    def delete_gallery_item(self, item):
+        """
+        删除图库里的一个条目：**连它的参数存档 / 结果缓存 / 缩放记录一起清掉**
+        （用户 2026.10.6 定的规则）——不清的话，图片标识被后面的图复用时会把参数串过去。
+        """
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is None or item is None:
+            return
+        frame = gallery.item_frame(item)
+        path = gallery.item_path(item)
+        key = path if path else (id(frame) if frame is not None else None)
+
+        gallery.remove_item(item)          # 先从列表移除
+
+        # ★ 这张图的路径如果正是某个"图片源"节点的路径，也要一并清空。
+        # 否则图库删了图、点执行时流程还会按图片源里那条路径把这张图跑出来
+        # （用户实测："图像列表清空后画布确实没了，但点执行图片又出现了"）。
+        if path:
+            self._clear_source_nodes_path(path)
+
+        if key is not None:
+            # 1、参数存档（每个节点里"这张图那一份"）
+            for node in list(self.flow_nodes):
+                store = getattr(node, "params_per_image", None)
+                if isinstance(store, dict):
+                    store.pop(key, None)
+            # 2、结果缓存（这张图在所有页面、两种执行方式下的记录）
+            for cache_key in [k for k in self.result_cache if k and k[0] == key]:
+                self.result_cache.pop(cache_key, None)
+            # 3、显示层的缩放记录
+            view = getattr(self, "image_view", None)
+            states = getattr(view, "_zoom_states", None)
+            if isinstance(states, dict):
+                states.pop(key, None)
+
+        # 记住"用户删过的图"：以后执行时别再把这张图自动加回图库（用户实测报过"删了又回来"）
+        if path:
+            self._removed_paths.add(self._path_key(path))
+
+        # 图库空了：**不管删的是不是"当前图"，画布一律清空**
+        # （用户实测报过"图像列表里的图全删了，画布上还留着图片"）
+        if gallery.count() == 0:
+            self.current_static_image = None
+            self.current_image_key = None
+            view = getattr(self, "image_view", None)
+            if view is not None:
+                view.set_image(None)
+        # 删掉的是"当前图"（但列表里还有别的图）：把画面切到最后一张
+        elif frame is not None and self.current_static_image is frame:
+            self.current_static_image = None
+            self.current_image_key = None
+            items = gallery.items()
+            if items:
+                self._show_static_image(items[-1][1])
+        gallery.refresh_count()
+
+    def run_all_images(self, mode="continuous"):
+        """
+        "运行全部"：把图像列表里的图**逐张**跑一遍（用户 2026.10.6 定的规则）。
+
+        · 开始时**先清空执行日志**，之后每张图的日志**逐张累积**；
+        · 某张图出错 -> **跳过继续**跑下一张，不弹任何提示；
+        · 如果"自动切换"在执行过程中**被关掉** -> 立刻停（开始时就是关着的，则跑完全部）。
+        :return: 真正跑了多少张
+        """
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is None or gallery.count() == 0:
+            return 0
+        items = gallery.items()
+        # 进来时"运行全部"是不是勾着：只有一开始就勾着，才把"中途取消勾选"当成急停
+        started_with_scope = gallery.scope_all()
+        # 记下开始时的选中项与画面：不勾"自动切换"（不跟随）时，跑完要还原回去
+        start_index = gallery.current_index()
+        start_frame = self.current_static_image
+        start_path = gallery.item_path(items[start_index][0]) if 0 <= start_index < len(items) else ""
+        self._batch_stop = False
+
+        # 清空旧日志（用户要求：运行全部开始时先清空）
+        if self.execution_log is not None:
+            self.execution_log.setRowCount(0)
+
+        self._log_accumulate = True
+        done = 0
+        try:
+            for index, (item, frame, path) in enumerate(items, 1):
+                # 两条急停路径：菜单"停止"、或批量运行中取消勾选"运行全部"
+                if self._batch_stop:
+                    self._append_log_hint("用户停止，批量执行中断")
+                    break
+                if index > 1 and started_with_scope and not gallery.scope_all():
+                    self._append_log_hint("已取消“运行全部”，批量执行中断")
+                    break
+                try:
+                    # "自动切换"= 是否跟随：勾着才把选中项切到正在跑的那张
+                    if gallery.auto_switch():
+                        gallery.set_current_index(index - 1)
+                    # 只切"当前图 + 它的参数"（画面由 _execute_static 显示结果时刷新）：
+                    # 这里**不能**用 _show_static_image()——它会把这张图上一次的缓存结果
+                    # 也重新写进日志，批量执行时日志就会重复两遍。
+                    self.current_static_image = frame
+                    self._switch_image_params(self._image_key_of(frame))
+                    # **关键**：流程里若有"图片源"节点，它才是那一轮的取图处——必须把它也切到
+                    # 这一张，否则批量执行会一直用图片源原来那张图（用户实测："每次处理的都是同一幅图"）
+                    if path:
+                        self._sync_source_nodes_to_path(path)
+                    self._execute_static(frame, mode)        # 跑一遍当前页的流程图
+                    done += 1
+                except Exception as exc:                     # 单张出错不中断整批（用户要求继续）
+                    self._append_log_hint("第 {0} 张出错已跳过：{1}".format(index, exc))
+        finally:
+            self._log_accumulate = False
+
+        # 没勾"自动切换"（不跟随）时：把选中项与画面**还原成开始时那一张**。
+        # 否则用户会觉得"自动切换勾不勾都一样——跑完画面总是停在最后一张图上"（用户实测报过）。
+        # 注意这里只恢复画面、**不动执行日志**（不走 _show_static_image，它会把缓存日志重放一遍）。
+        if not gallery.auto_switch():
+            if 0 <= start_index < len(items):
+                gallery.set_current_index(start_index)
+            # 图片源节点也要还原成开始时那一张，否则下次"运行选中"会按它跑上一张
+            if start_path:
+                self._sync_source_nodes_to_path(start_path)
+            if start_frame is not None:
+                self.current_static_image = start_frame
+                key = self._image_key_of(start_frame)
+                self._switch_image_params(key)
+                cached = (self.result_cache.get(self._result_cache_key(key, mode))
+                          or self.result_cache.get(self._result_cache_key(key, "step")))
+                self._display_image(cached["frame"] if cached is not None else start_frame.copy(), key)
+
+        self._append_log_hint("运行全部结束：共执行 {0}/{1} 张".format(done, len(items)))
+        return done
+
+    def _append_log_hint(self, text):
+        """往执行日志表**追加**一行"提示"（批量执行时写"出错跳过 / 结束"这类信息用）"""
+        if self.execution_log is None:
+            return
+        row = self.execution_log.rowCount()
+        self.execution_log.insertRow(row)
+        for col, value in enumerate(["-", time.strftime("%H:%M:%S"), "提示", "-", text]):
+            self.execution_log.setItem(row, col, QtWidgets.QTableWidgetItem(str(value)))
+
+    def run_selected_image(self):
+        """
+        菜单"运行选中"：**只跑图像列表里当前选中的那一张**（用户口径：不看多选）。
+
+        它的用处：即使"运行全部"勾着（范围 = 整个列表），也能一键只跑当前这一张。
+        """
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is None or gallery.count() == 0:
+            return 0
+        # 注意：这里拿到的是包装类 ImageGalleryWidget（不是 QListWidget 本身），
+        # 要用它自己的接口（current_index / items），不能直接调 currentItem()。
+        index = gallery.current_index()
+        entries = gallery.items()
+        if index < 0 or index >= len(entries):
+            gallery.set_current_index(0)
+            index = 0
+            entries = gallery.items()
+        if not entries:
+            return 0
+        item, frame, path = entries[index]
+        if frame is None:
+            return 0
+        self._show_static_image(frame)          # 切到这一张（参数 / 缩放 / 画面）
+        if path:
+            self._sync_source_nodes_to_path(path)   # 流程里若有"图片源"，也切到这一张
+        self.run_flow_continuous()
+        return 1
+
+    def stop_batch(self):
+        """菜单"停止"：中断正在跑的批量执行（run_all_images 的循环每张之前检查这个标志）"""
+        self._batch_stop = True
+
     def _sync_source_nodes_to_path(self, path):
         """
         把当前页面里所有"图片源"节点的路径改成 path（图库点选后调用）。
@@ -1994,6 +2265,23 @@ class MainWindow:
             # 参数被改了，这一页要标成"有改动"，免得用户关页时丢东西
             self.flow_page_mgr.mark_dirty()
 
+    def _clear_source_nodes_path(self, path):
+        """
+        把当前页"图片源"节点里路径正好等于 path 的那些清空（这张图被用户从图库里删掉时调用）。
+
+        为什么必须清：图库删了图之后，如果图片源节点里还留着那条路径，点执行时流程照样会把
+        这张图跑出来（用户实测："图像列表清空后画布确实没了，但点执行图片又出现了"）。
+        """
+        key = self._path_key(path)
+        if not key:
+            return
+        for node in list(self.flow_nodes):
+            spec = get_spec(node.name)
+            if spec is None or spec.kind != KIND_SOURCE:
+                continue
+            if self._path_key(node.params.get("source_path") or "") == key:
+                node.params["source_path"] = ""
+
     def _ensure_source_images_in_gallery(self):
         """
         把当前页"图片源"节点用的那张图也加进图库列表（已经有的不重复加）。
@@ -2009,6 +2297,9 @@ class MainWindow:
             path = node.params.get("source_path") or ""
             if not path:
                 continue
+            # 用户在图库里**主动删掉**过的图不要再自动加回来（否则"删了又出现"，用户实测报过）
+            if self._is_removed_path(path):
+                continue
             if node.params.get("source_type") == "文件夹":
                 # 文件夹来源：把里面所有图片都放进图库（内部按路径去重、坏文件静默跳过），
                 # 这样点图库缩略图就能在同一个文件夹的图片之间切换
@@ -2017,6 +2308,11 @@ class MainWindow:
             if self.gallery_widget.has_path(path):
                 continue
             frame, _results = spec.run(self.detector, None, (0, 0, 0, 0), node.params)
+            # ★ 这张图也要登记"来自哪个文件"：否则它的图片标识会退化成 id(原图)，
+            # 一旦那张图对象被重建（重新导入、重开方案），id 就变了 ——
+            # 单步 / 连续的结果缓存键跟着变，表现就是"换图再切回来结果没了"。
+            if path:
+                self._frame_paths[id(frame)] = path
             if frame is not None:
                 self.gallery_widget.add_image(frame, path)
 
@@ -2032,6 +2328,10 @@ class MainWindow:
         frame = cv2.imread(path)
         if frame is None:
             return []                      # 读不出来就跳过，不提示
+        # 记住"这张图来自哪个文件"：参数 / 结果 / 缩放都用它当标识（见 _image_key_of）
+        self._frame_paths[id(frame)] = path
+        # 用户主动导入的图，从"删过的图"名单里放出来（重新导入就是想要它）
+        self._removed_paths.discard(self._path_key(path))
         if not (hasattr(self, 'gallery_widget') and self.gallery_widget.has_path(path)):
             if hasattr(self, 'gallery_widget'):
                 self.gallery_widget.add_image(frame, path)

@@ -241,3 +241,62 @@
 [2026-10-05T16:05:42.844Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
 [2026-10-05T16:17:17.180Z] hit-chain pid=9800 sid=350ebb02 textLen=70 hit=null
 [2026-10-05T16:18:04.644Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-05T16:35:10.655Z] hit-chain pid=9800 sid=350ebb02 textLen=30 hit=null
+[2026-10-05T16:35:38.849Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-05T17:04:04.033Z] hit-chain pid=9800 sid=350ebb02 textLen=256 hit=yes
+[2026-10-05T17:04:33.683Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-05T18:48:55.335Z] check sid=350ebb02 active=false idle=6262s
+[2026-10-05T19:03:55.330Z] check sid=350ebb02 active=false idle=7162s
+[2026-10-05T19:18:55.337Z] check sid=350ebb02 active=false idle=8062s
+[2026-10-05T19:33:55.336Z] check sid=350ebb02 active=false idle=8962s
+[2026-10-05T20:37:44.880Z] check sid=350ebb02 active=false idle=12791s
+[2026-10-05T20:37:44.903Z] dream start pid=9800 session=350ebb02 rounds=3 T=1791219873675
+[2026-10-05T21:37:38.703Z] check sid=350ebb02 active=true idle=16385s
+[2026-10-05T22:37:23.543Z] check sid=350ebb02 active=true idle=19970s
+[2026-10-05T23:37:23.507Z] check sid=350ebb02 active=true idle=23570s
+[2026-10-06T00:37:38.693Z] check sid=350ebb02 active=true idle=27185s
+[2026-10-06T02:19:53.861Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T02:19:53.870Z] dream group 2/3 steered
+[2026-10-06T02:20:10.898Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T02:20:10.902Z] dream group 3/3 steered
+[2026-10-06T02:21:09.644Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T02:21:09.663Z] dream done session=350ebb02 groups=3 stamped=39
+[2026-10-06T02:52:21.653Z] hit-chain pid=9800 sid=350ebb02 textLen=191 hit=null
+[2026-10-06T03:08:42.001Z] hit-chain pid=9800 sid=350ebb02 textLen=575 hit=null
+[2026-10-06T03:09:14.751Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T03:21:48.795Z] hit-chain pid=9800 sid=350ebb02 textLen=172 hit=null
+[2026-10-06T03:23:23.955Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T03:24:01.186Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T05:41:02.489Z] hit-chain pid=9800 sid=350ebb02 textLen=70 hit=null
+[2026-10-06T05:41:52.417Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T05:42:18.278Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T05:46:23.675Z] hit-chain pid=9800 sid=350ebb02 textLen=24 hit=null
+[2026-10-06T05:51:29.848Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T05:52:08.039Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T06:11:53.331Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T06:12:28.997Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T06:20:38.278Z] hit-chain pid=9800 sid=350ebb02 textLen=77 hit=null
+[2026-10-06T06:21:04.465Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T10:04:08.127Z] check sid=350ebb02 active=false idle=13384s
+[2026-10-06T10:04:08.148Z] dream start pid=9800 session=350ebb02 rounds=3 T=1791267664458
+[2026-10-06T10:04:35.014Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T10:04:35.019Z] dream group 2/3 steered
+[2026-10-06T10:04:49.561Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T10:04:49.565Z] dream group 3/3 steered
+[2026-10-06T10:05:47.428Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
+[2026-10-06T10:05:47.450Z] dream done session=350ebb02 groups=3 stamped=43
+[2026-10-06T13:44:04.173Z] hit-chain pid=9800 sid=350ebb02 textLen=148 hit=null
+[2026-10-06T13:45:01.618Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T13:47:23.854Z] hit-chain pid=9800 sid=350ebb02 textLen=12 hit=null
+[2026-10-06T13:50:11.091Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:00:13.042Z] hit-chain pid=9800 sid=350ebb02 textLen=194 hit=yes
+[2026-10-06T14:02:24.131Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:10:39.677Z] hit-chain pid=9800 sid=350ebb02 textLen=211 hit=yes
+[2026-10-06T14:12:06.295Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:22:47.263Z] hit-chain pid=9800 sid=350ebb02 textLen=191 hit=null
+[2026-10-06T14:25:08.566Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:34:36.645Z] hit-chain pid=9800 sid=350ebb02 textLen=60 hit=null
+[2026-10-06T14:35:55.417Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:36:19.476Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-06T14:42:58.729Z] hit-chain pid=9800 sid=350ebb02 textLen=40 hit=null
+[2026-10-06T14:43:46.465Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false

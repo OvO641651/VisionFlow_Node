@@ -55,6 +55,12 @@ class ImageGraphicsView(QGraphicsView):
                           不传时（视频 / 摄像头的连续帧）：只换画面，保持用户当前的缩放和平移不变。
         """
         if cv_img is None:
+            # 清空画面（图库里最后一张图被删掉时调用）：把图像图元从场景里摘掉，
+            # 否则列表已经空了、画布上还留着上一张图。
+            if self.pixmap_item is not None:
+                self.scene().removeItem(self.pixmap_item)
+                self.pixmap_item = None
+            self._current_key = None
             return
 
         # 颜色空间转换

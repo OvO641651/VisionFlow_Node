@@ -308,7 +308,7 @@
          </widget>
         </item>
         <item>
-         <layout class="QVBoxLayout" name="verticalLayout_2" stretch="10,1,5">
+         <layout class="QVBoxLayout" name="verticalLayout_2" stretch="14,0,2,6">
           <item>
            <widget class="QTabWidget" name="tabWidget">
             <property name="currentIndex">
@@ -324,6 +324,121 @@
               </item>
              </layout>
             </widget>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="gallery_toolbar" native="true">
+            <layout class="QHBoxLayout" name="gallery_toolbar_layout">
+             <property name="spacing">
+              <number>6</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="gallery_count_label">
+               <property name="text">
+                <string>图像源 (0/0)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="gallery_toolbar_spacer">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QCheckBox" name="gallery_auto_switch">
+               <property name="text">
+                <string>自动切换</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="gallery_run_mode">
+               <item>
+                <property name="text">
+                 <string>运行全部</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>运行选中</string>
+                </property>
+               </item>
+              </widget>
+             </item>
+             <item>
+              <widget class="QToolButton" name="gallery_stop_button">
+               <property name="text">
+                <string>停止</string>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QToolButton" name="gallery_add_button">
+               <property name="text">
+                <string>＋图片</string>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QToolButton" name="gallery_add_folder_button">
+               <property name="text">
+                <string>＋文件夹</string>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QToolButton" name="gallery_delete_button">
+               <property name="text">
+                <string>删除</string>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QToolButton" name="gallery_collapse_button">
+               <property name="text">
+                <string>∨</string>
+               </property>
+               <property name="checkable">
+                <bool>true</bool>
+               </property>
+               <property name="toolButtonStyle">
+                <enum>Qt::ToolButtonTextOnly</enum>
+               </property>
+              </widget>
+             </item>
+            </layout>
            </widget>
           </item>
           <item>
