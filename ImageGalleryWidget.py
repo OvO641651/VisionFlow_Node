@@ -47,8 +47,9 @@ class ImageGalleryWidget(QWidget):
     delete_requested = Signal(object)      # 点了"删除"：参数 = 要删除的条目
     run_all_requested = Signal()           # 保留（V2 之后没再用按钮直连，留给以后扩展）
     auto_switch_changed = Signal(bool)     # "自动切换"开关变化（= 执行时是否跟随）
-    run_selected_requested = Signal()      # 菜单"运行选中"：只跑当前选中的那一张
     stop_requested = Signal()              # 菜单"停止"：中断正在跑的批量执行
+    # （原 `run_selected_requested` 信号已于 2026.10.7 删除 —— 决策 f / 目标5-M1：
+    #   它既没有 emit 也没有 connect，是死信号；"运行选中"的范围现在由工具栏下拉框决定。）
 
     # 需要拦截并丢弃的拖放类事件（配合 eventFilter 使用）
     # 类属性 _DROP_EVENTS

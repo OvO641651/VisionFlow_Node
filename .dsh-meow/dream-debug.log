@@ -450,3 +450,12 @@
 [2026-10-07T15:15:25.950Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
 [2026-10-07T15:23:17.068Z] hit-chain pid=46752 sid=4c85d180 textLen=128 hit=null
 [2026-10-07T15:24:06.196Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T16:47:28.034Z] check sid=4c85d180 active=false idle=5003s
+[2026-10-07T17:02:28.043Z] check sid=4c85d180 active=false idle=5903s
+[2026-10-07T17:17:28.044Z] check sid=4c85d180 active=false idle=6803s
+[2026-10-07T17:32:29.206Z] check sid=4c85d180 active=false idle=7704s
+[2026-10-07T17:45:30.967Z] pre-step first pid=10088 sid=4c85d180 priorUser=14 userMsgs=1
+[2026-10-07T17:45:30.977Z] hit-chain pid=10088 sid=4c85d180 textLen=51 hit=null
+[2026-10-07T17:47:29.207Z] check sid=4c85d180 active=false idle=14s
+[2026-10-07T17:53:27.904Z] turn-stopping pid=10088 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T18:02:29.211Z] check sid=4c85d180 active=false idle=542s

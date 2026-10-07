@@ -288,8 +288,8 @@ class MainWindow:
             self.gallery_widget.add_folder_requested.connect(self.add_folder_to_gallery)
             self.gallery_widget.delete_requested.connect(self.delete_gallery_item)
             self.gallery_widget.run_all_requested.connect(self.run_all_images)
-            # 菜单"停止"（急停）；"运行选中"在 v1.17 改成"范围模式"的选择，不再直接执行，
-            # 所以这里只接 stop（run_selected_image() 保留为备用入口，当前 UI 没接）。
+            # 菜单"停止"（急停）；"运行选中"在 v1.17 改成"范围模式"的选择（工具栏下拉框），不再直接执行，
+            # 所以这里只接 stop。
             self.gallery_widget.stop_requested.connect(self.stop_batch)
 
 
@@ -1347,6 +1347,27 @@ class MainWindow:
         skipped = [node for node in nodes if node not in done]
         return order, parents, skipped
 
+    def _upstream_closure(self, node, parents):
+        """
+        收集"这个节点 **+ 它的全部上游**"（沿 parents 往上走，含自己）。
+
+        连续执行的执行范围就用它（见 `_run_nodes()` 里那段说明）。为什么不用"拓扑序前缀"：
+        前缀会把**排在选中节点前面、却与它毫无关系**的分支也一起跑掉。
+        :param parents: `_build_execution_order()` 给的 {节点: [上游节点, ...]}
+        :return: set（元素是节点对象，可直接 `node in result`）
+        """
+        seen = set()
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            for parent in parents.get(current, []) or []:
+                if parent not in seen:
+                    stack.append(parent)
+        return seen
+
     def _node_modifies_image(self, node):
         """
         这个节点会不会改写数据层图像？
@@ -1620,10 +1641,11 @@ class MainWindow:
         渲染层：_render_display() 最后统一画，不参与任何算法。
 
         :param frame: OpenCV BGR 原图（内部只用副本，不会污染原图）
-        :param stop_at: **执行到哪个节点为止（含它）**；None = 跑完整条。
+        :param stop_at: **执行范围 = 它 + 它的全部上游**（决策 e，目标5-M1）；None = 跑完整条。
                 连续执行的入口（按钮 / 摄像头老预览）传 self.selected_node ——
-                用户 2026.10.7 定："连续执行 = 选中哪个节点就执行到那个节点，不再往下执行"
-                （这样"输出图像"只有在选中它自己或它后面的节点时才会存文件）。
+                用户 2026.10.7 先定"连续执行 = 选中哪个节点就执行到那个节点，不再往下执行"，
+                2026.10.7 深夜（目标5-M1）把范围精确成"**上游链**"：
+                与选中节点无关的分支不再执行（连带"输出图像"不会在无关分支里悄悄存文件）。
         :return: (显示用图像, 所有节点结果汇总, 执行日志列表)
         """
         img = frame.copy()              # 全局图像源（数据层的起点）
@@ -1638,7 +1660,7 @@ class MainWindow:
             return img, [], [("-", time.strftime("%H:%M:%S"), "提示", "-",
                               "没有可执行的流程：请先用连线把模块连起来")]
         # 真正的执行 + 渲染都在 _run_nodes 里：
-        # 连续执行 = 全部节点（截到 stop_at 为止）；单步执行 = 目标节点 + 它的上游（同一段代码，保证逻辑一致）
+        # 连续执行 = 选中节点 + 它的上游（其余不跑）；单步执行 = 只跑选中的那一个节点（见 _run_flow_pipeline_step）
         return self._run_nodes(order, parents, img, skipped, stop_at=stop_at)
 
 
@@ -1712,15 +1734,16 @@ class MainWindow:
         #   否则上一个节点（或上一轮）的"已自动纠正…"会串到这一轮的行里。
         self._param_corrections = {}
 
-        # ★ 截断：连续执行只跑到"当前选中的节点"为止（用户 2026.10.7 定的语义）。
-        #   为什么要有它：画面本来就只画到选中节点（下面的 shown = executed[:选中节点]），
-        #   但执行却一直跑到底 ⇒ "选中中间的节点、点连续执行"时，末尾的"输出图像"照样存了文件
-        #   （用户实测报的）。现在把执行也截到同一个边界，引擎与画面才一致。
+        # ★ 执行范围 = "选中节点 + 它的全部上游"（决策 e，用户 2026.10.7 拍板，目标5-M1）。
+        #   以前是"按拓扑序截到选中节点为止的**前缀**" —— 那会把排在它前面、却与它无关的分支也跑掉：
+        #   实测一页上两条互不相干的链 A→B 与 C→D，选中 D 点连续执行，A / B 照样执行；
+        #   如果那条无关分支里还有"输出图像"节点，会**悄悄存文件**（这就是要改掉的东西）。
+        #   现在只跑与选中节点真正有关系的那条链，其余一律不执行、并如实写一行日志。
         not_run = []
         if stop_at is not None and stop_at in order:
-            cut = order.index(stop_at) + 1
-            not_run = list(order[cut:])
-            order = order[:cut]
+            allowed = self._upstream_closure(stop_at, parents)
+            not_run = [node for node in order if node not in allowed]
+            order = [node for node in order if node in allowed]
 
         seq = 1
         for node in order:
@@ -1774,11 +1797,12 @@ class MainWindow:
                               "以下节点未执行（没有连线，或者连线成环）：" + names))
 
         if not_run:
-            # "连续执行到选中节点为止"截掉的那些节点，也要如实写一行 ——
-            # 否则用户会以为"流程跑完了、后面的节点怎么没结果"（用户 2026.10.7 定的截断语义）
+            # 没跑的节点也要如实写一行 —— 否则用户会以为"流程跑完了、后面的节点怎么没结果"。
+            # 措辞按"上游链"口径写（决策 e，目标5-M1）：不是"截断到某节点"，而是"只跑它和它的上游"，
+            # 所以名单里既可能有它的下游，也可能有与它无关的分支。
             names = "、".join(node.name for node in not_run)
             exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
-                              "连续执行到「{0}」为止，以下节点本次未执行：{1}".format(
+                              "连续执行：只跑「{0}」和它的上游；以下节点本次未执行：{1}".format(
                                   stop_at.name, names)))
 
         # 4、渲染层：底图取 base_node（单步执行 = 目标节点；连续执行 = 当前选中的节点），
@@ -2667,33 +2691,9 @@ class MainWindow:
         for col, value in enumerate(["-", time.strftime("%H:%M:%S"), "提示", "-", text]):
             self.execution_log.setItem(row, col, QtWidgets.QTableWidgetItem(str(value)))
 
-    def run_selected_image(self):
-        """
-        菜单"运行选中"：**只跑图像列表里当前选中的那一张**（用户口径：不看多选）。
-
-        它的用处：即使"运行全部"勾着（范围 = 整个列表），也能一键只跑当前这一张。
-        """
-        gallery = getattr(self, "gallery_widget", None)
-        if gallery is None or gallery.count() == 0:
-            return 0
-        # 注意：这里拿到的是包装类 ImageGalleryWidget（不是 QListWidget 本身），
-        # 要用它自己的接口（current_index / items），不能直接调 currentItem()。
-        index = gallery.current_index()
-        entries = gallery.items()
-        if index < 0 or index >= len(entries):
-            gallery.set_current_index(0)
-            index = 0
-            entries = gallery.items()
-        if not entries:
-            return 0
-        item, frame, path = entries[index]
-        if frame is None:
-            return 0
-        self._show_static_image(frame)          # 切到这一张（参数 / 缩放 / 画面）
-        if path:
-            self._sync_source_nodes_to_path(path)   # 流程里若有"图片源"，也切到这一张
-        self.run_flow_continuous()
-        return 1
+    # （原 `run_selected_image()` 已于 2026.10.7 删除 —— 决策 f / 目标5-M1：
+    #   "运行选中"的范围早就改由工具栏下拉框决定（下拉框只做选择、执行只由单步/连续执行触发），
+    #   这个函数既没有任何 UI 入口、也没有任何用例引用，留着只会让"范围到底谁说了算"变含糊。）
 
     def _maybe_load_video_params(self):
         """
