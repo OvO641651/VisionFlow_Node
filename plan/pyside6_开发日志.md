@@ -1,3 +1,14 @@
+# VisionFlowNode 开发日志（Markdown 版）
+
+> 本文件是工程根目录下 `pyside6.txt` 的 **Markdown 版**：
+> **正文一字未改**，只把「日期时间行」和「总结：…」行提升成二级标题，方便按条目折叠/跳转；
+> **★ 2026.10.7 起：本文件就是「在用的开发日志」** —— 新条目**直接追加到文件末尾**（格式同下：日期时间行 + 存在问题/原因分析/修改/验证/遗留）；`pyside6.txt` 只作历史保留、**不再改动**。（原来的 txt→md 生成脚本已退役，别再跑，否则会覆盖这里的新条目。）
+>
+> 每条条目的正文格式是：`存在问题：` / `原因分析：` / `修改：` / `验证：` / `遗留：`（续行缩进 10 空格），
+> 里面 4 空格缩进的行是**原样贴的代码**（Markdown 会渲染成代码块）。
+
+---
+
 时间为完成对应任务的时间
 
 2026.5.27
@@ -6,7 +17,7 @@ uiLoader = QUiLoader()
 使用后button这些控件的黄色警告也不会消失
 使用PySide2不会出现该问题，而且引用的button这些控件也不会出现黄色警告。
 
-2026.5.28 9:31
+## 2026.5.28 9:31
 在终端输入cd 文件名：则可以进入该文件中
 在终端输入以下代码后打包文件：pyinstaller pilotStats.py --noconsole --hidden-import PySide6.QtXml
 pilotStats.py 需要改成自己的文件名
@@ -17,11 +28,11 @@ pilotStats.py 需要改成自己的文件名
 1919*1030=》959*515
 ui画面窗口大小：1280*720->640*360
 
-2026.5.28 14:00
+## 2026.5.28 14:00
 设置layout后就不能拉到修改里面控件的尺寸了，
 所以需要在属性里面找到minimumSize和maximumSize来设置尺寸
 
-2026.5.28 15:02
+## 2026.5.28 15:02
 在设置摄像头提取图片时需要使用timer库，不然会重新一下问题：
     改用 while ret: 循环：UI会卡死，点击“停止”按钮无效，只能用任务管理器强制结束。
     每次点击“启动”只读一帧：看到的只是单张快照，不是视频。
@@ -35,7 +46,7 @@ ui画面窗口大小：1280*720->640*360
         qt_img = QImage(rgb_frame.data, w, h, w * ch, QImage.Format_RGB888)
 qt和opencv使用的颜色通道顺序不同，所以需要转换
 
-2026.5.28 20:49
+## 2026.5.28 20:49
 在主窗口中加载一个新窗口
     def set_camera_id(self):
         """设置摄像头ID(数字)"""
@@ -68,10 +79,10 @@ qt和opencv使用的颜色通道顺序不同，所以需要转换
         widget.show()
         widget.exec()
 
-2026.5.29 11:02
+## 2026.5.29 11:02
 在menubar -> font -> 修改点大小可以修改最上面菜单栏字体大小
 
-2026.5.29 23:06
+## 2026.5.29 23:06
 添加树控件
 
 2026.6.6 22.38
@@ -100,7 +111,7 @@ QGroupBox (分组框)	toggled (若 checkable 启用)	groupbox.toggled.connect(se
 2026.6.13 21.56
 编写了Detector类里面的line_detector()函数和circle_detector()函数
 
-2026.6.17 9:18
+## 2026.6.17 9:18
 通过点击树状图实现检测
 使用的树状图树枝的名字来获取检测消息，如text == '直线'
     def on_tree_item_clicked(self, item, column):
@@ -113,7 +124,7 @@ QGroupBox (分组框)	toggled (若 checkable 启用)	groupbox.toggled.connect(se
         else:
             self.detection_mode = None
 
-2026.6.17 10:53
+## 2026.6.17 10:53
 利用序号的形式获取检测消息
         # 获取当前项的 QModelIndex
         index = self.tree.currentIndex()# 获取当前树控件的页面
@@ -141,23 +152,23 @@ QGroupBox (分组框)	toggled (若 checkable 启用)	groupbox.toggled.connect(se
         else:
             self.detection_mode = None
 
-2026.6.17 13:03
+## 2026.6.17 13:03
 修改参数树状图，修改成两列
 
-2026.6.17 15:24
+## 2026.6.17 15:24
 添加tabWidget控件和graphicsView控件
 将graphicsView放到tabWidget的第一页流程图
 将Vider放到tabWidget的第二页vider
 
-2026.6.17 19:57
+## 2026.6.17 19:57
 在代码中设置tabWidget控件
 # 将代码中的所有 main_window.video 改成 videoLabel
 self.videoLabel = self.main_window.findChild(QtWidgets.QLabel, "video")
 
-2026.6.17 20:45
+## 2026.6.17 20:45
 创建FlowChart.py准备实现流程图的效果
 
-2026.6.17 22:08
+## 2026.6.17 22:08
 完成FlowChart.py中的NodeItem节点创建类的编写，并完成测试
 测试：
         self.setWindowTitle("流程图测试窗口")
@@ -170,7 +181,7 @@ self.videoLabel = self.main_window.findChild(QtWidgets.QLabel, "video")
         node = NodeItem('直线', QPointF(10, 10))
         self.scene.addItem(node)  # 将节点添加到场景中
 
-2026.6.18 9:30
+## 2026.6.18 9:30
 完成EdgeItem类的编写，并完成测试
 测试：
         # 创建贝塞尔曲线连接两个方框，node1的终点连接node2的起点
@@ -180,21 +191,21 @@ self.videoLabel = self.main_window.findChild(QtWidgets.QLabel, "video")
         self.scene.addItem(edge)
 问题：方框移动后，曲线没有跟着移动，还是在原来的位置
 
-2026.6.18 12:31
+## 2026.6.18 12:31
 修复了”方框移动后，曲线没有跟着移动，还是在原来的位置“的问题
 
-2026.6.18 15:31
+## 2026.6.18 15:31
 完成FlowchartView类的编写
 该类完成自定义流程图视图（支持拖放）的功能
 
-2026.6.18 15:54
+## 2026.6.18 15:54
 编写FlowchartView类实例，完成创建一个树控件tree和view的ui窗口
 
-2026.6.18 19:31
+## 2026.6.18 19:31
 完成FlowchartView类实例的编写，可以通过双击左侧的tree界面在右边view界面中创建方框节点
 问题：树状图不能拖动到右侧view窗口中
 
-2026.6.18 19:48
+## 2026.6.18 19:48
 修复树状图不能拖动到右侧view窗口中的问题
     def dragMoveEvent(self, event):
         """
@@ -203,22 +214,22 @@ self.videoLabel = self.main_window.findChild(QtWidgets.QLabel, "video")
         """
         event.acceptProposedAction()
 
-2026.6.18 20:06
+## 2026.6.18 20:06
 修改了FlowchartView的dropEvent()函数，增强了鲁棒性，使代码不受window环境和Pyside2版本的影响
 
-2026.6.18 20:15
+## 2026.6.18 20:15
 mapToScene：将左边树状图的控件拖到右边view画布时，拖到哪里方框就在哪里创建的核心函数
 
-2026.6.18 20:31
+## 2026.6.18 20:31
 修复双击第一层树枝时也在view创建方框的问题
 if item.parent() is None:
     return
 
-2026.6.18 22:00
+## 2026.6.18 22:00
 添加右键删除流程图中的方框的功能，并整理删除方框后的曲线
 增加contextMenuEvent和delete_flow_node函数
 
-2026.6.18 22:56
+## 2026.6.18 22:56
 完成将FlowChart的TestWindow的内容移植到main中
 TestWindow中函数有add_flow_node，delete_flow_node，_on_tree_double_click，update_all_edges
 有出错RuntimeError，
@@ -229,13 +240,13 @@ _run_flow_pipeline(self, frame)函数还执行流程图的内容
 目前是根据选择树状图后的将点击的检测内容放到一个列表中，然后根据列表的内容进行检测（如列表中有直线和圆，则进行直线和圆检测）
 
 
-2026.6.19 11:00
+## 2026.6.19 11:00
 查找相机的python SDK文件，没有python版本的
 
-2026.6.19 13:38
+## 2026.6.19 13:38
 向商家要相机的python SKD，商家没有回复，暂时 放弃
 
-2026.6.19 16:13
+## 2026.6.19 16:13
 进行多次重新运行程序测试，发现RuntimeError错误，尝试进行修复
 第一种方法：
         '''
@@ -330,7 +341,7 @@ _run_flow_pipeline(self, frame)函数还执行流程图的内容
             new_x, new_y = 20, 20  # 第一个方框的位置
         self.add_flow_node(name, QPointF(new_x, new_y))
 
-2026.6.19 16:39
+## 2026.6.19 16:39
 对以上的RuntimeError错误进行分析总结和整理
 错误产生原因：PySide2在 C++ 和 Python 之间传递对象指针时，发生了“时间差冲突”。
 1、当你双击时，信号传递进来的参数 item 只是一个“C++ 对象的指针”。
@@ -358,7 +369,7 @@ self.tree.currentItem() 返回的也是一个极易过期的 C++ 指针。
 3、只传字符串，不传对象：通过 lambda 把字符串 node_name 传给延时函数。
 分析：因为 C++ 对象只能被销毁一次，但提取出来的 Python 字符串（node_name）是永久存在 Python 内存里的，不会被 C++ 底层“偷偷销毁”。
 
-2026.6.23 19:23
+## 2026.6.23 19:23
 添加一个打开文件夹导入图片或者视频的按钮open_button，原本的open_button按钮改名为camera_button
 完成open_file()函数的编写，该函数用于实现打开文件夹并导入图片或者视频
 完成_process_and_display_frame()函数的编写，该函数用于实现对导入的图片或者视频根据树状图的控件进行处理
@@ -366,7 +377,7 @@ _process_and_display_frame()函数的内容为原本update_frame()函数的内�
 但是_process_and_display_frame是用于图像处理与UI渲染器的，update_frame()函数是用于处理数据采集与生命周期控制的
 在__init__里面添加_is_video_file变量，用来判断是否打开的文件为视频文件
 
-2026.6.23 19:35
+## 2026.6.23 19:35
 处理视频和摄像头时会出现冲突
 所以在open_camera()函数中添加了判断，如果在播放视频时打开摄像头(点击"启动"键)，则自动关闭视频
         if self.cap is not None and self.cap.isOpened() and self._is_video_file:
@@ -374,7 +385,7 @@ _process_and_display_frame()函数的内容为原本update_frame()函数的内�
 在close_camera()函数中添加重置视频标注
 self._is_video_file = False
 
-2026.6.23 21:26
+## 2026.6.23 21:26
 修改update_frame()函数，去除原本的OpenCV -> Qt 转换代码
 通过调用_process_and_display_frame()函数实现OpenCV -> Qt 转换
 原因：
@@ -384,7 +395,7 @@ self._is_video_file = False
 2、类中函数顺序问题
 目前能实现打开文件导入图片和视频的功能，并能根据流程图完成检测
 
-2026.6.24 19:49
+## 2026.6.24 19:49
 修改FlowChart中的update_path()函数
         # 点在左右两条边上时使用
         dx = abs(self.end.x() - self.start.x()) * 0.5
@@ -396,18 +407,18 @@ self._is_video_file = False
         ctrl1 = QPointF(self.start.x(), self.start.y() + dy)
         ctrl2 = QPointF(self.end.x(), self.end.y() - dy)
 
-2026.6.24 20:25
+## 2026.6.24 20:25
 super.mouseMoveEvent()中super为交给父类处理的意思
 比如def mouseMoveEvent(self, event)是重写mouseMoveEvent这个类，
 然后最后super.mouseMoveEvent()，意思是def函数里面没写到的内容按照父类的逻辑处理。
 
 
-2026.6.24 21:06
+## 2026.6.24 21:06
 在FlowChart.py文件的FlowchartEvent类中添加mousePressEvent(),mouseMoveEvent(),mouseReleaseEvent(),
 _start_connection(),_try_finish_edge(),_cancel_connection()函数，
 实现点击蓝点拖出曲线到红点连接的功能
 
-2026.6.24 21:22
+## 2026.6.24 21:22
 修改EdgeItem类
 将start改成start_node，将end改成end_node，规范化
 在update_path()函数中添加：
@@ -416,11 +427,11 @@ _start_connection(),_try_finish_edge(),_cancel_connection()函数，
         end = self.end_node.get_input_pos()
 修改update_positions()函数
 
-2026.6.24 21:27
+## 2026.6.24 21:27
 在NodeItem类中添加：
 self.setAcceptHoverEvents(True) # 允许鼠标悬停
 
-2026.6.24 22:30
+## 2026.6.24 22:30
 修改TestWindow类中的add_flow_node(),delete_flow_node(),update_all_edges(),_on_tree_double_click()函数
 添加add_edge()函数
 add_flow_node()函数：删除自动创建连线部分和QTimer.singleShot()
@@ -429,15 +440,15 @@ delete_flow_node()函数：重写该函数，实现删除与需要删除的节�
 update_all_edges()：重写该函数
 _on_tree_double_click()函数：按照main.py的方式进行修改
 
-2026.6.24 22:41
+## 2026.6.24 22:41
 在FlowChart.py文件中实现从一个方框中引出多条曲线的功能
 
-2026.6.25 9:29
+## 2026.6.25 9:29
 修改main.py文件中的add_flow_node(),delete_flow_node(),update_all_edges()函数
 添加add_edge()函数
 在main.py中实现从一个方框中引出多条曲线的功能
 
-2026.6.25 20:10
+## 2026.6.25 20:10
 修改Detector.py文件，添加def gray()函数，实现对图片的灰度转换
 如果在流程图中已经有了gray模块，再使用直线或者圆检测，则会出错，
 原因是因为再直线和圆检测内的cv2.cvtColor()函数输入的是三通道图像，如果输入的是已经完成了灰度转换的图像，则是单通道的
@@ -447,16 +458,16 @@ _on_tree_double_click()函数：按照main.py的方式进行修改
         else:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-2026.6.25 20:46
+## 2026.6.25 20:46
 修改FlowChart类中的EdgeItem类，添加contextMenuEvent()函数，实现对连接曲线的删除功能
 在主函数中添加delete_edge()函数，实现对连接曲线的删除功能
 
-2026.6.25 21:35
+## 2026.6.25 21:35
 对图像先进行灰度转换再进行直线检测，和对图像先进行直线检测再进行灰度转换的区别：
 先进行灰度转换再进行直线检测时：获得的是灰度图，检测出的直线为黑色
 先进行直线检测再进行灰度转换时：获得的是灰度图，直线为绿色经灰度转换后的颜色(亮灰色)
 
-2026.6.25 22:36
+## 2026.6.25 22:36
 修复删除方框后对应的检测内容依然在图片上显示的bug
 在__init__中添加self.current_static_image = None存储当前加载的静态图片
 在open_file()函数中添加self.current_static_image = frame保存当前加载的静态图片
@@ -468,13 +479,13 @@ _on_tree_double_click()函数：按照main.py的方式进行修改
 存在问题：删除直线检测和圆检测的方框后不能去除图片上对应的内容，
 删除灰度转换后可以去除图片的灰度，回复到彩色图片
 
-2026.6.25 22:52
+## 2026.6.25 22:52
 对于上面的问题，原因是：
 OpenCV 的 cv2.line 和 cv2.circle 等绘图函数，是直接在传入的 numpy 数组（内存地址）上修改的，不会自动产生副本。
 修改_process_and_display_frame()函数，添加work_frame = frame.copy()，然后将frame都改成work_frame
 拷贝一份图像
 
-2026.6.25 23:00
+## 2026.6.25 23:00
 不需要点击树状图对于的树枝来执行对于的检测，现在是只按照流程图的内容来执行对于的检测
 注释了on_tree_item_clicked()和process_frame()函数
 注释了树状图点击事件# self.main_window.tree.itemClicked.connect(self.on_tree_item_clicked)
@@ -482,14 +493,14 @@ OpenCV 的 cv2.line 和 cv2.circle 等绘图函数，是直接在传入的 numpy
 修改了_process_and_display_frame()函数的逻辑：点击树状图时画面不变，按照原来的画面显示
 work_frame, data = work_frame, []# work_frame, data = self.process_frame(work_frame)
 
-2026.6.26 23:00
+## 2026.6.26 23:00
 思考怎么按照树状图流程进行检测
 存在问题：
 1、检测没有按照流程图连线顺序进行，而是按照方框拖入到画布的顺序进行。
 比如先拖入灰度转换再拖入直线检测，他的检测顺序是先灰度转换再直线检测。不是按照流程图的连线进行的
 2、将方框拖到画布上后没有进行连线，也会进行检测。需要的是按照连线的顺序进行检测。
 
-2026.6.28 10:17
+## 2026.6.28 10:17
 修改_run_flow_pipeline函数，实现按曲线顺序进行检测，而不是按照方框创建顺序进行检测，如果没有连线时则不进行检测
 存在问题：
 1、对于多分枝时，如直线->灰度A，灰度B->圆两条分支，节点创建顺序为直线，灰度A，灰度B，圆
@@ -497,14 +508,14 @@ work_frame, data = work_frame, []# work_frame, data = self.process_frame(work_fr
 考虑添加一个“导入图片”的模块，用于专门针对某一个分支进行导入图片，参考vision master
 2、没有连线时不执行任何检测，只有一个节点时也不执行任何检测
 
-2026.6.28 15:57
+## 2026.6.28 15:57
 重新设计ui，添加一个tabWidget控件，一个原来存放流程图flow，一个原来存放图像video
 修改代码，view = self.main_window.findChild(QtWidgets.QGraphicsView, "flowView")
 将原本的graphicsView改成flowView
 创建的两个tabWidget只要保证里面的名字不一样就不用进行区分
 因为：是通过findChild()来查找里面的名字的，只要名字不一样就不需要区分
 
-2026.7.14 23:00
+## 2026.7.14 23:00
 问题：运行代码时不执行代码，而是运行了测试
 修复：最上面的当前文件 -> 编辑配置 -> 点击+号，添加新配置 -> python 
 -> script中添加需要执行的代码文件 E:/opencv_python_3_8/PySide/FlowChart.py
@@ -515,49 +526,49 @@ work_frame, data = work_frame, []# work_frame, data = self.process_frame(work_fr
 -> 回车执行
 -> 输入 python main.py 执行对于的文件
 
-2026.7.15 15:48
+## 2026.7.15 15:48
 问题：方法 'on_node_double_clicked' 可能为 'static'
 原因：函数参数中有self，但是函数内没有使用到self
 修复：随便设置一个self.abc = 3，不使用
 
-2026.7.15 19:48
+## 2026.7.15 19:48
 添加双击流程图中方框节点时输出11，22，33的效果
 在FlowChart.py中的NodeItem类中添加mouseDoubleClickEvent()函数，实现双击节点触发的功能
 在main.py函数中添加on_node_double_clicked()函数，实习点击对应的点实现输出对应的功能
 
-2026.7.15 21:00
+## 2026.7.15 21:00
 问题：在FlowChart.py文件内运行时双击流程图方框节点时出错
 修改：在TestWindow类中添加on_node_double_clicked()函数，测试时不会出错。
 
-2026.7.20 14:17
+## 2026.7.20 14:17
 开始使用Qt设计师设计直线检测窗口，实现双击流程图直线方框节点后出现该窗口
 修改TabWidget中分页的名字：修改currentTabText参数中的名字，不是Name参数，
 Name参数是用于代码中查找控件名字的，Text参数是用于显示的名字。
 
-2026.7.21 10:52
+## 2026.7.21 10:52
 拆分布局layout方法：选择布局内的控件 -> 右键 -> 布局 -> 分拆布局
 
-2026.7.21 11:01
+## 2026.7.21 11:01
 0 图像源1.图像的设计：选择Combo Box控件 -> 选择placeholderText属性 -> 
 设置文字"0 图像源1.图像的设计"
 
-2026.7.21 20:00
+## 2026.7.21 20:00
 实现左右滑动块的效果：使用左右滑动条Horizontal Slider控件，
 实现代码为LineParamsDialog类的_apply_slider_style()函数
 
-2026.7.21 20:07
+## 2026.7.21 20:07
 运行代码后QcomboBox控件的文字"0 图像源1.图像的设计"，
 修复：在代码中添加self.input_source.addItem("0 图像源1.图像")，即添加一个下拉框QcomboBox的内容
 
-2026.7.22 11:50
+## 2026.7.22 11:50
 完成LineParamsDialog.ui中基本参数页面的ui设计
 调整layout布局
 存在问题未解决：拖动窗口界面跟随移动的问题未解决
 
-2026.7.22 14:20
+## 2026.7.22 14:20
 修改LineParamsDialog.ui中控件的参数命名
 
-2026.7.22 14:29
+## 2026.7.22 14:29
 在ui中实现左右滑动块的效果，原本为在代码中实现该功能
 实现步骤：ui界面中找到ComboBox控件 -> 找到styleSheet属性 -> 输入以下代码
 即可在ui属性中实现该效果
@@ -582,7 +593,7 @@ QSlider::groove:horizontal {
             border-radius: 9px;
         }
 
-2026.7.22 14:38
+## 2026.7.22 14:38
 修改"ROI参数"按钮的样式：背景变成透明，去除按钮的灰色背景，文字变成灰色
 修改步骤：现在按钮控件 -> 找到flat属性 -> 打勾 -> 找到styleSheet属性 -> 输入以下代码
 QPushButton {
@@ -593,12 +604,12 @@ QPushButton {
     text-align: left;
 }
 
-2026.7.22 14:59
+## 2026.7.22 14:59
 去除警告的方法：
 代码中出现黄色警告时：在代码后添加 # type:ignore 注释
 代码中出现灰色波浪线警告时：在代码后添加 # iqna 注释
 
-2026.7.23 17:31
+## 2026.7.23 17:31
 完成直线检测ui窗口LineParamsDialog.py代码的书写
 内容包含：
 类LineParamsDialog
@@ -610,7 +621,7 @@ toggle_roi_params(self)函数：点击"ROI参数"这个按钮后触发，切换 
 _update_roi_params_visibility(self)函数：根据“ROI创建”的单选框状态(选择绘制 或者 继承)，控制展开按钮及参数区域的显示与隐藏
 _update_shape_layout(self, shape_text)函数：根据形状下拉框当前选中的文字，动态更新参数框的标签名和可见性
 
-2026.7.23 19:21
+## 2026.7.23 19:21
 修改Detector.py文件
 line_detector()函数：添加roi_offset_x=0, roi_offset_y=0这两个参数，实现直线检测区域的偏移 的功能
 代码中添加：
@@ -622,21 +633,21 @@ line_detector()函数：添加roi_offset_x=0, roi_offset_y=0这两个参数，�
 circle_detector()函数：添加roi_offset_x=0, roi_offset_y=0这两个参数，实现直线检测区域的偏移 的功能
 代码中修改：circle_data.append((x + roi_offset_x, y + roi_offset_y, r))，加上偏移量
 
-2026.7.23 19:29
+## 2026.7.23 19:29
 修改FlawChart.py文件，添加一个字典，用来存储该节点的参数配置
 self.params = {} # 字典类型，存储该节点的参数配置
 
-2026.7.23 20:30
+## 2026.7.23 20:30
 修改main.py文件文件
 添加导入from LineParamsDialog import LineParamsDialog类
 修改_run_flow_pipeline()函数，添加绘制ROI窗口的功能，并修改if node.name == "直线"等执行内容
 修改on_node_double_clicked()函数，添加双击直线节点时弹出窗口的功能
 
-2026.7.23 20:41
+## 2026.7.23 20:41
 略微修改的main.ui
 删除了最右边的树状图，调整了图像窗口label的大小
 
-2026.7.23 21:08
+## 2026.7.23 21:08
 存在问题：如果创建流程图节点后先双击了节点使其弹出窗口，再打开图片，会导致读取到的ROI参数不正确，
 原图片的尺寸为512*512，但是显示为默认值480*640。
 先打开图片再创建节点，或者先创建节点但是先不双击节点使其弹出窗口，而是直接打开图片再双击节点，
@@ -662,7 +673,7 @@ self.params = {} # 字典类型，存储该节点的参数配置
 直接点击×，则数值会随图片的变化而变化
 
 
-2026.7.23 21:34
+## 2026.7.23 21:34
 存在问题：直线检测会检测到ROI绘制出的矩形框的边界
 修复：
 将绘制矩形放到绘制检测出直线的代码的后面
@@ -671,7 +682,7 @@ self.params = {} # 字典类型，存储该节点的参数配置
         cv2.rectangle(img, (roi_x, roi_y), (roi_x + roi_w, roi_y + roi_h), (0, 255, 255), 2)
 放到if node.name == "直线"这些判断之后
 
-2026.7.23 22:11
+## 2026.7.23 22:11
 在LineParamsDialog.ui里面添加了一个可以隐藏绘制出的黄框的复选框
 该复选框命名为cb_hide_roi
 在LineParamsDialog.py文件中
@@ -694,7 +705,7 @@ self.params = {} # 字典类型，存储该节点的参数配置
                 # 在原图上画出 ROI 矩形框（黄色），只有 hide_roi 为 False 时才会画
                 cv2.rectangle(img, (roi_x, roi_y), (roi_x + roi_w, roi_y + roi_h), (0, 255, 255), 2)
 
-2026.7.23 22:38
+## 2026.7.23 22:38
 存在问题：流程图是一样的，都是直线->圆检测，但是隐藏绘制出的黄色矩形和不隐藏黄色矩形的圆检测结果却不同。
 这可能是因为绘制的矩形影响到了下一次循环中的圆检测的过程。
 修复：
@@ -704,12 +715,12 @@ self.params = {} # 字典类型，存储该节点的参数配置
 在循环中记录：rois_to_draw.append((roi_x, roi_y, roi_w, roi_h, hide_roi))
 最后循环结束后统一绘制：for rx, ry, rw, rh, hide in rois_to_draw
 
-2026.7.24 10:41
+## 2026.7.24 10:41
 问题：创建pushButton按钮控件时，默认为透明背景的显示
 原因：不小心设置了全局的styleSheet，
 修复：点击最外层的背景，找到styleSheet属性，删除里面的内容
 
-2026.7.24 20:10
+## 2026.7.24 20:10
 添加功能：
 在LineParamsDialog.py中添加了"框选"按钮的功能，可以通过在图片上自行框选想要检测的区域。
 具体修改：
@@ -730,7 +741,7 @@ on_select_click()函数：点击"框选"按钮触发的功能
 修改LineParamsDialog.py中的main函数，添加可以实现上面按钮框选的功能，进行测试
 
 
-2026.7.25 9:45
+## 2026.7.25 9:45
 获取控件并执行点击clicked槽信号的方法的区别：
 1、直接通过self.main_window来找到控件并执行点击槽信号：
 “self.main_window.camera_button.clicked.connect(self.open_camera) # 开启摄像头按钮”
@@ -743,11 +754,11 @@ self.btn_step.clicked.connect(self.on_step_execute)
 如果 UI 里找不到 btn_step_execute，findChild 会返回 None，可以防止系统崩溃
 在初始化阶段统一获取并缓存为类属性，后续的代码直接操作这些属性，是更快、更符合面向对象的封装规范
 
-2026.7.25 9:56
+## 2026.7.25 9:56
 修改代码中的信号槽事件，按照先通过find child获取控件name名字，再执行点击chlicked槽事件
 修改了camera_button，close_button，open_button这三个按钮
 
-2026.7.25 11:16
+## 2026.7.25 11:16
 修改main.ui：
 在main.ui中添加了两个pushbutton按钮，一个的名字text为单步执行，Name为btn_step_execute，
 另一个的名字text为连续执行，Name为btn_continuous_execute，
@@ -759,7 +770,7 @@ self.btn_step.clicked.connect(self.on_step_execute)
 点击连续执行后，会按照流程图的步骤依次从头到尾地执行，和当前的逻辑一样，只是添加了一个按钮控制。
 
 
-2026.7.25 13:22
+## 2026.7.25 13:22
 修改FlowChart.py文件中的FlowchartView类：
 设置监听场景中选中节点的变化事件：
 self.scene.selectionChanged.connect(self.on_selection_changed)
@@ -774,7 +785,7 @@ main.py使用的是一个单独的label文本框
 FlowChartWindow.py中测试使用的是状态栏showMessage
 
 
-2026.7.26 13:24
+## 2026.7.26 13:24
 修改main.py文件：
 1、通过findchild查找添加的2个按钮btn_step，btn_continuous和1个文本框current_node_label
 2、设置对应的点击槽事件self.btn_step.clicked.connect，self.btn_continuous.clicked.connect()
@@ -785,7 +796,7 @@ FlowChartWindow.py中测试使用的是状态栏showMessage
 7、添加专门用于单步执行：仅对一个节点做 ROI 裁剪和处理_run_flow_pipeline_step()函数
 8、修改_process_and_display_frame()函数，将展示图片的内容单独写成一个函数_display_image()，方便单步执行时调用
 
-2026.7.26 13:35
+## 2026.7.26 13:35
 存在问题：打开图片，然后添加节点后，再点击关闭窗口，会出现RuntimeError错误
 原因：直接关闭窗口时，Qt 开始销毁主窗口，它顺带会销毁主窗口里面的 FlowchartView 画布控件，
 在销毁的过程中，Qt 内部有时候还会触发 selectionChanged（选择变化）信号，
@@ -793,12 +804,12 @@ FlowChartWindow.py中测试使用的是状态栏showMessage
 发现 self.scene 指向的底层 C++ 对象已经不存在了，立刻崩溃并抛出 RuntimeError
 修改：在FlowChart.py文件的FlowchartView类中的on_selection_changed()函数中添加try-except预防错误
 
-2026.7.26 15:06
+## 2026.7.26 15:06
 优化代码：
 添加_process_single_node函数，用来单独处理单个节点的通用检测逻辑
 修改_run_flow_pipeline()函数和_run_flow_pipeline_step()函数，分别调用_process_single_node函数
 
-2026.7.26 16:19
+## 2026.7.26 16:19
 修改main.py文件，添加在视频/摄像头中也能实现单步执行和连续执行的功能：
 添加变量：self.video_processing_mode = "continuous"和self.video_step_node = None
 修改单步执行函数on_step_execute()，添加处理视频的逻辑
@@ -808,19 +819,19 @@ FlowChartWindow.py中测试使用的是状态栏showMessage
 _process_and_display_frame()函数：复制 + 处理(完整流程) + 显示，适用于静态图片场景
 _display_image()函数：仅显示，适用于视频流、摄像头实时流
 
-2026.7.26 18:16
+## 2026.7.26 18:16
 存在问题：在视频或者摄像头状态时，节点的框选区域功能不能使用
 修复：修改LineParamsDialog.py文件中LineParamsDialog类的框选函数on_select_click()，
 点击框选后弹出是图片画面是当前视频的一帧画面，用这一帧画面来框选检测区域
 
 
-2026.7.26 18:30
+## 2026.7.26 18:30
 存在问题(?)：直线绘制的结果可能会影响到后续的圆检测
 该问题是否合理，前面的结果是否需要对后面的结果产生影响
 
 在工业视觉软件中，希望的结果为前一个节点对后一个节点不产生影响
 
-2026.7.26 22:37
+## 2026.7.26 22:37
 修改main.py和Detector.py文件，
 修改成每个节点独立运行的功能，前面的节点检测的内容不会对后面节点的检测结果产生影响
 修改Detector.py，添加gray_with_preserve_lines()函数，
@@ -830,21 +841,21 @@ _display_image()函数：仅显示，适用于视频流、摄像头实时流
 修改main.py文件中的_process_single_node(),_run_flow_pipeline(),_run_flow_pipeline_step()这三个函数
 如果想恢复原本的每个节点可以相互影响的功能，可以使用main_20的版本中的这三个函数
 
-2026.7.26 22:53
+## 2026.7.26 22:53
 存在问题：如果画布中有图片的情况下打开摄像头，
 然后对节点点击单步执行的按钮，会出现一帧导入的图片的画面
 原因：打开摄像头没有清除图片的缓存
 修改：修改main.py文件中的open_camera()函数，
 打开摄像头open_camera时立即执行一次close_camera清空画布上的画面
 
-2026.7.27 10:55
+## 2026.7.27 10:55
 删除LineParamsDialog_22.py文件中LineParamsDialog类的on_run(),on_ok()函数
 添加on_step_click(),on_cont_click(),on_ok()三个函数
 实现点击该ui窗口的执行和连续执行两个按钮也能实现对应的单步和连续执行的功能
 修改LineParamsDialog_22.py文件中测试类MockMainWindow类：
 防止调用main.py文件中的函数时时抛出 AttributeError 错误
 
-2026.7.27 16:50
+## 2026.7.27 16:50
 main_23_1文件：
 在LineParamsDialog窗口中，选择形状为圆时，单纯使用圆内的区域作为ROI区域
 因为图像在计算机底层必定是“矩阵（矩形数组）”，
@@ -852,7 +863,7 @@ main_23_1文件：
 但是使用掩膜技术时灰度gray的算法有需要重写
 算法复杂，故最终采用的是使用圆的外接矩形的方法来获取ROI区域的方法
 
-2026.7.27 19:50
+## 2026.7.27 19:50
 修改LineParamsDialog.py文件：
 导入import QBrush, QGraphicsEllipseItem # 画布，绘制椭圆形(圆)
 
@@ -880,14 +891,14 @@ self.center_point = None  # 圆形的圆心
 
 修改_run_flow_pipeline()和_run_flow_pipeline_step()函数：添加绘制圆的逻辑
 
-2026.7.27 20:11
+## 2026.7.27 20:11
 存在问题：选择了形状为圆，但是每次重新双击节点进入参数窗口后，
 会自动显示形状为矩形，需要重新选择圆
 修改：修改LineParamsDialog.py文件中的_load_params()函数，添加：
 saved_shape = params.get("roi_shape", "矩形")
 self.shape_combo.setCurrentText(saved_shape)
 
-2026.7.28 9:47
+## 2026.7.28 9:47
 修改LineParamsDialog.ui，添加 运行参数 页面的内容：
 添加了5个label文本框，添加了5个spinbox微调数值框，添加了1个groupBox控件（运行参数文本的显示）
 
@@ -900,7 +911,7 @@ self.shape_combo.setCurrentText(saved_shape)
 修改_process_single_node()函数直线的检测逻辑，添加detector.line_detector()函数中的输入参数
 
 
-2026.7.28 9:57
+## 2026.7.28 9:57
 存在问题：打开直线查找窗口后，弹出的窗口默认是"运行参数"的界面，我想要的是"基本参数"的窗口
 修改：
 方法一：在ui文件中点击到"基本参数"的窗口，然后点击保存，再退出ui文件
@@ -908,7 +919,7 @@ self.shape_combo.setCurrentText(saved_shape)
 self.ui.tabWidget.setCurrentIndex(0)设置tabWidget控件的索引为0
 
 
-2026.8.7 8:58
+## 2026.8.7 8:58
 修改LineParamsDialog.ui，添加 显示结果 页面的内容：
 添加了2个label文本框，添加了1个groupBox控件（显示结果文本的显示）
 
@@ -959,13 +970,13 @@ data = []  # 【新增】初始化数据列表
             self.current_dialog._update_result_count(data)
 
 
-2026.8.7 9:13
+## 2026.8.7 9:13
 存在问题：访问类的 protected 成员_update_result_count
 修改：删除所有_update_result_count中最前面的_
 改成update_result_count
 有_表示类内保护的方法，删除_后变成公开的方法
 
-2026.8.7 9:20
+## 2026.8.7 9:20
 存在问题：
 未使用局部变量'data'的值
 未使用形参'item'的值
@@ -978,10 +989,10 @@ column修改成_column
 在参数名称前加一个下划线 _，告诉编辑器：“我知道这个参数没被用到，但我必须写在这里，请忽略警告
 
 
-2026.8.10 22:06
+## 2026.8.10 22:06
 修改LineParamsDialog.ui文件，将最大直线间隙文本label_10修改成max_line_gap
 
-2026.8.12 9:12
+## 2026.8.12 9:12
 添加双击圆节点弹出圆检测参数窗口CircleParamsDialog
 实现修改圆检测参数，和显示检测出的圆的数量的功能
 实现：
@@ -996,13 +1007,13 @@ column修改成_column
 # 修改窗口的名字 Text
 self.setWindowTitle("直线检测")
 
-2026.8.12 14:11
+## 2026.8.12 14:11
 存在问题：
 CircleParamsDialog.py文件中存在一些导入类都是未使用的情况
 修改：
 删除了导入未使用的类
 
-2026.8.13 16:46
+## 2026.8.13 16:46
 存在问题：
 当会ROI参数都为0时点击执行/连续执行/确定，出现ValueError错误
 修改：
@@ -1031,7 +1042,7 @@ return True
 并且我点击了连续执行的按钮，则如图所示显示，比如我现在的流程图为”直线->圆->灰度“，
 则显示“执行序号(1)，执行时间；模块(直线);结果数据(检测到10条直线)；”
 
-2026.8.18 15:02
+## 2026.8.18 15:02
 在main.ui中添加QTabelWidget控件来显示运行日志，
 并修改main.py和LineParamsDialog.py文件实现对于的功能，
 点击连续执行按钮会在日志表格中显示运行的序号，时间，模块，结果。点击单步执行按钮暂时不考虑
@@ -1080,12 +1091,12 @@ return True
 work_frame, data, exec_info = self.main_window._run_flow_pipeline(work_frame)  # noqa
 self.main_window._update_execution_log(exec_info)  # 新增：刷新主窗口日志表格
 
-2026.8.19 22:07
+## 2026.8.19 22:07
 修改main.ui文件，设置全屏布局，
 上下分为 按钮区 和 实现区，
 实现区左中右分为 树状图、流程图 和 显示部分；
 
-2026.8.19 22:13
+## 2026.8.19 22:13
 存在问题：在qt设计师里面已经设置了layout，但是中间流程图部分代码运行的出现了错误，
 在main.py文件中运行后全屏，流程图控件QGraphicsView的大小并没有变大，而且下面的label文本框也不见了
 
@@ -1112,10 +1123,10 @@ view = self.main_window.findChild(QtWidgets.QGraphicsView, "flowView")
                 # 每次刷新时全屏更新，防止有拖尾残影
                 self.main_window.graphicsView.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
 
-总结：ui没有问题，那可能是代码中设置了硬性要求
+## 总结：ui没有问题，那可能是代码中设置了硬性要求
 
 
-2026.8.19 22:23
+## 2026.8.19 22:23
 修改main.py中的main函数，使运行时自动将窗口最大化
 修改：
 def main():
@@ -1129,7 +1140,7 @@ def main():
     window.main_window.showMaximized()  # 替换掉原来的 window.main_window.show()
     app.exec_()
 
-2026.8.20 8:47
+## 2026.8.20 8:47
 存在问题：每次点击一下执行/连续执行后图像窗口都会变大，
 在视频或者摄像头时尤为明显，放大后的图像将布局破坏了
 
@@ -1145,7 +1156,7 @@ def main():
 修改_display_image()函数：防止刚开始未分配尺寸时导致出错
 
 
-2026.8.20 21:16
+## 2026.8.20 21:16
 实现使用GraphicsView控件代替 Qlabel 控件显示图像画面的功能
 修改main.ui文件：使用GraphicsView控件代替 Qlabel 控件
 
@@ -1167,7 +1178,7 @@ wheelEvent()函数：重写滚轮事件，实现以鼠标位置为中心的缩�
             self.image_view.pixmap_item = None
 
 
-2026.9.29 10:50
+## 2026.9.29 10:50
 修改main.ui文件：
 添加 图像预览进度条 QListWidget 控件
 
@@ -1185,7 +1196,7 @@ wheelEvent()函数：重写滚轮事件，实现以鼠标位置为中心的缩�
 
 修改：在修改ImageGalleryWidget. __init__ 中关闭拖放，并给控件本身和它的 viewport 都装上事件过滤器
 
-2026.9.29 11:05
+## 2026.9.29 11:05
 修改main.py文件：
 导入ImageGalleryWidget类：from ImageGalleryWidget import ImageGalleryWidget
 
@@ -1199,14 +1210,14 @@ self.image_gallery = self.main_window.findChild(QtWidgets.QListWidget, "image_ga
 
 添加_on_gallery_image_selected()用户点击图库中的图片时，切换主画面显示函数
 
-2026.9.29 15:28
+## 2026.9.29 15:28
 修改main.py文件，实现点击"打开"按钮后可以对多幅图片或视频进行导入：
 添加导入import os
 修改open_file()函数：
 QFileDialog.getOpenFileName()（结尾没有 s），它只返回一个文件路径
 QFileDialog.getOpenFileNames() 可以选择多幅图片
 
-2026.9.29 15:42
+## 2026.9.29 15:42
 修改ImageGraphicsView.py文件：图像画布中每张图片的放大缩小互相独立
 存在问题：导入了2张图片，在第1张图片里滚动鼠标滚轮放大，再点击第2张图片，
           第2张图片也跟着放大了（沿用了上一张图片的缩放）。
@@ -1244,7 +1255,7 @@ set_image()函数中增加 image_key 参数，并添加以下代码：
    避免关闭图片后再打开视频，还沿用上一张图片的缩放。
 
 
-2026.9.29 16:42
+## 2026.9.29 16:42
 删除"连好线就自动显示检测结果"，改为只有点执行按钮才显示
 存在问题：流程图中只要连上2个以上节点，图像上就自动出现检测结果，
           希望改成只有点过"单步执行"/"连续执行"之后才显示。
@@ -1266,7 +1277,7 @@ set_image()函数中增加 image_key 参数，并添加以下代码：
    现在统一收进 _execute_static()，行为保持一致。
 
 
-2026.9.29 16:45
+## 2026.9.29 16:45
 切换图片后，需要重新点击执行按钮后才能显示检测结果，
 如果是同一副图像，那么会保存上一次的绘制结果。
 
@@ -1326,7 +1337,7 @@ self.current_image_key = None
    _switch_image_roi(self.VIDEO_ROI_KEY)，让视频 / 摄像头也有自己独立的一份 ROI
 
 
-2026.9.29 16:47
+## 2026.9.29 16:47
 每一幅图像的运行参数独立保存，修改了图片1的运行参数，切换到图片2后运行参数不会继承
 
 修改main_27.py文件：把"只保存 ROI 参数"改成"保存整个参数字典"
@@ -1345,7 +1356,7 @@ self.current_image_key = None
 4、调用点同步改名：_show_static_image()、open_camera()、open_file() 的视频分支
 
 
-2026.9.29 22:12
+## 2026.9.29 22:12
 2026.9.29总结：
 1、如何实现每幅图片缩放和绘制检测结果时独立的：
 使用一个图片标识id(frame)来保存图片的状态
@@ -1391,7 +1402,7 @@ node.params.clear()                  # 2、腾空
 node.params.update(store[new_key])   # 3、取：把新图那份放回来（没有就保持空）
 
 
-2026.10.1 23:27
+## 2026.10.1 23:27
 添加多页面流程图FlowPages.py的功能：
 修改main.py函数：
 1、添加导入FlowPages.py文件
@@ -1421,7 +1432,7 @@ delete_page() / close_page() 里的 len(self.pages)
 _on_tab_widget_destroyed() + 3 处 except RuntimeError
 
 
-2026.10.2 10:30
+## 2026.10.2 10:30
 存在问题：流程图是"直线->圆"时，前面直线检测画在图上的绿线会被后面的圆检测当成图像内容，
           影响圆的检测结果。同一张图，先直线再圆 与 只做圆检测，结果不一样。
 
@@ -1736,13 +1747,13 @@ def result_bbox(results):
 5、QComboBox.findData() 装 Python 对象时不可靠，改成遍历 itemData() 用 is / == 比较。
 6、与 Qt 对象做 == 之前先用 isinstance(x, str) 守卫，避免富类型比较出问题。
 
-总结：现在的语义是"影响必须由算子声明"——
+## 总结：现在的语义是"影响必须由算子声明"——
       处理类算子改图像、下游看得见（灰度 -> 直线 是有效的）；
       检测类算子只出结果、图像原样透传（直线 -> 圆 时圆再也看不到绿线）；
       两者之间要互相影响，走"图像源绑定"和"ROI 继承"这两条明路。
 
 
-2026.10.2 11:05
+## 2026.10.2 11:05
 存在问题：数据流引擎改完之后逐条复查，发现 4 个问题，其中第 1 个是我改引擎时漏掉的回归：
 1、参数窗口把 ROI 的 X/Y 填得比图像尺寸大时，ROI 切片会越界。numpy 切片越界不会报错，
    而是"静默变空"，一张 0 像素的空图丢给 cv2.cvtColor / Canny / HoughCircles 会直接抛异常。
@@ -1845,7 +1856,7 @@ _execute_static() 的两个分支统一解包三个值并刷日志；update_fram
 · 批次5（架构）：拆分 MainWindow、算法线程化、缓存与内存上限、撤销/重做。
 
 
-2026.10.2 11:20
+## 2026.10.2 11:20
 存在问题：数据流引擎 + 批次1 之后，代码里还沉积着一批"历史遗留"：
 1、三引号包着的大段废弃实现（main.py 三处、FlowChart.py 两处、LineParamsDialog.py 一处），
    其中还有在调用已经被删掉的 _process_and_display_frame()，看代码很容易被误导；
@@ -1983,7 +1994,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
 · 批次5（架构）：拆分 MainWindow、算法线程化、缓存与内存上限、撤销/重做。
 
 
-2026.10.2 11:24
+## 2026.10.2 11:24
 存在问题：上一条（11:20 批次3）里，把双击灰度节点的调试输出 print(33) 改成了弹提示窗口
           （提示"该模块没有可配置的参数"）。用户要求恢复成原来的"无反应"：
           双击灰度这类没有参数窗口的模块时，不要弹任何提示。
@@ -2000,7 +2011,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
    且 else 分支是 pass —— 确认双击灰度是静默无反应，不会再弹窗。
 
 
-2026.10.2 16:00
+## 2026.10.2 16:00
 存在问题：批次2 的体验项，两处：
 1、显示底图固定取"最后一个执行节点的图像输出"，流程图一旦有分叉、或者只想看某个中间节点的
    处理结果，画面永远只显示最后那一步的图（VisionMaster 里是"点哪个模块就看哪个模块的输出图像"）；
@@ -2055,7 +2066,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
      单步执行仍返回 3 个值 + 1 行日志
 
 
-2026.10.2 16:15
+## 2026.10.2 16:15
 存在问题：批次2 剩下的两项（用户已确认做法）：
 1、roi_margin（ROI 创建选"继承"时向外扩多少像素，默认 20）只能改代码/参数，界面上没有控件；
 2、灰度节点只处理自己那块 ROI，下游拿到的"灰度图"也只有那一小块是灰的，
@@ -2136,7 +2147,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
    （当前 HEAD = 批次3 那次提交；注意本次还带着未提交的批次2 改动）。
 
 
-2026.10.2 16:30
+## 2026.10.2 16:30
 存在问题（用户实测反馈 + 复现确认）：
 1、流程"直线 -> 灰度 -> 直线"里，右键灰度节点勾选 / 取消"灰度作用整图"，检测结果完全一样，
    都是整幅图变灰。复现数据：灰度节点参数 = {}（空），"仅 ROI"模式下它解析出的 ROI
@@ -2211,7 +2222,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
 2、或走 git：git diff 看差异；git checkout -- <文件> 退回上一次提交。
 
 
-2026.10.2 16:40
+## 2026.10.2 16:40
 存在问题（用户发截图反馈）：
 1、灰度参数窗口的 UI 被挤压变形：ROI区域 这一组在 .ui 里是"绝对定位"——行组
    （layoutWidget，写死高度 125，本来只放"ROI创建/形状/屏蔽形状/位置修正"4 行）
@@ -2271,7 +2282,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
 2、或走 git：git diff 看差异；git checkout -- <文件> 退回上一次提交。
 
 
-2026.10.2 16:50
+## 2026.10.2 16:50
 存在问题（用户提的两个问题）：
 1、流程图 圆 -> 灰度 -> 直线，最后一个直线节点勾了"继承"、外扩 20，点连续执行后
    整幅图都被检测、画满了直线。
@@ -2354,7 +2365,7 @@ LineParamsDialog / CircleParamsDialog 里的 MockMainWindow：
    建议按你的习惯提交一次，之后 git checkout 就能精确回到今天这一版。
 
 
-2026.10.2 17:10
+## 2026.10.2 17:10
 批次2 整体总结（把 16:00 / 16:15 / 16:30 / 16:40 / 16:50 这几条按功能重新整理成一份，
               回头一次就能看完这一批改了什么）
 
@@ -2444,7 +2455,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
   灰度窗口界面（继承结果时"框选"隐藏、只剩"基本参数"一页）。
 
 
-2026.10.2 17:20
+## 2026.10.2 17:20
 存在问题：上一条里解释了"继承"目前继承的是上游**检出结果的外接框**，于是
     · 最后一个直线继承到的是"那几个圆的外接矩形"，会把所有圆都包住、框很大；
     · 用户之前也问过"为什么外扩=0 时，继承来的框和上游的框还是不重合"。
@@ -2525,7 +2536,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 
 
 
-2026.10.2 21:43
+## 2026.10.2 21:43
 存在问题：批次4 的第一件事——流程图和参数一直只活在内存里，关掉程序就全没了：
    多标签页面、节点坐标、连线、节点参数、图像源绑定，都没法存下来、也没法再打开。
 
@@ -2608,7 +2619,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （作为下一轮改动的 before）
 
 
-2026.10.2 22:57
+## 2026.10.2 22:57
 存在问题（用户反馈 + 新需求）：
 1、打开方案时把别的页面全清掉了——用户有多个流程图页面时，一打开方案就只剩方案里的那些页。
    期望：**打开方案要保留现有页面**，方案里的页面**追加到最后**（"+"号前面）。
@@ -2684,7 +2695,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （作为下一轮改动的 before）
 
 
-2026.10.2 23:13
+## 2026.10.2 23:13
 存在问题：工作区有多个页面时，"保存方案 → 再打开这个文件"会把页面又建一遍。
    比如有 3 页（Flow / Flow2 / Flow8），保存后打开该文件，标签变成 6 个；再打开一次变 9 个，
    界面里出现 Flow、Flow8(2)、Flow(2)(2)… 越堆越多。
@@ -2737,7 +2748,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （作为下一轮改动的 before）
 
 
-2026.10.2 23:24
+## 2026.10.2 23:24
 存在问题：用户反馈"打开 方案2.vfproj 会把方案1、方案3 的页面也一起打开"，
    并问"现在的代码不是一个文件只保存一个页面窗口的内容吗"。
    读了 E:\opencv_python_3_8\save_test 下的方案文件，确认了原因：
@@ -2792,7 +2803,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （作为下一轮改动的 before）
 
 
-2026.10.2 23:38
+## 2026.10.2 23:38
 存在问题：用户先"导入方案3"（那个页面记下了方案3.vfproj），然后**新建了一个 Flow 页面**；
    在这个新页面上点"保存项目"时没有弹选路径窗口，而是**直接把方案3.vfproj 覆盖成了新页面的内容**。
    原因：方案文件路径当时是**窗口级**的一个变量（self.project_path）——
@@ -2845,7 +2856,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （作为下一轮改动的 before）
 
 
-2026.10.2 23:50
+## 2026.10.2 23:50
 存在问题（用户提问）：按"往期技术文档放 backups、最新放 plan"整理之后，用户发现 backups 里只有一个 .md，
    问"往期不是修改了几个版本的吗"。
    事实核查：这个方案文档**只单独存过两个文件**——v1.0 原版（26182 字节）和 v1.1"另存版"；
@@ -2869,8 +2880,8 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 · 布局与用户要求一致：当前版本在工程 plan\，历史版本在 E:\opencv_python_3_8\backups
 
 
-2026.10.2 23:56
-总结：批次4 目标1「方案持久化（.vfproj 保存 / 加载）」整体总结
+## 2026.10.2 23:56
+## 总结：批次4 目标1「方案持久化（.vfproj 保存 / 加载）」整体总结
    （共 1 次首版落地 + 4 次按用户实测反馈返工 + 1 次文件归档整理；对应日志条目：
      21:43 首版、22:57 追加语义 / 两个按钮 / 关闭提醒、23:13 加载去重、23:24 一个文件一页、
      23:38 路径按页面记 + 文件位置整理、23:50 文档归档约定）
@@ -2949,7 +2960,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
       d（校验混合 vs 一律拦住）/ e（灰度是否移到"处理"分组）仍待拍板。
 
 
-2026.10.3 22:38
+## 2026.10.3 22:38
 存在问题（用户需求）：开始批次4 目标二「算子扩充 + 通用参数窗口」，按已拍板的决策
    （b 通用动态窗口 / e 灰度移到"处理"分组 / 识别类本批不做）落地：
    处理类算子从 1 个（灰度）扩到 6 个（+ 取反 / 滤波 / 二值化 / 形态学 / 边缘提取），
@@ -3048,7 +3059,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261003_2238\
 
 
-2026.10.3 23:42
+## 2026.10.3 23:42
 存在问题（用户需求）：两件小事一起做：
    ① 形态学节点里补上"梯度 / 顶帽 / 黑帽"三个算法（之前只有 腐蚀 / 膨胀 / 开运算 / 闭运算）；
    ② 把灰度的算法本身从 Detector.py 搬到 ProcessOps.py（Detector.py 只放检测类）。
@@ -3105,8 +3116,8 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261003_2342\
 
 
-2026.10.5 01:09
-总结：批次4 目标2「算子扩充 + 通用参数窗口」整体总结
+## 2026.10.5 01:09
+## 总结：批次4 目标2「算子扩充 + 通用参数窗口」整体总结
    （共 1 次主体落地 + 2 次小追加 + 1 次架构讨论定案；对应日志条目：
      2026.10.3 22:38 主体落地、2026.10.3 23:42 形态学扩 7 档 + 灰度算法搬家）
 
@@ -3175,7 +3186,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    5、形态学在彩色图上做顶帽 / 黑帽 / 梯度是逐通道的，实际用建议前面接"灰度"节点。
 
 
-2026.10.5 17:31
+## 2026.10.5 17:31
 存在问题（用户需求）：开始批次4 目标3「独立图像源节点」。用户定的第一版范围：
    树里新开顶层分组"采集"；**只做"图片源"一个节点**、**只做单张图片**（来源三选一：
    当前图像 / 单张图片 / 测试图）；起点节点的窗口**只留"运行参数"页**；与现有"全局图像源"
@@ -3249,7 +3260,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_1731\
 
 
-2026.10.5 21:24
+## 2026.10.5 21:24
 存在问题（用户实测反馈，严重）：图片源第一版有个致命漏项——用户在实机上发现：
    "导入图像源的图片怎么显示？导入后怎么看到检测后的图片？"
    "现在必须 image_gallery 图库里有图片，才能点单步执行/连续执行，
@@ -3325,7 +3336,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_2124\
 
 
-2026.10.5 22:15
+## 2026.10.5 22:15
 存在问题（用户实测反馈，一次报了 5 条，都是"严重"级别）：
    1、双击处理 / 检测节点后在窗口里点"执行"，处理的是**图像列表里的图**，
       即使把"图像源"选成"节点：图片源"也一样（图片源选的是测试图，图库是导入的图，两张不同）；
@@ -3422,7 +3433,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_2215\
 
 
-2026.10.5 23:02
+## 2026.10.5 23:02
 存在问题（用户实测反馈，一次提了 4 条 + 3 项新要求）：
    1、【最致命】点"单步执行"和"连续执行"得到的效果**一模一样**（选中二值化节点单步执行，
       与直接连续执行的结果完全相同）——单步执行失去了意义；
@@ -3518,7 +3529,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_2302\
 
 
-2026.10.5 23:17
+## 2026.10.5 23:17
 存在问题（用户实测反馈，两条 + 对我上一轮实现的质疑）：
    1、"我不是说了在图像源节点中导入的图片也发到图像列表中吗，为什么导入图片并点击确定后
       没有看到图像列表中出现导入的图片"；
@@ -3593,7 +3604,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_2317\
 
 
-2026.10.5 23:30
+## 2026.10.5 23:30
 存在问题（用户要求，用户原话）：
    "修改代码，把选择文件夹和选择图片的功能分开，回复原本的界面，'打开文件'按钮只负责选择图片，
     不再需要导入文件夹的功能。图像源节点中图像来源加一条文件夹的词条，用来于只选择图片分开，
@@ -3665,7 +3676,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261005_2330\
 
 
-2026.10.6 00:04
+## 2026.10.6 00:04
 存在问题（用户实测反馈两条）：
    1、"取反这个窗口的大小有点异常"——图1 是取反窗口、图2 是二值化窗口，取反明显宽一截；
    2、"在图像源窗口可以选中自动（继承上游图像），都是 ROI 区域下方又有一个继承上游。
@@ -3730,8 +3741,8 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261006_0004\
 
 
-2026.10.6 00:05
-总结：批次4 目标3「独立"图像源"节点」—— **M1「图片源」** 整体总结
+## 2026.10.6 00:05
+## 总结：批次4 目标3「独立"图像源"节点」—— **M1「图片源」** 整体总结
    ★ 里程碑口径（用户 2026.10.6 明确）：批次4 目标3 分三个子里程碑 ——
      **M1 图片源（本条已做完）、M2 视频源（未开始）、M3 相机源（未开始）**。
      所以这条只总结 M1，**不能说"批次4 目标3 已完成"**。
@@ -3805,7 +3816,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    4、**改默认值要交代清楚**（ROI 缺省从"绘制"→"继承上游"会让老流程表现变化，两档都保留）。
 
 
-2026.10.6 11:22
+## 2026.10.6 11:22
 存在问题（用户要求，用户原话）：
    "你能否修改main.ui文件，添加这些控件上去，如果可以，那么在这次对话中只修改main.ui文件，
     让我看看效果，不用动其他的文件代码。"
@@ -3862,7 +3873,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261006_ui_toolbar\main.ui
 
 
-2026.10.6 13:41
+## 2026.10.6 13:41
 存在问题（用户实测，两条）：
    1、"调整一下布局，显示图片的区域占比多一点，下面日志列表占比可以小一点"；
    2、"按钮上下空白的占比有点大了"（工具栏那一行里，按钮上下留白偏大）。
@@ -3904,7 +3915,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261006_1341\main.ui
 
 
-2026.10.6 13:50
+## 2026.10.6 13:50
 存在问题（用户要求）："现在开始修改代码，实现对应的功能，并更新技术文档。"
    ——即按定稿的 M2 第一阶段规格，把图像列表工具栏**接线**，并做三件配套改造。用户已拍板：
    工具栏放 list 上方；**自动切换只影响连续执行**；批量执行某张出错**继续**；批量日志**逐张累积**
@@ -3981,7 +3992,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （新增 §5.12 与变更说明第 16 条；旧版本也在 backups 里）
 
 
-2026.10.6 14:11
+## 2026.10.6 14:11
 存在问题（用户实测报 4 条，原话摘录）：
    1、"'运行全部'这个按钮只做选择的作用，不做运行的作用，即取消点击这个按钮就运行的功能。
       运行功能交给单步执行/连续执行按钮。"
@@ -4048,7 +4059,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （§5.12 更新执行语义 + 变更说明第 17 条）
 
 
-2026.10.6 21:49
+## 2026.10.6 21:49
 存在问题（用户要求）："接下来完成 M2 后续的修改"——按 v1.14 定下的 §5.13 技术要求实施：
   ① 两个开关按**方案 B** 分工；② 把三个 V2 占位项（折叠 ∨、菜单"运行选中 / 停止"、"运行全部"的真下拉菜单）
   一起做完；③ 按四个组合 + 两条急停 + 折叠截图的验收要求验证。
@@ -4120,7 +4131,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （§5.13 追加"实施结果" + 变更说明第 19 条）
 
 
-2026.10.6 22:01
+## 2026.10.6 22:01
 存在问题（用户实测报 4 条，原话摘录）：
    1、"选中自动切换和运行全部后点击连续执行按钮，只对当前选中的图片产生效果，对后面的图片没有效果。"
    2、"'运行选中'和'停止'按钮无法选中，是否是这个控件设置的无法选中。"
@@ -4185,7 +4196,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （§5.13 追加"第三轮修复" + 变更说明第 20 条）
 
 
-2026.10.6 22:11
+## 2026.10.6 22:11
 存在问题（用户实测报 2 条，原话摘录）：
    1、"'运行全部'这个下拉框只作为选择模式的，不作为执行或者连续执行的按钮，现在的情况是我在这个下拉框中
       选择了'运行选中'后图片出现了检测结果，这是运行按钮的功能。这个问题也导致了选择这个下拉框只能选择
@@ -4241,7 +4252,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （§5.13 追加"第四轮修复" + 变更说明第 21 条）
 
 
-2026.10.6 22:24
+## 2026.10.6 22:24
 存在问题（用户要求 2 条）：
    1、"选择'运行选中'后，再取消'运行选中'按钮，他不会默认再选择'运行全部'这一种模式，
       需要再点击一下这个按钮才会再选择这个模式。"
@@ -4312,7 +4323,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    （§5.13 追加"第五轮：换下拉框" + 变更说明第 22 条）
 
 
-2026.10.6 22:35
+## 2026.10.6 22:35
 存在问题（用户提问）："'单步运行'按钮的检测结果不能缓存，即换图后再切回来单步执行的检测结果会消失，
    这个问题是正常的还是bug。"
 
@@ -4355,8 +4366,8 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、改动后的快照：E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261006_2235\
 
 
-2026.10.6 22:43
-总结：批次4 目标3-M2「图像列表上方的工具栏」整体总结
+## 2026.10.6 22:43
+## 总结：批次4 目标3-M2「图像列表上方的工具栏」整体总结
    ★ 里程碑口径（用户 2026.10.6 定）：目标3 分 M1 图片源 / M2 图像列表工具栏 / M3 视频流 / M4 相机源；
      本条只总结 **M2**（2026.10.6 11:22 ~ 22:35，共 6 轮落地与返工），不要说成"目标3 完成"。
 
@@ -4453,7 +4464,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
       发现兜底建过的控件要回头补进 .ui，并在测试里断言"用的就是 .ui 里那个（`is` 判断）"。
 
 
-2026.10.6 23:02
+## 2026.10.6 23:02
 存在问题（用户要求）："按照上述要求，实现视频源节点的功能"——即目标3-M3 视频流的第一版：
    新建"视频源"起点节点（帧不进图库 / 先做"从当前帧到末尾" / 按原帧率 / 参数整段共用 / 各读各的 cap）。
 
@@ -4501,7 +4512,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 2、本轮的改动涉及 SourceOps.py / main.py / main.ui，尚未另存快照（下一轮收尾时一起存）。
 
 
-2026.10.6 23:26
+## 2026.10.6 23:26
 存在问题（用户疑问 + 要求）：
    疑问："视频不能播放，只能一帧一帧地改变吗？""到结尾回到开头后再点击执行按钮画面不会再更新到下一帧。"
    要求：① "点击'自动切换'按钮后再点击执行按钮，视频会转换为自动播放的形式，不是需要点击执行按钮
@@ -4548,7 +4559,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 如何回退：改动前的最近快照 = E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_at_20261006_2235\
 
 
-2026.10.6 23:38
+## 2026.10.6 23:38
 存在问题（用户实测 2 条，其实是同一个根因）：
    1、"画布似乎存在问题，现在是把视频按照一帧一帧地导入到画布中的，但是每次图片导入到画布上时
       图片会出现大小的变化…播放视频的时候特别能看到画面一大一小地播放。"
@@ -4586,7 +4597,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
 
 
 
-2026.10.6 23:46
+## 2026.10.6 23:46
 存在问题（用户实测）："点击'删除'按钮无法清除画布上的视频"
 
 原因分析：
@@ -4622,7 +4633,7 @@ GrayParamsDialog.py（新增）、FlowChart.py、pyside6.txt（本日志）
    补记（复跑）：上面的新用例脚本首次运行时第 2 行的三引号被内容里的引号破坏（SyntaxError，没跑起来），
    修掉后复跑结果：PASS=7；失败项： 无  ⇒ 删除清画布这条修复确认生效。
 
-2026.10.7 00:00
+## 2026.10.7 00:00
 存在问题（用户实测）："选择'自动切换'后，在视频播放过程中，选择其他节点执行单步运行时，只能运行一帧，
    连续执行则可以改变后续的帧。流程 = 视频流→取反→二值化：一开始选中二值化单步运行（进入播放），
    播放中改选'取反'再单步，只有一帧跑了取反，后续帧又变回二值化；不勾'自动切换'则没有这个问题。
@@ -4657,7 +4668,7 @@ un_flow_step(target)。
    真正证明修复的两条是："不再出现'二值化'（说明旧节点没有被钉住）" 与 "这一帧跑的是当时选中的'取反'"
    （连跑两格后表里是 '取反' 而不是 '二值化'）。脚本可改为断言"最后一次执行里没有二值化"。
 
-2026.10.7 00:25
+## 2026.10.7 00:25
 存在问题（用户要求）："先完成 P0 的内容"（P0 = 视频源收尾的四项 + 文档/快照/修断言）；其余想法
    写进技术文档新增的"想法（未开发）"一节。
 
@@ -4687,7 +4698,7 @@ un_flow_step(target)。
 遗留 / 后续待办：M3 其余想法都已进文档《九、想法（未开发）》；下一步按用户意思 = **M4 相机源**，
   之后再做**输出节点**（9.1）与"每 N 帧检测一次"（9.2）。
 
-2026.10.7 00:34
+## 2026.10.7 00:34
 存在问题（用户实测）：IDE 报"未解析的引用 'VIDEO_ROI_KEY' :1006"。
 
 原因分析：上一轮做"视频参数整段共用一份"时，我为了不引入未知常量名，写成了
@@ -4711,7 +4722,7 @@ un_flow_step(target)。
    播放换节点用例按"日志累积"断言）也一并按实际语义重写。
 · 然后进 **M4 相机源**，之后做**输出节点**与**每 N 帧检测**（都已在方案《九、想法（未开发）》）。
 
-2026.10.7 00:44
+## 2026.10.7 00:44
 存在问题（用户实测）："我在视频运行时点击了'删除'按钮，弹出了画布上没有图片的弹窗提示，而且这个弹窗提示我点击
    OK 后还是会再弹出一个新的…我希望运行时点击删除按钮后不再弹出这个弹出，只需要清除画布上的视频即可。"
 
@@ -4744,8 +4755,8 @@ un_flow_continuous()，而"没有可用帧"时会走
    残余 tick 与反复点删除也都不弹窗。修复确认生效。
 
 
-2026.10.7 00:57
-总结：批次4 目标3-M3「视频源（视频流）」整体总结
+## 2026.10.7 00:57
+## 总结：批次4 目标3-M3「视频源（视频流）」整体总结
    ★ 里程碑口径：目标3 分 M1 图片源 / M2 图像列表工具栏 / M3 视频流 / M4 相机源；本条只总结 M3
      （2026.10.6 23:02 ~ 2026.10.7 00:44，共 7 轮落地与返工），不要说成"目标3 完成"。
 
@@ -4836,7 +4847,7 @@ un_flow_continuous()，而"没有可用帧"时会走
       否则会出现"删了还在跑""每格弹一次窗"；
    5、**别为绕开未知常量写 `globals()` 兜底**（我这么写直接换来 IDE"未解析的引用"）——缺什么就正确定义什么。
 
-2026.10.7 00:59
+## 2026.10.7 00:59
 存在问题（用户要求）："先清 3 处测试 + 2 个小尾巴"。
 
 修改：
@@ -4855,7 +4866,7 @@ un_flow_continuous()，而"没有可用帧"时会走
 
 遗留：M3 的"想法（未开发）"都在方案《九》里；下一步 = M4 相机源 → 输出节点 / 每 N 帧检测。
 
-2026.10.7 01:26
+## 2026.10.7 01:26
 存在问题（用户指出）："我怎么没看到技术文档里面有 M3 视频源的详细内容，只更新到了 M2，是不是没有修改
    技术文档" + "在如图所示的批次4 目标下方加一个表格，用来列出目标3 中 M1,M2,M3,M4 的内容"。
 
@@ -4883,7 +4894,7 @@ un_flow_continuous()，而"没有可用帧"时会走
    同名字符串），所以表其实没插进去。现已改成**按行定位**（找到含"为什么要这个顺序"的那一行，把表插在它后面），
    并复核：子里程碑表 4 行（M1~M4）、§5.14 存在、文档已是 v1.20，已同步到 backups。
 
-2026.10.7 02:06
+## 2026.10.7 02:06
 存在问题（用户要求）："现在修改代码，实现上述内容（M4 相机源：方案 A + 停止不关/删除才关），并完成日志和技术方案的更新。"
 
 进度（**本轮只完成了 SourceOps 侧与树项，main.py 的接线还没做**，如实说明）：
@@ -4911,7 +4922,7 @@ un_flow_continuous()，而"没有可用帧"时会走
 但因为取帧器还没注入，执行时只会"原样透传 + 日志写'没有可用的相机画面'"（不会崩、不会误开设备）。
 
 
-2026.10.7 02:15
+## 2026.10.7 02:15
 存在问题（用户要求）："现在修改代码，实现上述内容（M4 相机源）。并完成日志和技术方案的更新。"
 本轮把上一轮列的 main.py 接线清单**全部做完**，另外**实测抓出一个真 bug**并修掉，还补完一条
 "用户要求过、上次只在注释里写了却其实没实现"的功能。
@@ -5016,7 +5027,7 @@ un_flow_continuous()，而"没有可用帧"时会走
    相机 V1 的分辨率只是"存着不生效"；多相机切换、真实帧率上限、掉线重连都留后续。
 
 
-2026.10.7 02:47
+## 2026.10.7 02:47
 存在问题（用户实测报的 2 条）：
 1、"删除日志关于批次4 目标3-M4「相机源」整体总结的内容，总结是要我完成验收时再让你写的内容，
    我没有说时你只需要书写你这次修改的内容。"
@@ -5065,7 +5076,7 @@ un_flow_continuous()，而"没有可用帧"时会走
   同上一轮：相机 V1 的分辨率只是"存着不生效"；多相机切换、真实帧率上限、掉线重连都留后续。
 
 
-总结：批次4 目标3-M4「相机源」整体总结（2026.10.7 02:54，用户要求时写）
+## 总结：批次4 目标3-M4「相机源」整体总结（2026.10.7 02:54，用户要求时写）
    ★ 里程碑口径：目标3 分 M1 图片源 / M2 图像列表工具栏 / M3 视频源 / M4 相机源；**M4 是最后一个子里程碑**
      （2026.10.7 02:06 ~ 02:47，共 3 轮：节点本体 → main.py 全接线 → 用户实测报的 bug 修复）。
      **目标3 四个子里程碑至此全部完成**。
@@ -5175,7 +5186,7 @@ un_flow_continuous()，而"没有可用帧"时会走
       "圆"窗口比通用窗口宽 51px、图库高度写死 85px。
 
 
-2026.10.7 03:31
+## 2026.10.7 03:31
 存在问题（用户要求）："现在添加一个批次4目标3-M5，主要内容是添加一个'输出图像'的节点，同样放到'采集'目录下。
 实现对图片/视频/摄像头采集的视频的内容的保存。节点窗口中可以设置输出的目录，输出文件的名字。该节点可以放到
 流程图中间，也可以放到流程图末尾，对上面的节点检测的内容的输出进行保存。"（上一轮先给了设计方案，用户拍板 5 点后开工）
@@ -5243,7 +5254,7 @@ un_flow_continuous()，而"没有可用帧"时会走
   4、目标4「参数校验」仍未开工（决策 d 待拍板）。
 
 
-2026.10.7 03:55
+## 2026.10.7 03:55
 存在问题（用户实测报了 3 条，针对刚做完的 M5「输出图像」）：
 1、"参考图像源节点，只保留运行参数页面，不需要基础参数界面。"
 2、"输出文件名的默认值修改成输入图片的文件名。"
@@ -5317,7 +5328,7 @@ un_flow_continuous()，而"没有可用帧"时会走
   · M5-2（每 N 帧存一张）/ M5-3（存为视频 + 带检测叠加）仍未做；目标4「参数校验」未开工。
 
 
-2026.10.7 04:35
+## 2026.10.7 04:35
 存在问题（用户实测报）："现在的问题是为什么图片保存时直线检测和圆检测的内容不能保存，修复这个问题，
 按照「保存内容」= 数据层图像 / 带检测叠加 这个想法修改，先把图片的跑通了再实现视频和摄像头的。"
 （另按用户口径调整范围：视频保存暂不做；"每 N 帧检测一次"不做；目标4「参数校验」等目标3 做完再做。）
@@ -5371,7 +5382,7 @@ un_flow_continuous()，而"没有可用帧"时会走
   3、**目标4「参数校验」放到目标3 完成之后**。
 
 
-2026.10.7 04:59
+## 2026.10.7 04:59
 存在问题（用户要求）："按照推荐来修改代码，实现对视频的保存的功能"
 （"推荐" = 讨论里给的 7 条：输出类型三档、默认"自动"；默认 MP4·mp4v 且不做 H.264；帧率"每写一帧算一帧"
 取源 fps；尺寸变化⇒收尾旧文件另开新文件；循环播放不设硬上限；重名策略与图片一致；保留"视频输入 + 图片序列"组合。）
@@ -5430,7 +5441,7 @@ un_flow_continuous()，而"没有可用帧"时会走
   4、相机 V1 的"分辨率只存不生效"仍在；录制文件的 fps 只是**标称值**（按"每写一帧算一帧"）。
 
 
-总结：批次4 目标3-M5「输出图像」整体总结（2026.10.7 05:22，用户要求时写）
+## 总结：批次4 目标3-M5「输出图像」整体总结（2026.10.7 05:22，用户要求时写）
    ★ 里程碑口径：目标3 分 M1 图片源 / M2 图像列表工具栏 / M3 视频源 / M4 相机源 / **M5 输出图像**。
      M5 前后共 5 轮（03:31 首版落地 → 03:55 三条修正 → 04:35 保存内容 → 04:59 视频保存 → 05:22 整理收口），
      **目标3 的五个子里程碑至此全部完成**。
@@ -5511,7 +5522,7 @@ un_flow_continuous()，而"没有可用帧"时会走
    4、相机 V1 的"分辨率只存不生效"仍在；输出的视频帧率只是**标称值**（按"每写一帧算一帧"）。
 
 
-2026.10.7 05:52
+## 2026.10.7 05:52
 用户要求（原话）："我现在想要创建几个markdown文件，1、创建一个面向用户的markdown文件，主要功能是用来说明现在界面中每个按钮，
 控件的功能，包括教会用户怎么创建流程图，怎么运行，单步执行和连续执行按钮的区别，节点窗口中不同节点模块的各参数的作用，
 节点窗口里面运行/连续运行/确定按钮的作用等。还需要包含可能会出现的问题等。2、创建一个用于记录每个文件的作用，及其每个代码
@@ -5562,3 +5573,46 @@ VisionFlowNode_批次4技术方案_v1.28_2026.10.7.md文件保留"
   2、**批次4 目标5「收尾」未做**（方案目标表里的第 5 项：树里未实现模块标注、日志、截图、备份）；
   3、**批次5 重构未做**（拆 MainWindow / 执行线程化 / 缓存上限 / 撤销重做；用户口径：等前面稳定、且有备份与版本控制之后再做）；
   4、文档里已如实写明已知限制（识别类未实现、相机分辨率只存不生效、视频帧率是标称值、无撤销无快捷键、结果缓存无上限等）。
+
+## 2026.10.7 14:45
+
+存在问题（用户要求）：在两个文档开头说明「每次修改代码或文件的规矩」。用户原话：
+"1、在VisionFlowNode 项目技术文档和VisionFlowNode 批次4 技术方案两个文档中需要在开头说明每次修改代码或文件的规矩：
+（1）每次修改代码之前需要在E:\opencv_python_3_8\backups文件夹中备份代码。（2）每次修改技术文档前需要将技术文档备份到这个目录中。
+（3）完成修改后需要在VisionFlowNode 开发日志（以后使用markdown版本的日志，txt版本的保留不变）中说明修改的内容。
+（4）在完成批次1-4之前不需要动"VisionFlowNode 代码说明书"，"VisionFlowNode 项目技术文档"，"VisionFlowNode 用户手册"这三个文件，
+我指明要求修改时才作修改。我说更新技术文档时只需要更新VisionFlowNode 批次4 技术方案这个文档即可。批次5可能还有做一个技术文档，
+于批次4区分，也可能直接使用"VisionFlowNode 项目技术文档"作为批次5修改的技术文档。（5）、在批次4-目标4和目标5的修改时，
+提示优先查看"VisionFlowNode 批次4 技术方案"这个文档，并以这个文档为主，"VisionFlowNode 项目技术文档"这个文档只能作为参考。"
+
+一、修改
+  1、**《批次4 技术方案》升 v1.29**（v1.28 → v1.29）：在**开头**（一级标题之后、元信息表之前）新增
+     **《修改代码 / 文件的规矩》** 小节，把用户这 5 条整理成可执行的 5 条；同轮把头部两行**已经过时**的描述对齐现实 ——
+     "代码基线"补全为 批次2 `668320d` / 批次3 `d64d7b6` / 目标1 `5731440` / 目标2 `8e2d327` / 目标3 的 M1~M5
+     `99953ad` / `c57215b` / `dbd6e36` / `fd13f09` / `36c3435`（**均已提交**）；"当前状态"由"M5 🔶"改成
+     **"目标1、目标2、目标3 全部完成"**（目标4 / 目标5 未开工）；变更说明补**第 33 条**。
+  2、**《项目技术文档》升 v1.1**（v1.0 → v1.1）：同样在开头加那 5 条规矩（第 5 条按本文档的口径写成
+     "**本文档只作为参考**"）；版本行改成 v1.1 并注明"v1.0 → v1.1 只加了开头规矩、正文未改"；把正文里对方案的
+     引用 `VisionFlowNode_批次4技术方案_v1.28_2026.10.7.md` → `v1.29`、"批次4 现为 **v1.28**" → **v1.29**。
+  3、**《开发日志》改用 markdown 版**（用户第 3 条）：本文件（`plan\pyside6_开发日志.md`）即日起**直接追加**；
+     顶部加一句说明"本文件是在用的日志、`pyside6.txt` 只作历史保留、不再改动"；**原 txt→md 生成脚本（dsh_log2md.py）退役**，
+     不要再跑（跑了会把这里的新条目覆盖掉）。
+  4、**按新规矩执行本轮备份**（规矩第 1、2 条）：改之前建 `_backup_VisionFlowNoed_before_doc_rules\`
+     （代码 15 个文件 + `pyside6.txt` + plan 下全部 5 份 md，**两份技术文档的改前版本也在其中**）；
+     改完建 `_backup_VisionFlowNoed_at_20261007_1445\`（含新版两份文档）。
+
+二、验证
+  1、两份文档插入后都做了核对：规矩小节标题存在、版本行已改、**`v1.28` 已无错误残留**（只保留"v1.24→v1.28 的 M5 五轮"
+     这类**历史叙述**）；
+  2、《批次4 技术方案》的 **CRLF 换行保持不变**（改前 `raw.replace`、写回再换回来）；子里程碑表仍是 5 行；
+  3、旧版都按归档约定留档：`backups\VisionFlowNode_批次4技术方案_v1.28_2026.10.7.md`、
+     `backups\VisionFlowNode_项目技术文档_v1.0_2026.10.7.md`；工程 `plan\` 里只剩现行版；
+  4、本轮**没有改任何代码**（所以不用跑门禁）；plan 目录现状 = 批次4 方案 v1.29 / 项目技术文档 v1.1 / 用户手册 v1.0 /
+     代码说明书 v1.0 / pyside6_开发日志.md。
+
+三、遗留
+  1、规矩第 4 条意味着：**批次1~4 全部完成之前，《用户手册》《代码说明书》《项目技术文档》不再随代码更新**
+     （只有用户明确要求时才改）；以后用户说"更新技术文档"**默认只更新《批次4 技术方案》**。
+  2、**批次4 目标4「参数校验」（决策 d 待拍板）与目标5「收尾」仍未开工**；做它们时**以《批次4 技术方案》为准**，
+     《项目技术文档》只作参考。
+  3、本轮 before = `_backup_VisionFlowNoed_before_doc_rules`，after = `_backup_VisionFlowNoed_at_20261007_1445`。
