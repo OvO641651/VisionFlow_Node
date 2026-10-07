@@ -405,3 +405,48 @@
 [2026-10-07T04:13:11.224Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=true
 [2026-10-07T04:13:11.258Z] dream done session=350ebb02 groups=3 stamped=68
 [2026-10-07T06:41:34.714Z] turn-stopping pid=9800 sid=350ebb02 reason=none wasDream=false
+[2026-10-07T06:57:52.411Z] pre-step first pid=46752 sid=4c85d180 priorUser=0 userMsgs=1
+[2026-10-07T06:58:33.198Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T07:06:33.135Z] hit-chain pid=46752 sid=4c85d180 textLen=16 hit=yes
+[2026-10-07T07:09:54.239Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T07:14:56.646Z] hit-chain pid=46752 sid=4c85d180 textLen=44 hit=yes
+[2026-10-07T07:18:48.993Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T10:07:28.821Z] check sid=4c85d180 active=false idle=10121s
+[2026-10-07T10:22:28.826Z] check sid=350ebb02 active=false idle=13255s
+[2026-10-07T10:22:28.857Z] dream start pid=46752 session=350ebb02 rounds=3 T=1791355294010
+[2026-10-07T10:22:58.144Z] turn-stopping pid=46752 sid=350ebb02 reason=none wasDream=true
+[2026-10-07T10:22:58.150Z] dream group 2/3 steered
+[2026-10-07T10:23:27.538Z] turn-stopping pid=46752 sid=350ebb02 reason=none wasDream=true
+[2026-10-07T10:23:27.543Z] dream group 3/3 steered
+[2026-10-07T10:24:39.603Z] turn-stopping pid=46752 sid=350ebb02 reason=none wasDream=true
+[2026-10-07T10:24:39.640Z] dream done session=350ebb02 groups=3 stamped=69
+[2026-10-07T10:37:28.826Z] check sid=4c85d180 active=false idle=11921s
+[2026-10-07T10:37:28.838Z] dream start pid=46752 session=4c85d180 rounds=3 T=1791357528261
+[2026-10-07T10:38:17.328Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=true
+[2026-10-07T10:38:17.333Z] dream group 2/3 steered
+[2026-10-07T10:38:31.404Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=true
+[2026-10-07T10:38:31.409Z] dream group 3/3 steered
+[2026-10-07T10:39:23.898Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=true
+[2026-10-07T10:39:23.902Z] dream done session=4c85d180 groups=3 stamped=7
+[2026-10-07T13:05:59.365Z] hit-chain pid=46752 sid=4c85d180 textLen=45 hit=yes
+[2026-10-07T13:06:11.946Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T13:07:28.816Z] hit-chain pid=46752 sid=4c85d180 textLen=19 hit=yes
+[2026-10-07T13:07:44.035Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T13:10:23.770Z] hit-chain pid=46752 sid=4c85d180 textLen=52 hit=null
+[2026-10-07T13:19:25.434Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T13:47:09.725Z] hit-chain pid=46752 sid=4c85d180 textLen=113 hit=yes
+[2026-10-07T13:51:40.931Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T14:01:10.448Z] hit-chain pid=46752 sid=4c85d180 textLen=75 hit=yes
+[2026-10-07T14:01:31.840Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T14:19:21.137Z] hit-chain pid=46752 sid=4c85d180 textLen=70 hit=yes
+[2026-10-07T14:25:11.219Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T14:28:52.031Z] hit-chain pid=46752 sid=4c85d180 textLen=64 hit=yes
+[2026-10-07T14:33:32.467Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T14:49:55.736Z] hit-chain pid=46752 sid=4c85d180 textLen=264 hit=yes
+[2026-10-07T14:54:28.496Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T15:02:42.731Z] hit-chain pid=46752 sid=4c85d180 textLen=92 hit=null
+[2026-10-07T15:04:54.166Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T15:13:34.086Z] hit-chain pid=46752 sid=4c85d180 textLen=49 hit=null
+[2026-10-07T15:15:25.950Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false
+[2026-10-07T15:23:17.068Z] hit-chain pid=46752 sid=4c85d180 textLen=128 hit=null
+[2026-10-07T15:24:06.196Z] turn-stopping pid=46752 sid=4c85d180 reason=none wasDream=false

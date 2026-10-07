@@ -44,13 +44,17 @@ class CircleParamsDialog(LineParamsDialog):
 
         # Canny高阈值
         self.spin_param1 = QSpinBox()
-        self.spin_param1.setRange(0, 1000)
+        # 下限是 1 不是 0（2026.10.7，批次4 目标4）：cv2.HoughCircles 的 param1/param2
+        # 必须 > 0，填 0 会让它直接抛异常（实测），而异常在 Qt 槽里被吞掉 ⇒
+        # 用户看到的只是"点了执行什么都没发生"。
+        self.spin_param1.setRange(1, 1000)
         self.spin_param1.setValue(100)
         self._replace_widget("spin_hough_threshold", self.spin_param1)
 
         # 累加器阈值
         self.spin_param2 = QSpinBox()
-        self.spin_param2.setRange(0, 1000)
+        # 同上：param2 = 0 也会让 HoughCircles 抛异常（实测），下限改 1
+        self.spin_param2.setRange(1, 1000)
         self.spin_param2.setValue(80)
         self._replace_widget("spin_min_line_length", self.spin_param2)
 
@@ -60,7 +64,24 @@ class CircleParamsDialog(LineParamsDialog):
         self.spin_min_radius.setValue(20)
         self._replace_widget("spin_max_line_gap", self.spin_min_radius)
 
+        # ★ 参数校验（批次4 目标4 轮2）：把圆自己的运行参数登记进"参数名 → 控件"，
+        #   这样窗口层纠正完能把新值写回控件（用户看得见值被改了，不是默默改）
+        self._validate_widgets.update({
+            "dp": self.spin_dp,
+            "min_dist": self.spin_min_dist,
+            "param1": self.spin_param1,
+            "param2": self.spin_param2,
+            "min_radius": self.spin_min_radius,
+        })
+
         # 加载已有的参数
+        # ★ 数值输入改成"软范围"（用户 2026.10.7 要求）：越界值可以先打进去、提交时才夹回上下限。
+        #   放在 _load_params() 之前：老方案文件里带着越界值时，加载那一刻就会夹回来。
+        self._soft_range_all()
+        # ★ 微调框挪到紧挨标签（用户 2026.10.7 要求）：
+        #   圆的控件是**运行时替换**进 .ui 那些行里的，父类 __init__ 里那一次收编扫不到它们，
+        #   所以这里（控件装配完成之后）再补一次。
+        self._tighten_param_rows()
         self._load_params()
 
 

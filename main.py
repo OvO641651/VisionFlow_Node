@@ -27,6 +27,8 @@ from GenericProcessDialog import GenericProcessDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
 from NodeRegistry import KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec, result_bbox
+# 参数校验（批次4 目标4）：规则表写在各算子里，这里只负责"跑一遍 + 拿结果"
+from ParamRules import run_validation
 from OutputOps import (SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO,
                        close_all_recordings, close_recording, set_input_name_provider,
                        set_overlay_frame_provider, set_round_info_provider)
@@ -45,6 +47,22 @@ def _fingerprint_value(value):
     if isinstance(value, (int, float)):
         return ("num", round(float(value), 4))
     return ("str", str(value))
+
+
+def _result_note(results):
+    """
+    从某个算子这一轮的 results 里取"要写进执行日志的那句话"（批次4 目标4「参数校验」用）。
+
+    引擎的老约定：results 里可以放 dict 带日志文案（`result_bbox()` 只认 tuple/list，
+    所以检测结果里混一个 dict 不影响"ROI 继承"）。参数非法被跳过时就是靠它递文案的：
+        results = [{"__note__": "参数非法（累加器阈值必须 ≥ 1），已跳过本节点"}]
+    （dict 也不会被 `_draw_line()` / `_draw_circle()` 画出来 —— 它们只认长度 4 / 3 的元组。）
+    :return: 文案字符串；没有就返回 None
+    """
+    for item in results or []:
+        if isinstance(item, dict) and item.get("__note__"):
+            return str(item["__note__"])
+    return None
 
 
 class MainWindow:
@@ -113,6 +131,11 @@ class MainWindow:
         # 结构：{图片标识: {"frame": 画好检测结果的图, "data": 检测数据, "exec_info": 执行日志}}
         # 切换回某张图片时，如果这里存着它上一次的结果，就直接显示出来，不用再点执行按钮
         self.result_cache = {}
+
+        # ★ 参数校验（批次4 目标4）：这一轮里"哪些节点的参数被自动纠正过什么"。
+        #   键 = id(节点)、值 = 说明列表；每轮 _run_nodes 开头清空，
+        #   执行日志的"结果数据"列末尾会把说明追上去 —— 值被改了必须让用户看见。
+        self._param_corrections = {}
 
         # 执行日志表格的"节流"状态：
         # 视频模式下 update_frame 每 30ms 跑一次，而真刷一次表格要清空行、再为每个
@@ -1486,6 +1509,21 @@ class MainWindow:
             # 日志里如实写"模块未实现"，不再假装"执行成功"。
             return in_img, [], roi_info, spec
 
+        # ★ 参数校验（批次4 目标4）：**真要跑这个算子之前**再查一遍。
+        #   位置放在"ROI 尺寸为 0 已跳过"之后 ⇒ 两个跳过原因不会重复写进同一行日志。
+        #   · 能安全纠正的（Canny 高低互换、核大小取奇数、阈值夹范围…）：就地改 node.params，
+        #     说明存进 _param_corrections，由 _format_result_text 追到执行日志末尾；
+        #   · 纠正不了的（errors 非空）：跳过本节点 —— 图像原样透传 + 用 __note__ 递一句文案，
+        #     **绝不弹窗、绝不把异常抛出去**（异常在 Qt 槽里会被吞掉，用户只会看到"点了没反应"）。
+        fixed, corrections, errors = run_validation(spec, node.params)
+        if fixed != node.params:
+            node.params.update(fixed)
+        if corrections:
+            self._param_corrections[id(node)] = corrections
+        if errors:
+            return in_img, [{"__note__": "参数非法（{0}），已跳过本节点".format("；".join(errors))}], \
+                roi_info, spec
+
         out_img, results = spec.run(self.detector, in_img, (roi_x, roi_y, roi_w, roi_h), node.params)
         if out_img is None:
             # 万一某个算子忘了返回图像，就当它不改图像，保证下游还有图可用
@@ -1501,6 +1539,11 @@ class MainWindow:
 
     def _format_result_text(self, node, results, roi_info, spec):
         """执行日志"结果数据"那一列的文案：由节点注册表提供，新增算子不用改这里"""
+        # ★ 参数非法被跳过时，results 里带着一句 __note__（批次4 目标4）：直接用它当文案，
+        #   不要再去问算子的 format_result —— 那个节点根本没跑起来。
+        note = _result_note(results)
+        if note:
+            return note
         if roi_info[2] <= 0 or roi_info[3] <= 0:
             return "ROI 尺寸为 0，已跳过（图像原样传给下游）"
         if spec is None:
@@ -1518,6 +1561,11 @@ class MainWindow:
                 text += "  ← 继承上游结果框"
             else:
                 text += "  ← 继承未生效（改用本节点 ROI）"
+        # ★ 这一轮这个节点的参数被自动纠正过（批次4 目标4）：追一句短说明。
+        #   不写的话用户会以为"我填的就是生效值"，而这恰恰是目标4 要消灭的"静默"。
+        corrections = getattr(self, "_param_corrections", {}).get(id(node)) or []
+        for line in corrections:
+            text += "  ← 已自动纠正：{0}".format(line)
         return text
 
     def _render_display(self, base_img, executed, draw_roi=True):
@@ -1660,6 +1708,9 @@ class MainWindow:
         executed = []                      # [(节点, 结果, roi_info, spec), ...]，按执行顺序
         all_data = []                      # 所有节点结果汇总（给结果计数用）
         exec_info = []                     # 执行日志
+        # ★ 参数纠正说明是"每一轮的临时状态"：每轮开头清空，
+        #   否则上一个节点（或上一轮）的"已自动纠正…"会串到这一轮的行里。
+        self._param_corrections = {}
 
         # ★ 截断：连续执行只跑到"当前选中的节点"为止（用户 2026.10.7 定的语义）。
         #   为什么要有它：画面本来就只画到选中节点（下面的 shown = executed[:选中节点]），

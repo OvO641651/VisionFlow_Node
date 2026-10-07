@@ -2,15 +2,18 @@ import sys
 import cv2
 import numpy as np
 from PySide2.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout,
-                               QComboBox, QSpinBox, QPushButton, QRadioButton,
-                               QWidget, QSlider, QLabel, QCheckBox,
+                               QComboBox, QSpinBox, QDoubleSpinBox, QPushButton, QRadioButton,
+                               QWidget, QSlider, QLabel, QCheckBox, QSizePolicy, QScrollArea,
+                               QGroupBox, QFrame,
                                QGraphicsView, QGraphicsScene, QGraphicsRectItem,
                                QGraphicsEllipseItem, QMessageBox)
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush
 from PySide2.QtCore import Qt, QRectF
 # 数据流引擎的公共词汇：SOURCE_KEY = 全局图像源，AUTO_SOURCE = 图像源"自动"
-from NodeRegistry import SOURCE_KEY, AUTO_SOURCE
+from NodeRegistry import SOURCE_KEY, AUTO_SOURCE, get_spec
+# 参数校验（批次4 目标4）：规则表写在各算子里，这里只负责"跑一遍 + 把结果显示出来"
+from ParamRules import run_validation
 
 # ===== 用于在弹窗中显示图片并绘制框选的画布 =====
 class ROISelectGraphicsView(QGraphicsView):
@@ -235,6 +238,11 @@ class LineParamsDialog(QDialog):
         layout.addWidget(self.ui)
         layout.setContentsMargins(0, 0, 0, 0) # 去除布局的四周内边距
 
+        # ★ "运行参数"页做成可滚动的（用户 2026.10.7 要求）：
+        #   提示行**不许改变窗口大小** —— 参数下面有富余空间就直接显示（不出滚动条），
+        #   空间不够才出滚动条（例：直线节点）。见 _wrap_run_params_in_scroll()。
+        self._wrap_run_params_in_scroll()
+
         # 通过findChild函数来获取 UI 内部的控件引用，即获取各控件的名字 Name
         # 获取下拉框：图像源（数据流引擎里"这个节点从谁的图像输出开始算"）
         self.input_source = self.ui.findChild(QComboBox, "input_source")
@@ -334,6 +342,17 @@ class LineParamsDialog(QDialog):
         self.spin_min_line_length = self.ui.findChild(QSpinBox, "spin_min_line_length")
         self.spin_max_line_gap = self.ui.findChild(QSpinBox, "spin_max_line_gap")
 
+        # ★ 参数校验（批次4 目标4 轮2）：窗口层要"把纠正后的值写回控件"，
+        #   所以先把"参数名 → 控件"登记起来（子类 CircleParamsDialog / GenericProcessDialog
+        #   会把各自的控件追加进来）。
+        self._validate_widgets = {
+            "canny_low": self.spin_canny_low,
+            "canny_high": self.spin_canny_high,
+            "hough_threshold": self.spin_hough_threshold,
+            "min_line_length": self.spin_min_line_length,
+            "max_line_gap": self.spin_max_line_gap,
+        }
+
 
         # 获取显示结果中的 label 控件
         self.label_result_count = self.ui.findChild(QLabel, "label_7")
@@ -345,11 +364,39 @@ class LineParamsDialog(QDialog):
         # "ROI创建"默认选"继承上游"（用户 2026.10.5 要求：新节点默认继承上游的处理区域，
         # 想自己画框的点一下"绘制"即可，两档都还在）
         self.roi_inherit.setChecked(True)
+        # ★ 数值输入的"软范围"（用户 2026.10.7 要求）：先把所有数值控件改成
+        #   "越界值可以先打进去、提交时才夹回上下限"，再加载参数
+        #   （放在 _load_params() 之前：老方案文件里带着越界值时，加载那一刻就会夹回来）。
+        self._soft_range_all()
         self._load_params() # 设置 XYWH 的默认值
         self._update_shape_layout(self.shape_combo.currentText()) # 强制执行一次 UI 布局对齐
 
         # 强制默认显示“基本参数”选项卡
         self.ui.tabWidget.setCurrentIndex(0)
+
+        # ★ 参数校验提示行（批次4 目标4 轮2）：.ui 里摆在"运行参数"页最上面、默认隐藏；
+        #   找不到就自己补一行（"控件真源只有运行时那一套"）。**默认隐藏**很关键 ——
+        #   QLabel 的 sizeHint 是按整行文字宽度算的，常显的长提示会把窗口顶宽（变更第 15 条那个坑）。
+        self.validate_hint = self.ui.findChild(QLabel, "validate_hint")
+        if self.validate_hint is None:
+            self.validate_hint = self._build_validate_hint()
+        if self.validate_hint is not None:
+            self.validate_hint.setWordWrap(True)
+            # 限宽 + 最小宽度一起用：上限防"顶宽窗口"（变更第 15 条那个坑），
+            # 下限防"被挤成一列字"（GenericProcessDialog 那类窗口里没有控件撑着列宽时，
+            # 光有 wordWrap 的 QLabel 会被压到最窄、变成"一列一个字"）。
+            # 下限取 200 是量出来的：240 会把对话框宽度从 274 顶到 312，200 则**宽度不变**。
+            self.validate_hint.setMinimumWidth(200)
+            self.validate_hint.setMaximumWidth(300)
+            # ★ 竖直方向"只占自己那一行、不分食多余空间"（用户 2026.10.7 实测要求）：
+            #   直线窗口那一列是 5 行参数、没有间隔项，多出来的高度由各行**平分**；
+            #   提示行若用默认策略（可伸展）就会被当成第 6 个"平分者"，
+            #   把原本的布局撑变形（截图里：提示在上、参数被挤到下面、中间空一大块）。
+            #   用 Maximum 策略 + 把它放在那一列的**最后**，参数行就保持原样，提示贴在它们下面。
+            self.validate_hint.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self._show_validate_hint(None, None)          # 初始隐藏
+        # ★ 微调框挪到紧挨标签（用户 2026.10.7 要求）；通用窗口在生成动态行之后会再调一次
+        self._tighten_param_rows()
 
         # 窗口弹出时，主动读取主窗口最后一次检测的数据，用于"显示结果"中的数值的显示
         if self.main_window and hasattr(self.main_window, 'last_detected_data'):
@@ -501,8 +548,76 @@ class LineParamsDialog(QDialog):
             self.spin_max_line_gap.setValue(params.get("max_line_gap", 10))
 
 
+    # ------------------------------------------------------------------
+    # 数值输入的"软范围"（用户 2026.10.7 要求）
+    #
+    # 用户原话的诉求：现在范围是 1~10 时输入 11 直接"打不进去、只留一个 1"；
+    # 想要的是"**可以先打完越界值，回车 / 点别处（和现在确定数字的方式一样）时自动变成上限或下限**"。
+    #
+    # 为什么不能只靠 `setKeyboardTracking(False)`（实测过）：
+    #   QSpinBox 的 validator 对越界文本直接返回 **Invalid**（范围 1~10 时 `validate("11")` 就是 Invalid），
+    #   关不关 keyboardTracking 都一样 ⇒ 第二个字符会被吃掉。
+    # 做法（三步）：
+    #   ① 把控件**自身的范围放宽**（validator 放行，用户想打多少打多少）；
+    #   ② 关掉 `keyboardTracking`（打字过程中不改 value、不发 valueChanged，不会边打边跳）；
+    #   ③ 在 `valueChanged`（只在**提交**时来：回车 / 失焦 / 点箭头 / interpretText）里夹回真范围。
+    # 真范围存在控件自己的动态属性 `_soft_min` / `_soft_max` 上，任何窗口都能复用这一套。
+    # ------------------------------------------------------------------
+    def _apply_soft_range(self, widget):
+        """把一个数值控件改成"软范围"（幂等：同一个控件只装一次）"""
+        if not isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            return widget
+        if widget.property("_soft_ready"):
+            return widget
+        low, high = widget.minimum(), widget.maximum()
+        # ★ 放宽之前先记下它"刚好装得下真范围"的宽度，放宽后**锁回这个宽度 + 12px**：
+        #   范围一放宽，位数就变多（-309 比 31 宽、"220.00" 比 "20.00" 宽），
+        #   控件会把整行、整窗顶宽（实测"滤波"窗口从 321px 涨到 341px，被门禁 `dsh_roi_default_check` 抓到）；
+        #   锁宽度之后框里照样能打完超范围的值（QLineEdit 会自动横向滚动）。
+        #   **+12px** 是用户 2026.10.7 要求的"微调框长一点点"：原来刚好贴着箭头、三位的值看着挤。
+        width = widget.sizeHint().width() + 12
+        span = max(abs(low), abs(high), 1)
+        if isinstance(widget, QDoubleSpinBox):
+            widget.setRange(float(low) - span * 10.0, float(high) + span * 10.0)
+        else:
+            widget.setRange(int(low) - span * 10, int(high) + span * 10)
+        widget.setFixedWidth(width)
+        widget.setProperty("_soft_min", low)
+        widget.setProperty("_soft_max", high)
+        widget.setKeyboardTracking(False)
+        widget.valueChanged.connect(lambda value, box=widget: self._clamp_soft_range(box, value))
+        widget.setProperty("_soft_ready", True)
+        return widget
+
+    def _clamp_soft_range(self, widget, value):
+        """提交时把值夹回真范围（打字过程中不会走到这里 —— keyboardTracking 已关）"""
+        low = widget.property("_soft_min")
+        high = widget.property("_soft_max")
+        if low is None or high is None:
+            return
+        if value < low or value > high:
+            widget.setValue(max(low, min(high, value)))
+
+    def _soft_range_all(self):
+        """把窗口里**所有**数值控件都改成软范围（.ui 里的 + 运行时动态生成的，都会被子类再调一次）"""
+        for cls in (QSpinBox, QDoubleSpinBox):
+            for widget in self.ui.findChildren(cls):
+                self._apply_soft_range(widget)
+
+    def _commit_number_edits(self):
+        """
+        把"已经打了字、但还没回车 / 还没失焦"的输入提交掉（顺带夹回上下限）。
+
+        为什么要在读参数之前做：`value()` 读的是**已提交**的值。用户把 500 打进框里、
+        没按回车就点"执行"，不先提交的话读到的还是旧值 —— 用户会以为白填了。
+        """
+        for cls in (QSpinBox, QDoubleSpinBox):
+            for widget in self.ui.findChildren(cls):
+                widget.interpretText()
+
     def _update_params(self):
         """从 UI 控件保存参数到 node.params"""
+        self._commit_number_edits()   # ★ 先把"打了字还没回车"的输入提交掉（并夹回上下限）
         if self.node:
             # 将 XYWH 进度条的数值写到 params 里面
             self.node.params["roi_x"] = self.spin_roi_x.value()
@@ -539,9 +654,205 @@ class LineParamsDialog(QDialog):
                 self.node.params["hide_roi"] = self.cb_hide_roi.isChecked()
 
 
+    # ------------------------------------------------------------------
+    # 参数校验（批次4 目标4 轮2）——窗口层这一遍
+    #
+    # 与引擎层（main.py::_execute_node）跑的是**同一张规则表**（ParamRules.run_validation），
+    # 只是出口不同：这里把纠正了什么显示成一行提示、并把纠正后的值写回控件；
+    # 纠正不了的**不拦用户**（照样让他执行，由引擎层跳过那个节点、把原因写进执行日志），
+    # 这样窗口层与引擎层的语义完全一致，也不违反"执行路径绝不弹 QMessageBox"的铁律。
+    # ------------------------------------------------------------------
+    def _build_validate_hint(self):
+        """`.ui` 里找不到 validate_hint 时，自己往"运行参数"页**参数行的下面**补一行"""
+        hint = QLabel()
+        hint.setWordWrap(True)
+        hint.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        layout = getattr(self, "param_layout", None)
+        if layout is None:
+            layout = self.ui.findChild(QVBoxLayout, "verticalLayout_8")
+        if layout is None:
+            return hint                       # 布局都找不到：返回孤儿 label，显示不了也不许崩
+        # 放到最后：通用窗口那一列末尾有个"弹簧"（addStretch），要插在它**之前**，
+        # 这样提示贴在参数行下面，而不是被弹到分组框最底下。
+        last = layout.itemAt(layout.count() - 1) if layout.count() else None
+        if last is not None and last.spacerItem() is not None:
+            layout.insertWidget(layout.count() - 1, hint)
+        else:
+            layout.addWidget(hint)
+        return hint
+
+    def _validate_widget_for(self, key):
+        """这个参数在窗口里对应哪个控件（子类把新控件登记进 _validate_widgets 即可）"""
+        return (getattr(self, "_validate_widgets", None) or {}).get(key)
+
+    def _apply_fixed_to_widgets(self, fixed):
+        """
+        把被自动纠正的值写回控件。
+
+        为什么必须写回：不写回的话用户会以为"我填的还是原值"，而引擎那边已经按纠正后的值跑了
+        —— 这正是目标4 要消灭的那种"静默"。
+        """
+        for key, value in (fixed or {}).items():
+            widget = self._validate_widget_for(key)
+            if widget is None:
+                continue
+            try:
+                if hasattr(widget, "setValue"):           # QSpinBox / QDoubleSpinBox
+                    widget.setValue(value)
+                elif hasattr(widget, "edit"):             # file / dir 那种复合控件
+                    widget.edit.setText(str(value))
+                elif hasattr(widget, "setCurrentText"):   # QComboBox
+                    widget.setCurrentText(str(value))
+                elif hasattr(widget, "setChecked"):       # QCheckBox
+                    widget.setChecked(bool(value))
+                elif hasattr(widget, "setText"):          # QLineEdit
+                    widget.setText(str(value))
+            except (TypeError, ValueError):
+                continue
+
+    # ------------------------------------------------------------------
+    # "运行参数"页的布局护栏（用户 2026.10.7 要求）
+    #
+    # 两条要求：
+    #   ① **提示行不许改变窗口大小**：参数下面有富余空间就直接显示（不出滚动条）；
+    #      空间不够才出滚动条（用户举的例子：直线节点）——而"微调框右移、右边留富余"之后，
+    #      滚动条也不会盖住微调框（滚动条占的是 QScrollArea 右侧的**保留位**，不是浮在控件上）；
+    #   ② **微调框要紧挨着前面的文本**（原来标签在左、微调框被 stretch 推到最右，中间一大段空白）。
+    # ------------------------------------------------------------------
+    def _wrap_run_params_in_scroll(self):
+        """
+        把"运行参数"的分组框放进一个 `QScrollArea`（窗口大小从此不受提示行影响）。
+
+        为什么用滚动区：`QScrollArea + setWidgetResizable(True)` 天然就是用户要的语义 ——
+        内容按自己的需要长高；装得下就没有滚动条，装不下自动出现竖直滚动条，**窗口本身不变**。
+        """
+        group = self.ui.findChild(QGroupBox, "groupBox_3")
+        if group is None or group.parentWidget() is None:
+            return
+        parent_layout = group.parentWidget().layout()
+        if parent_layout is None:
+            return
+        scroll = QScrollArea()
+        scroll.setObjectName("run_params_scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        # 横向**永不出现**滚动条：用户要的是"竖直那一条"，而且横向滚动区会跟竖直滚动条打架 ——
+        # 竖直条一出现（宽 14px），视口变窄，内容就被判成"宽了 14px"，于是又冒出一条横向条（实测）。
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # 宽度上"忽略滚动区自己的 sizeHint"：QScrollArea 的 sizeHint 会把滚动条的宽度也算进去，
+        # 直接挂上去会把参数窗口从 274px 顶到 312px（实测）—— 用 Ignored 让宽度仍由原有内容决定。
+        scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        parent_layout.removeWidget(group)
+        scroll.setWidget(group)          # setWidget 会把分组框重新挂到滚动区里
+        parent_layout.addWidget(scroll)
+        self.run_params_scroll = scroll
+
+    def _tighten_param_rows(self):
+        """
+        把"运行参数"页里每行的**微调框挪到紧挨标签**的位置（用户 2026.10.7 要求）。
+
+        做法：① 每行末尾补一个弹簧，把控件推到左边；② 所有行的标签统一成"最宽标签"的宽度，
+        这样各行的控件左边缘对齐（否则"方法：""核大小："长度不同，控件会参差不齐）。
+        只处理"标签 + 数值微调框"这种两栏行：
+          · 下拉框 / 文件 / 目录 / 文本输入框不动 —— 那些本来就是需要宽度的控件（路径框要能看全路径）；
+          · 被 `_hide_line_rows()` 显式藏起来的行也不动（`isHidden()` 判据，与父窗口是否已 show 无关）。
+        """
+        layout = getattr(self, "param_layout", None)
+        if layout is None:
+            layout = self.ui.findChild(QVBoxLayout, "verticalLayout_8")
+        if layout is None:
+            return
+        rows = []
+        max_label = 0
+        for index in range(layout.count()):
+            item = layout.itemAt(index)
+            row = item.layout() if item is not None else None
+            if row is None or row.count() < 2:
+                continue
+            label = row.itemAt(0).widget()
+            widget = row.itemAt(1).widget()
+            if not isinstance(label, QLabel) or not isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                continue
+            if label.isHidden() or widget.isHidden():
+                continue
+            rows.append((row, label))
+            max_label = max(max_label, label.sizeHint().width())
+        for row, label in rows:
+            label.setFixedWidth(max_label)
+            row.setStretch(0, 0)
+            row.setStretch(1, 0)
+            row.addStretch(1)            # 富余宽度全留给右边（滚动条的保留位也在这里）
+        # ★ 收口成"…参数行… → 提示行 → **唯一一根**弹簧"。
+        #   为什么必须收口：父类这一次收编已经在末尾加过弹簧；而 GenericProcessDialog 是**动态追加**行、
+        #   还会把提示行挪到末尾（`_hint_to_bottom()`）⇒ 那根弹簧会被留在中间，
+        #   于是**两根弹簧分食富余空间**，提示行一出现参数行整体位移（实测 33px）。
+        #   做法：先把已有的弹簧全部摘掉，再按"提示行 + 一根弹簧"的顺序放回去。
+        hint = getattr(self, "validate_hint", None)
+        for index in reversed(range(layout.count())):
+            item = layout.itemAt(index)
+            if item is not None and item.spacerItem() is not None:
+                layout.takeAt(index)
+        if hint is not None:
+            layout.removeWidget(hint)
+            layout.addWidget(hint)
+        # 弹簧放在**提示行之后**：参数行固定在自己的高度上，富余高度留在最下面；
+        # 提示出现时吃掉的是弹簧的空间，参数行动都不动；富余不够时由滚动区出竖直滚动条。
+        layout.addStretch(1)
+
+    def _grow_for_hint(self, label):
+        """
+        【2026.10.7 22:4x 起不再使用】把窗口长高来给提示行腾位置。
+
+        用户随后要求"提示**不许改变窗口大小**"（有富余空间就直接显示、没空间就出滚动条），
+        改成 `_wrap_run_params_in_scroll()` 的方案，本方法保留只作历史参考，不要再调用。
+        """
+        return 0
+
+    def _show_validate_hint(self, corrections, errors):
+        """
+        显示 / 隐藏参数校验提示行：纠正了 = 黄字，纠正不了（会被引擎跳过）= 红字。
+        **不弹任何对话框**（项目铁律：执行 / 渲染路径绝不弹 QMessageBox，提醒只写日志 / 提示）。
+        """
+        label = getattr(self, "validate_hint", None)
+        if label is None:
+            return
+        parts = []
+        if corrections:
+            parts.append("已自动纠正：" + "；".join(corrections))
+        if errors:
+            # 文案尽量短（"结果数据"/提示行的宽度都紧张），详细说明在 tooltip 里
+            parts.append("参数非法，执行时会被跳过（图像原样传给下游）：" + "；".join(errors))
+        if not parts:
+            label.clear()
+            label.setVisible(False)
+            # 注：**不还原窗口大小、也不长高窗口** —— 提示行装在滚动区里（见 _wrap_run_params_in_scroll），
+            # 有富余空间它就占富余的地方，空间不够就出滚动条，窗口本身始终不变（用户 2026.10.7 要求）。
+            return
+        label.setText("　".join(parts))
+        label.setStyleSheet("color: #b00020;" if errors else "color: #8a6d00;")
+        # 注意：GenericProcessDialog 生成"运行参数"页时会把这一列里**已有的行**全藏起来
+        # （`_hide_line_rows()`），所以显示时要显式 setVisible(True) 把它捞回来。
+        label.setVisible(True)
+
+    def _validate_params(self):
+        """
+        跑一遍这个算子的参数校验（批次4 目标4）——**窗口层**这一遍。
+        :return: errors 列表（纠正不了的参数；窗口层不据此拦人，只提示）
+        """
+        if self.node is None:
+            return []
+        fixed, corrections, errors = run_validation(get_spec(self.node.name), self.node.params)
+        if fixed:
+            self.node.params.update(fixed)
+            self._apply_fixed_to_widgets(fixed)
+        self._show_validate_hint(corrections, errors)
+        return errors
+
     def on_step_click(self):
         """点击'执行'按钮时触发：实现单步执行（只执行当前节点）"""
         self._update_params()  # 先保存当前UI中的参数
+        self._validate_params()  # ★ 再跑一遍参数校验（批次4 目标4）：纠正 + 把结果显示出来
 
         # 拦截无效的 ROI 区域，即ROI区域全为0时弹出小窗口警告，避免代码出错
         if self.spin_roi_w.value() == 0 or self.spin_roi_h.value() == 0:
@@ -583,6 +894,7 @@ class LineParamsDialog(QDialog):
     def on_cont_click(self):
         """点击'连续执行'按钮时触发：按完整的流程图顺序执行"""
         self._update_params()  # 先保存当前UI中的参数
+        self._validate_params()  # ★ 再跑一遍参数校验（批次4 目标4）：纠正 + 把结果显示出来
 
         # 拦截无效的 ROI 区域，即ROI区域全为0时弹出小窗口警告，避免代码出错
         if self.spin_roi_w.value() == 0 or self.spin_roi_h.value() == 0:

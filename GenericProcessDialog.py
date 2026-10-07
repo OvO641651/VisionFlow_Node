@@ -56,6 +56,10 @@ class GenericProcessDialog(LineParamsDialog):
         self.setWindowTitle(title)
 
         self._build_param_rows()      # 生成"运行参数"页（内部会先藏掉直线专用那几行）
+        # ★ 参数校验（批次4 目标4 轮2）：把动态生成的控件也登记进"参数名 → 控件"，
+        #   窗口层纠正完才能把新值写回控件（否则用户看到的还是自己填的那个非法值）
+        self._validate_widgets.update(self.param_controls)
+        self._tighten_param_rows()    # 微调框挪到紧挨标签（用户 2026.10.7 要求）
         self._remove_result_tab()     # 处理类没有结构化结果 → 去掉"显示结果"页
         if getattr(self.spec, "kind", None) == KIND_SOURCE:
             # 图像源这类"流程起点"没有上游：基本参数页里那些"图像源绑定 / ROI 继承"对它没意义，
@@ -107,6 +111,20 @@ class GenericProcessDialog(LineParamsDialog):
         for index in range(layout.count()):
             self._hide_item(layout.itemAt(index))
 
+    def _hint_to_bottom(self, layout):
+        """
+        把参数校验提示行挪到**参数行的下面**（2026.10.7 用户要求：提示不许挤在上面把布局弄乱）。
+
+        `.ui` 里它本来就摆在那一列的末尾，但本类是**动态 addLayout 追加**行的 ⇒ 新行会插到它前面，
+        于是提示跑到上面去了（实测：提示 y=87、参数行被顶到 132 以下）。这里把它挪回末尾。
+        调用时机：必须在 `layout.addStretch(1)` **之前**，否则提示会被弹簧顶到分组框最底下。
+        """
+        hint = getattr(self, "validate_hint", None)
+        if hint is None:
+            return
+        layout.removeWidget(hint)
+        layout.addWidget(hint)
+
     def _build_param_rows(self):
         """按 param_specs 生成"运行参数"页的行"""
         layout = self._param_group_layout()
@@ -125,6 +143,7 @@ class GenericProcessDialog(LineParamsDialog):
             hint.setWordWrap(True)
             hint.setToolTip("该模块没有可调参数，只按“基本参数”页里的 ROI / 继承设置处理")
             layout.addWidget(hint)
+            self._hint_to_bottom(layout)
             layout.addStretch(1)
             return
 
@@ -137,6 +156,7 @@ class GenericProcessDialog(LineParamsDialog):
             row.addWidget(QLabel("{0}:".format(label)))
             row.addWidget(widget, 1)
             layout.addLayout(row)
+        self._hint_to_bottom(layout)
         layout.addStretch(1)
 
     def _apply_dynamic_defaults(self):
@@ -249,6 +269,8 @@ class GenericProcessDialog(LineParamsDialog):
             return None
 
         widget.setObjectName("param_{0}".format(key))
+        # ★ 数值输入改成"软范围"（用户 2026.10.7 要求）：越界值可以先打进去，提交时才夹回上下限
+        self._apply_soft_range(widget)
         return widget
 
     @staticmethod
@@ -346,6 +368,8 @@ class GenericProcessDialog(LineParamsDialog):
         """点"确定"：起点节点只保存参数并关窗；其它算子沿用父类行为（先执行一次单步再关）"""
         if getattr(self.spec, "kind", None) == KIND_SOURCE:
             self._update_params()
+            # ★ 与其它窗口保持一致（批次4 目标4 轮2）：起点节点目前没有校验规则，属"有备无患"
+            self._validate_params()
             # 用户 2026.10.5 要求：在图片源窗口点"确定"时，就把这张图加进图像列表里
             if self.main_window is not None and hasattr(self.main_window, "_ensure_source_images_in_gallery"):
                 self.main_window._ensure_source_images_in_gallery()

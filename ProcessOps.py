@@ -23,6 +23,9 @@
 
 import cv2
 
+# 参数校验的公共零件（夹取 / 取奇数 / 读数字）；规则表写在文件末尾各自的算子里
+from ParamRules import clamp_float, clamp_int, force_odd, read_float, read_int
+
 
 def _to_bgr(img):
     """保证是 3 通道 BGR（处理类算子的输出必须是 3 通道）"""
@@ -238,6 +241,68 @@ def _run_edge(detector, img, roi, params):
 
 
 # ----------------------------------------------------------------------
+# 处理类的参数校验规则（批次4 目标4）
+#
+# 这些参数的界面控件本身已经限了范围（QSpinBox 的 setRange + 奇数步进），
+# 所以这一层的真正作用是**挡住"方案文件 / 老方案里手改出来的值"**：
+# 实测 cv2 4.13 下，高斯核 / 结构元 / Sobel 核只要是偶数或 0 就直接抛异常，
+# 而 `ProcessOps._odd()` 只是**算法侧的兜底**（默默改掉、用户看不见）；
+# 这里补齐"参数侧"：把值改对 + 说明改了什么（窗口层会显示、引擎层写进执行日志）。
+# ----------------------------------------------------------------------
+def validate_blur(params):
+    """滤波：核大小取 [1,31] 内的奇数、高斯标准差夹进 [0,20]"""
+    fixed, notes = dict(params), []
+    fixed["blur_ksize"] = force_odd(
+        read_int(fixed, "blur_ksize", 3, "核大小", notes), 1, 31, "核大小", notes)
+    fixed["blur_sigma"] = clamp_float(
+        read_float(fixed, "blur_sigma", 0.0, "高斯标准差", notes), 0.0, 20.0, "高斯标准差", notes)
+    return fixed, notes, []
+
+
+def validate_threshold(params):
+    """二值化：阈值 / 最大值夹进 [0,255]（越界时 OpenCV 不报错、只是静默饱和，用户看不出来）"""
+    fixed, notes = dict(params), []
+    fixed["thresh_value"] = clamp_int(
+        read_int(fixed, "thresh_value", 127, "阈值", notes), 0, 255, "阈值", notes)
+    fixed["thresh_maxval"] = clamp_int(
+        read_int(fixed, "thresh_maxval", 255, "最大值", notes), 0, 255, "最大值", notes)
+    return fixed, notes, []
+
+
+def validate_morphology(params):
+    """形态学：核大小取 [1,31] 内的奇数、迭代次数夹进 [1,10]"""
+    fixed, notes = dict(params), []
+    fixed["morph_ksize"] = force_odd(
+        read_int(fixed, "morph_ksize", 3, "核大小", notes), 1, 31, "核大小", notes)
+    fixed["morph_iterations"] = clamp_int(
+        read_int(fixed, "morph_iterations", 1, "迭代次数", notes), 1, 10, "迭代次数", notes)
+    return fixed, notes, []
+
+
+def validate_edge(params):
+    """边缘提取：核大小取 [1,31] 内的奇数；Canny 的低/高阈值夹 0~500 并在填反时互换
+
+    低/高阈值这两条 2026.10.7 晚追加（用户实测报"填 500/150 也能跑、效果和 150/500 一样、
+    却看不到任何提示"）。为什么它值得管：`cv2.Canny` 内部**自己会交换** low/high（实测），
+    所以结果不受影响 —— 但"参数框里写着 500/150、实际按 150/500 跑"这件事用户看不到，
+    正是本项目要消灭的那种"静默"。互换之后"参数值 = 实际生效值"，并且会出黄字提示。
+    注意：只有"方法 = Canny"才用这两个值（Sobel / Laplacian 只看核大小），
+    "选 Sobel 时把这两个框置灰"属于范围外（见《批次4 技术方案》§6.5）。
+    """
+    fixed, notes = dict(params), []
+    fixed["edge_ksize"] = force_odd(
+        read_int(fixed, "edge_ksize", 3, "核大小", notes), 1, 31, "核大小", notes)
+
+    low = clamp_int(read_int(fixed, "edge_low", 50, "低阈值", notes), 0, 500, "低阈值", notes)
+    high = clamp_int(read_int(fixed, "edge_high", 150, "高阈值", notes), 0, 500, "高阈值", notes)
+    if low > high:
+        notes.append("Canny 低/高阈值已互换（{0}/{1} → {2}/{3}）".format(low, high, high, low))
+        low, high = high, low
+    fixed["edge_low"], fixed["edge_high"] = low, high
+    return fixed, notes, []
+
+
+# ----------------------------------------------------------------------
 # 算子声明表：注册表（NodeRegistry）会把每一条组装成 NodeSpec。
 #   name             算子名（和左侧树、方框文字一致）
 #   run              引擎调用的函数
@@ -266,6 +331,7 @@ PROCESS_SPECS = (
         "name": "滤波",
         "run": _run_blur,
         "format_result": format_process,
+        "validate": validate_blur,
         "param_specs": [
             ("blur_type", "滤波方式", "combo",
              {"options": ["均值", "高斯", "中值"], "default": "高斯"}),
@@ -279,6 +345,7 @@ PROCESS_SPECS = (
         "name": "二值化",
         "run": _run_threshold,
         "format_result": format_process,
+        "validate": validate_threshold,
         "param_specs": [
             ("thresh_mode", "阈值方式", "combo",
              {"options": ["固定阈值", "Otsu", "自适应"], "default": "固定阈值"}),
@@ -292,6 +359,7 @@ PROCESS_SPECS = (
         "name": "形态学",
         "run": _run_morphology,
         "format_result": format_process,
+        "validate": validate_morphology,
         "param_specs": [
             ("morph_op", "运算", "combo",
              {"options": ["腐蚀", "膨胀", "开运算", "闭运算", "梯度", "顶帽", "黑帽"],
@@ -307,6 +375,7 @@ PROCESS_SPECS = (
         "name": "边缘提取",
         "run": _run_edge,
         "format_result": format_process,
+        "validate": validate_edge,
         "param_specs": [
             ("edge_method", "方法", "combo",
              {"options": ["Canny", "Sobel", "Laplacian"], "default": "Canny"}),

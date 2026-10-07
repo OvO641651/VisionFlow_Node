@@ -33,6 +33,11 @@
 
 import cv2
 
+# 参数校验的公共零件（夹取 / 取奇数 / 读数字）：规则表本身写在下面各自的算子里，
+# 零件抽出去是因为窗口层（LineParamsDialog）与引擎层（main.py::_execute_node）
+# 都要用，而且 ProcessOps.py 不能反向 import 本文件（会循环导入）。
+from ParamRules import clamp_float, clamp_int, read_float, read_int
+
 # 全局图像源的标识：流程图的起点（就是用户导入的那一帧原图）
 SOURCE_KEY = "__global_source__"
 # "图像源"参数 = 自动（沿连线继承上游的图像输出）
@@ -49,7 +54,7 @@ class NodeSpec(object):
     """一个算子的能力声明"""
 
     def __init__(self, name, kind, run, draw=None, format_result=None, whole_image_param=None,
-                 param_specs=None):
+                 param_specs=None, validate=None):
         """
         :param name: 算子名字（和左侧树、流程图上方框里的文字一致）
         :param kind: KIND_PROCESS 或 KIND_DETECT
@@ -60,6 +65,11 @@ class NodeSpec(object):
         :param whole_image_param: 参数名。该参数为真时这个算子忽略 ROI、作用于整幅图，
                                   引擎会把它的 ROI 当成整图（做到"所见即所算"）。
                                   目前只有灰度用它（gray_full_image）。
+        :param validate: 参数校验规则（批次4 目标4）：
+                                 validate(params) -> (fixed_params, corrections, errors)
+                                 与 param_specs 一起声明在这个算子里；None = 还没有规则（直接放行）。
+                                 同一张规则表会被跑**两遍**：参数窗口一次（纠正 + 提示）、
+                                 引擎 _execute_node 一次（纠正 + 挡住非法值），零件见 ParamRules.py。
         :param param_specs: 参数声明表（决定"参数窗口"长什么样），每一项是
                             (参数名, 界面中文名, 控件类型, 附加选项)；
                             int / float / combo / bool / file 五种控件类型。
@@ -74,6 +84,7 @@ class NodeSpec(object):
         self.format_result = format_result
         self.whole_image_param = whole_image_param
         self.param_specs = param_specs
+        self.validate = validate
 
     @property
     def modifies_image(self):
@@ -181,11 +192,88 @@ def _format_circle(results):
 
 
 # ----------------------------------------------------------------------
+# 检测类的参数校验规则（批次4 目标4）
+#
+# 为什么直线的规则写在这里而不是 ProcessOps.py：
+#     直线 / 圆的算子声明本来就登记在本文件（它们的算法在 Detector.py），
+#     规则与"参数表"放一起，改动一个算子只动一处（与处理类放 ProcessOps 同一个道理）。
+#
+# 实测依据（cv2 4.13 / 2026.10.7）：
+#     · Canny 低 > 高**不会崩**（OpenCV 内部自己交换）⇒ 我们互换只为让"参数值"与"实际生效值"一致；
+#     · HoughLinesP 的 threshold=0 / minLineLength=0 **不崩**，但结果会暴增（实测 45 条 vs 正常）
+#       ⇒ 纠正为 1 并写进说明；
+#     · HoughCircles 的 param1 / param2 = 0 **会抛异常**，而圆窗口原先 setRange(0, 1000)
+#       ⇒ 下限就是 0、**界面就能调到**（这是本次唯一"界面可达且会崩"的参数）；窗口下限已改成 1，
+#       引擎侧这一层仍然保留——挡的是"方案文件里手改出来的 0"；
+#     · dp=0 / minDist<=0 也抛异常，界面上够不到（0.1~10 / 10~10000），同样由引擎侧兜。
+# ----------------------------------------------------------------------
+def validate_line(params):
+    """直线：Canny 高低阈值（夹范围 + 互换）、累加器阈值、最小线段长度、最大线段间隙"""
+    fixed, notes = dict(params), []
+
+    low = clamp_int(read_int(fixed, "canny_low", 50, "Canny 低阈值", notes),
+                    0, 500, "Canny 低阈值", notes)
+    high = clamp_int(read_int(fixed, "canny_high", 150, "Canny 高阈值", notes),
+                     0, 500, "Canny 高阈值", notes)
+    if low > high:
+        notes.append("Canny 低/高阈值已互换（{0}/{1} → {2}/{3}）".format(low, high, high, low))
+        low, high = high, low
+    fixed["canny_low"], fixed["canny_high"] = low, high
+
+    threshold = read_int(fixed, "hough_threshold", 100, "累加器阈值", notes)
+    if threshold < 1:
+        notes.append("累加器阈值已纠正为 1（原 {0}：阈值越小检出的线段越多、噪声也多）".format(threshold))
+        threshold = 1
+    fixed["hough_threshold"] = threshold
+
+    min_len = read_int(fixed, "min_line_length", 100, "最小线段长度", notes)
+    if min_len < 1:
+        notes.append("最小线段长度已纠正为 1（原 {0}）".format(min_len))
+        min_len = 1
+    fixed["min_line_length"] = min_len
+
+    gap = read_int(fixed, "max_line_gap", 10, "最大线段间隙", notes)
+    if gap < 0:
+        notes.append("最大线段间隙已纠正为 0（原 {0}）".format(gap))
+        gap = 0
+    fixed["max_line_gap"] = gap
+
+    return fixed, notes, []
+
+
+def validate_circle(params):
+    """圆：param1 / param2（必须 ≥ 1）、dp、min_dist（界面上够不到，挡方案文件）"""
+    fixed, notes = dict(params), []
+
+    for key, label, default in (("param1", "Canny 高阈值（param1）", 100),
+                                ("param2", "圆心累加器阈值（param2）", 80)):
+        value = read_int(fixed, key, default, label, notes)
+        if value < 1:
+            notes.append("{0}已纠正为 1（原 {1}：OpenCV 要求大于 0，原先会直接报错）".format(label, value))
+            value = 1
+        fixed[key] = value
+
+    dp = clamp_float(read_float(fixed, "dp", 1.0, "累加器分辨率 dp", notes),
+                     0.1, 10.0, "累加器分辨率 dp", notes)
+    fixed["dp"] = dp
+
+    min_dist = read_int(fixed, "min_dist", 150, "圆心最小距离", notes)
+    if min_dist < 1:
+        notes.append("圆心最小距离已纠正为 1（原 {0}）".format(min_dist))
+        min_dist = 1
+    fixed["min_dist"] = min_dist
+
+    return fixed, notes, []
+
+
+# ----------------------------------------------------------------------
 # 注册表
 # ----------------------------------------------------------------------
 NODE_SPECS = {
-    "直线": NodeSpec("直线", KIND_DETECT, _run_line, _draw_line, _format_line),
-    "圆": NodeSpec("圆", KIND_DETECT, _run_circle, _draw_circle, _format_circle),
+    "直线": NodeSpec("直线", KIND_DETECT, _run_line, _draw_line, _format_line,
+                     validate=validate_line),
+    "圆": NodeSpec("圆", KIND_DETECT, _run_circle, _draw_circle, _format_circle,
+                   validate=validate_circle),
 }
 
 
@@ -204,6 +292,7 @@ def _register_category(entries, kind):
             format_result=entry.get("format_result"),
             whole_image_param=entry.get("whole_image_param"),
             param_specs=entry.get("param_specs"),
+            validate=entry.get("validate"),      # 参数校验规则（批次4 目标4），没有就 None
         )
 
 
