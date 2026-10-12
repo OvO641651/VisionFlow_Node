@@ -9,6 +9,8 @@ import cv2
 import os
 import sys
 
+from ImageIO import read_image      # 图片读取统一入口（支持中文路径，2026.10.12）
+
 # 图像预览进度条 QListWidget 控件
 
 class ImageGalleryWidget(QWidget):
@@ -462,7 +464,7 @@ if __name__ == '__main__':
         for f in files:
             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
                 path = os.path.join(image_folder, f)
-                img = cv2.imread(path)
+                img = read_image(path)
                 if img is not None:
                     gallery_widget.add_image(img)
                     loaded_count += 1

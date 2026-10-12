@@ -756,7 +756,10 @@ class LineParamsDialog(QDialog):
         这样各行的控件左边缘对齐（否则"方法：""核大小："长度不同，控件会参差不齐）。
         只处理"标签 + 数值微调框"这种两栏行：
           · 下拉框 / 文件 / 目录 / 文本输入框不动 —— 那些本来就是需要宽度的控件（路径框要能看全路径）；
-          · 被 `_hide_line_rows()` 显式藏起来的行也不动（`isHidden()` 判据，与父窗口是否已 show 无关）。
+          · 被 `_hide_line_rows()` 显式藏起来的行也不动（`isHidden()` 判据，与父窗口是否已 show 无关）；
+          · ★ "进度条 + 微调框"行（`slider_int`，目标5-M2）**参与标签对齐**，但**不补弹簧** ——
+            进度条本来就要撑满右边；而且它在运行时会被"行联动"显隐，所以**不能**按 `isHidden()` 跳过
+            （否则切到 RGB 时那一套阈值的滑块会跟别行对不齐）。
         """
         layout = getattr(self, "param_layout", None)
         if layout is None:
@@ -772,15 +775,22 @@ class LineParamsDialog(QDialog):
                 continue
             label = row.itemAt(0).widget()
             widget = row.itemAt(1).widget()
-            if not isinstance(label, QLabel) or not isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            if not isinstance(label, QLabel):
                 continue
-            if label.isHidden() or widget.isHidden():
+            slider_row = bool(widget is not None and widget.property("_slider_row"))
+            if not isinstance(widget, (QSpinBox, QDoubleSpinBox)) and not slider_row:
                 continue
-            rows.append((row, label))
+            if not slider_row and (label.isHidden() or widget.isHidden()):
+                continue
+            rows.append((row, label, slider_row))
             max_label = max(max_label, label.sizeHint().width())
-        for row, label in rows:
+        for row, label, slider_row in rows:
             label.setFixedWidth(max_label)
             row.setStretch(0, 0)
+            if slider_row:
+                # 进度条行：控件（进度条 + 微调框）撑满右边，不补弹簧
+                row.setStretch(1, 1)
+                continue
             row.setStretch(1, 0)
             row.addStretch(1)            # 富余宽度全留给右边（滚动条的保留位也在这里）
         # ★ 收口成"…参数行… → 提示行 → **唯一一根**弹簧"。
@@ -799,6 +809,23 @@ class LineParamsDialog(QDialog):
         # 弹簧放在**提示行之后**：参数行固定在自己的高度上，富余高度留在最下面；
         # 提示出现时吃掉的是弹簧的空间，参数行动都不动；富余不够时由滚动区出竖直滚动条。
         layout.addStretch(1)
+        self._sync_scroll_min_width()
+
+    def _sync_scroll_min_width(self):
+        """
+        让"运行参数"页的滚动区**不小于内容的最小宽** —— 于是**窗口不允许被缩到装不下内容**。
+
+        为什么需要：横向滚动条是**禁用**的（用户 2026.10.7 定的"横向条永不出现"），
+        窗口一旦比内容窄，右边就被**静默裁掉**（连滚动条都没有）。实测（2026.10.12）：
+        "圆"窗口的标签 + 微调框需要 255px，而 .ui 允许把窗口缩到 274px（视口只剩 226px）
+        ⇒ 手动缩到最小时右侧控件被切；"输出图像"窗口那次是下拉框太长顶出去的。
+        抬高**最小宽**（不碰 sizeHint / 默认宽度）之后，Qt 自己就不会再把窗口缩到裁掉控件。
+        """
+        scroll = getattr(self, "run_params_scroll", None)
+        content = scroll.widget() if scroll is not None else None
+        if content is None:
+            return
+        scroll.setMinimumWidth(content.minimumSizeHint().width())
 
     def _grow_for_hint(self, label):
         """

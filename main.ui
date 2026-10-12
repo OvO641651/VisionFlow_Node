@@ -282,12 +282,12 @@
            </property>
            <item>
             <property name="text">
-             <string>人脸</string>
+             <string>人脸识别</string>
             </property>
            </item>
            <item>
             <property name="text">
-             <string>颜色</string>
+             <string>颜色提取</string>
             </property>
            </item>
           </item>

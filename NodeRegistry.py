@@ -280,15 +280,18 @@ NODE_SPECS = {
 def _register_category(entries, kind):
     """
     把某个"分类模块"导出的声明表组装成 NodeSpec 登记进注册表。
-    分类模块（ProcessOps.py / SourceOps.py）只导出声明、**不 import 本文件**，
-    所以"注册表 ←→ 分类模块"不会循环导入。
+    分类模块（ProcessOps.py / SourceOps.py / FaceDetectOps.py / ColorExtractOps.py）只导出声明、
+    **不 import 本文件**，所以"注册表 ←→ 分类模块"不会循环导入。
+
+    `draw` 也照传：检测类算子（人脸）要往显示层画框，2026.10.12 起允许分类模块声明它
+    （原来是写死 None，只有本文件里手写的直线 / 圆能画）。
     """
     for entry in entries:
         NODE_SPECS[entry["name"]] = NodeSpec(
             name=entry["name"],
             kind=kind,
             run=entry["run"],
-            draw=None,
+            draw=entry.get("draw"),
             format_result=entry.get("format_result"),
             whole_image_param=entry.get("whole_image_param"),
             param_specs=entry.get("param_specs"),
@@ -300,10 +303,43 @@ def _register_category(entries, kind):
 from ProcessOps import PROCESS_SPECS  # noqa: E402
 from SourceOps import SOURCE_SPECS    # noqa: E402
 from OutputOps import OUTPUT_SPECS    # noqa: E402
+# 识别类（"识别"分组）：2026.10.12 目标5-M2 起**一个节点一个文件**
+from FaceDetectOps import FACE_SPECS       # noqa: E402
+from ColorExtractOps import COLOR_SPECS    # noqa: E402
 
 _register_category(PROCESS_SPECS, KIND_PROCESS)   # 处理类：灰度 / 取反 / 滤波 / 二值化 / 形态学 / 边缘提取
 _register_category(SOURCE_SPECS, KIND_SOURCE)     # 图像源类：图片源 / 视频源 / 相机源
 _register_category(OUTPUT_SPECS, KIND_SINK)       # 输出类：输出图像（M5）
+# 识别类的 kind 由"它到底改不改图"决定（分组是功能心智，kind 是引擎语义，两者不必一致）：
+_register_category(FACE_SPECS, KIND_DETECT)       # 人脸：不改图，只产出人脸框（检测类）
+_register_category(COLOR_SPECS, KIND_PROCESS)     # 颜色提取：改图（阈值外置黑），下游看得见（处理类）
+
+
+def node_level_param_keys(spec):
+    """
+    这个算子声明了哪些"**节点级参数**"（不按图片归档：换图 / 换视频 / 换页都保持不变）。
+
+    声明方式：`param_specs` 里那一项 options 写 `"per_node": True`。
+    现在只有「人脸」的级联文件用它 —— 用户 2026.10.12 实测报："更换图片后级联文件需要重新导入，
+    可能是每幅图片的参数设置会重置导致……我希望这个人脸识别节点的级联文件每幅图都可以使用，
+    不会更换图片后就重置。但是其他的节点的参数需要保持原样，每幅图片独立参数。"
+
+    为什么级联文件该是节点级：它是"**这个节点用哪个模型文件**"的配置，
+    跟"当前打开的是哪张图"没有任何关系；而缩放步长 / 邻居数 / 最小尺寸那些**调参**参数，
+    用户明确要求"其他参数保持原样、每幅图独立" ⇒ 它们照旧按图片归档。
+
+    :return: set（键名集合）；没有声明就返回空集合
+    """
+    keys = set()
+    for entry in getattr(spec, "param_specs", None) or []:
+        try:
+            key, _label, _kind, options = entry
+        except (TypeError, ValueError):
+            # 声明表写坏了一项：跳过它，不要让参数窗口 / 引擎跟着崩
+            continue
+        if isinstance(options, dict) and options.get("per_node"):
+            keys.add(key)
+    return keys
 
 
 def get_spec(name):
@@ -316,7 +352,10 @@ def get_spec(name):
 
 
 def is_implemented(name):
-    """这个模块实现了吗（人脸 / 颜色 目前还没实现）"""
+    """
+    这个模块实现了吗？
+    （2026.10.12 目标5-M2 起："识别"分组的人脸 / 颜色提取都实现了 —— 树上每一项都有算子）
+    """
     return name in NODE_SPECS
 
 

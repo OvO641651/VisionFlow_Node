@@ -28,6 +28,10 @@ import os
 
 import cv2
 
+# 图片读写统一走这个（**支持中文路径**）：cv2.imread 在 Windows 上读不了非 ASCII 文件名
+# （用户 2026.10.12 实测报："打开 data 文件夹时 cv::findDecoder imread_ ... can't open/read file"）
+from ImageIO import read_image
+
 # 图片解码缓存：同一时刻只缓存最后一张，切换文件时自动换掉，不会无限涨
 _IMAGE_CACHE = {"key": None, "img": None}
 
@@ -69,7 +73,7 @@ def _load_image(path):
         return None
     if _IMAGE_CACHE["key"] == key and _IMAGE_CACHE["img"] is not None:
         return _IMAGE_CACHE["img"]          # 命中缓存：不再重新解码
-    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    img = read_image(path, cv2.IMREAD_COLOR)
     if img is None:
         return None
     _IMAGE_CACHE["key"] = key

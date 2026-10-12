@@ -23,15 +23,26 @@
     float -> QDoubleSpinBox
     combo -> QComboBox
     bool  -> QCheckBox
-    file  -> QLineEdit + "浏览…" 按钮
+    file  -> QLineEdit + "浏览…" 按钮（options["plain"]=True 时只选文件、**不导入图库**，给级联文件用）
+    text  -> QLineEdit（纯文本，不弹任何对话框）
+    dir   -> QLineEdit + "选择目录…" 按钮
+    slider_int -> **QSlider + QSpinBox 双向联动**（2026.10.12 目标5-M2，用户要求）：
+                  界面上就是"参数名 ──进度条── 数值"；滑块用真范围（拖不出界），
+                  微调框沿用"软范围"（越界值可以先打完、提交时才夹回）。
 控件名字统一是 param_<参数名>，方便 findChild / 排查问题。
+
+行联动（2026.10.12 目标5-M2 加的通用能力）：
+    param_specs 的 options 里可以写 `"visible_when": (另一个参数的键, [允许的值…])`，
+    于是"选 HSV 只显示 HSV 那一套阈值、选 RGB 只显示 RGB 那一套"不用各写一份界面。
+    顺带也把《批次4 技术方案》§6.5 里"参数联动置灰（选 Otsu 灰掉阈值）"那条的地基打好了。
 """
 
 import os
 
+from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QSpinBox, QVBoxLayout, QWidget)
+                               QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 from LineParamsDialog import LineParamsDialog
 from NodeRegistry import KIND_SINK, KIND_SOURCE, get_spec
@@ -49,6 +60,8 @@ class GenericProcessDialog(LineParamsDialog):
         # 那时候动态控件还没生成，靠这个空表跳过动态部分，之后再手动加载一次。
         self.param_controls = {}
         self.param_layout = None
+        # 行联动表：[(行布局, 依赖的参数键, 允许的值列表)]，见 _build_param_rows / _apply_param_visibility
+        self._linked_rows = []
         super().__init__(parent, node, main_window)
 
         self.spec = get_spec(node.name) if node is not None else None
@@ -156,8 +169,73 @@ class GenericProcessDialog(LineParamsDialog):
             row.addWidget(QLabel("{0}:".format(label)))
             row.addWidget(widget, 1)
             layout.addLayout(row)
+            # ★ 行联动（目标5-M2）：options["visible_when"] = (依赖的参数键, [允许的值…])
+            #   只有"依赖参数"取到这些值时，这一行才显示（选 HSV 就只显示 HSV 那一套阈值）。
+            condition = (options or {}).get("visible_when")
+            if condition:
+                self._linked_rows.append(
+                    (row, condition[0], [str(value) for value in condition[1]]))
+        self._bind_linked_rows()
         self._hint_to_bottom(layout)
         layout.addStretch(1)
+
+    # ------------------------------------------------------------------
+    # 行联动（目标5-M2）：按"被依赖参数的当前值"显示 / 隐藏某些行
+    # ------------------------------------------------------------------
+    def _bind_linked_rows(self):
+        """给"被依赖的控件"接上信号，并先按当前值算一次显隐"""
+        if not self._linked_rows:
+            return
+        for _row, dep_key, _allowed in self._linked_rows:
+            widget = self.param_controls.get(dep_key)
+            if widget is None:
+                continue
+            if isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(self._apply_param_visibility)
+            elif isinstance(widget, QCheckBox):
+                widget.stateChanged.connect(self._apply_param_visibility)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.valueChanged.connect(self._apply_param_visibility)
+        self._apply_param_visibility()
+
+    @staticmethod
+    def _set_item_visible(item, visible):
+        """把布局项（控件或嵌套布局）里的所有控件显示 / 隐藏（`_hide_item` 的反向版本）"""
+        if item is None:
+            return
+        widget = item.widget()
+        if widget is not None:
+            widget.setVisible(visible)
+            return
+        child = item.layout()
+        if child is not None:
+            for index in range(child.count()):
+                GenericProcessDialog._set_item_visible(child.itemAt(index), visible)
+
+    def _apply_param_visibility(self, *_args):
+        """
+        按被依赖参数的当前值显示 / 隐藏联动行。
+
+        为什么必须 `setVisible(False)` 而不是"清空文字"：隐藏才会退出布局计算；
+        只清空文字的话那一行还占着位置、标签还挂在那里（项目里踩过这个坑）。
+        """
+        for row, dep_key, allowed in getattr(self, "_linked_rows", None) or []:
+            widget = self.param_controls.get(dep_key)
+            if widget is None:
+                continue
+            if isinstance(widget, QComboBox):
+                current = widget.currentText()
+            elif isinstance(widget, QCheckBox):
+                current = "True" if widget.isChecked() else "False"
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                current = str(widget.value())
+            else:
+                current = ""
+            visible = current in allowed
+            for index in range(row.count()):
+                self._set_item_visible(row.itemAt(index), visible)
+        # 行显隐会改变内容最小宽 ⇒ 同步一次滚动区最小宽（窗口不允许被缩到裁掉控件）
+        self._sync_scroll_min_width()
 
     def _apply_dynamic_defaults(self):
         """
@@ -206,6 +284,15 @@ class GenericProcessDialog(LineParamsDialog):
             widget = QComboBox()
             entries = [str(item) for item in options.get("options", [])]
             widget.addItems(entries)
+            # ★ 让下拉框**可以被压窄**（用户 2026.10.12 实测："输出图像节点窗口被遮挡" ——
+            #   "选择目录…"按钮、下拉框右侧都被切掉）：
+            #   `QComboBox` 的 minimumSizeHint 默认按**最长那一项**算，像
+            #   "MP4（mp4v，体积小，推荐）" 这种长项会把整行顶到视口之外；而**横向滚动条是被禁用的**
+            #   （用户 2026.10.7 定的"横向条永不出现"）⇒ 超出的部分被**静默裁掉**。
+            #   改成"按 N 个字符算最小宽"之后：窗口够宽时照样撑满（行里有 stretch），
+            #   窗口窄了就把文字省略号显示 —— 无论用户机器上字体多宽，都不会再越界。
+            widget.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            widget.setMinimumContentsLength(int(options.get("min_contents", 10)))
             # "预留"选项：在下拉框里**占位置灰**（看得见、但选不了）。
             # 声明方式：param_specs 的 options 里加 "disabled": ["网络相机（预留）", ...]。
             for index, text in enumerate(entries):
@@ -240,12 +327,54 @@ class GenericProcessDialog(LineParamsDialog):
             row.setContentsMargins(0, 0, 0, 0)
             edit = QLineEdit(str(options.get("default", "")))
             browse = QPushButton("浏览…")
-            browse.clicked.connect(
-                lambda _checked=False, target=edit, filters=options.get("filter", "所有文件 (*.*)"):
-                self._browse_file(target, filters))
+            if options.get("plain"):
+                # ★ plain = "只选文件"（目标5-M2 的级联文件用）：
+                #   通用 file 控件在**非起点节点**上点"浏览…"弹的是"选图片"，
+                #   还会顺手 `import_image_path()` 把选中的图导进图库 —— 对"级联文件"这种参数
+                #   是彻头彻尾的副作用（2026.10.7 给"输出文件名"找控件时踩过同类坑）。
+                browse.clicked.connect(
+                    lambda _checked=False, target=edit,
+                    filters=options.get("filter", "所有文件 (*.*)"):
+                    self._browse_plain(target, filters))
+            else:
+                browse.clicked.connect(
+                    lambda _checked=False, target=edit,
+                    filters=options.get("filter", "所有文件 (*.*)"):
+                    self._browse_file(target, filters))
             row.addWidget(edit)
             row.addWidget(browse)
             widget.edit = edit          # 取值时用它（见 _widget_value）
+        elif kind == "slider_int":
+            # ★ "进度条 + 微调框"（用户 2026.10.12 要求，界面格式 = 参数名 ──进度条── 数值）：
+            #   · 滑块用**真范围**（拖不出界），微调框沿用"**软范围**"（越界值可以先打完、
+            #     提交时才夹回上下限 —— 与其它数值框同一套手感）；两者**双向联动**；
+            #   · 值相同时 setValue 不发信号，所以两条连接不会来回死循环。
+            widget = QWidget()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            low = int(options.get("min", 0))
+            high = int(options.get("max", 255))
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(low, high)
+            # 滑块最小宽度 60（不是 Qt 默认的 84、也不是我一开始写的 90）：
+            # 实测"标签(52) + 滑块 + 微调框(70) + 边距"一旦超过滚动区视口宽度（226px），
+            # 因为**横向滚动条被禁用**（用户 2026.10.7 定的"横向条永不出现"），
+            # 多出来的部分会被**静默裁掉** —— 微调框右侧的上下箭头正好被切掉（截图里能看到）。
+            # 给 60 之后整行最小宽 218 < 226，留 8px 余量；滑块本身有 stretch，富余时照样撑满。
+            slider.setMinimumWidth(int(options.get("slider_width", 60)))
+            spin = QSpinBox()
+            spin.setRange(low, high)
+            row.addWidget(slider, 1)
+            row.addWidget(spin)
+            widget.slider = slider
+            widget.spin = spin
+            widget.setProperty("_slider_row", True)   # 给 _tighten_param_rows() 认（标签对齐用）
+            self._apply_soft_range(spin)              # 微调框照样是"软范围"
+            default = int(options.get("default", low))
+            spin.setValue(max(low, min(high, default)))
+            slider.setValue(spin.value())
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
         elif kind == "text":
             # 纯文本输入（M5「输出图像」的"输出文件名"用它）。
             # **不能用 file 顶替**：file 的"浏览…"在非起点节点上弹的是"选图片"，
@@ -320,6 +449,18 @@ class GenericProcessDialog(LineParamsDialog):
             return
         if self.main_window is not None and hasattr(self.main_window, "import_image_path"):
             self.main_window.import_image_path(path)            # 静默导入，读不出来就跳过
+        edit.setText(path)
+
+    def _browse_plain(self, edit, filters):
+        """
+        "只选文件"的浏览按钮（目标5-M2 的级联文件用）。
+
+        与 `_browse_file()` 的区别：弹通用文件选择、选完**只把路径填进输入框** ——
+        不判断"要不要选文件夹"、也不把选中的文件导进图库（那是图片源节点才需要的副作用）。
+        """
+        path, _selected = QFileDialog.getOpenFileName(self, "选择文件", edit.text(), filters)
+        if not path:
+            return
         edit.setText(path)
 
     def _browse_dir(self, edit):
@@ -438,12 +579,16 @@ class GenericProcessDialog(LineParamsDialog):
             widget.setText(str(value))
         elif kind == "dir":
             widget.edit.setText(str(value))
+        elif kind == "slider_int":
+            widget.spin.setValue(int(value))
 
     def _widget_value(self, kind, widget):
         if kind == "combo":
             return widget.currentText()
         if kind == "int":
             return widget.value()
+        if kind == "slider_int":
+            return widget.spin.value()
         if kind == "float":
             return widget.value()
         if kind == "bool":

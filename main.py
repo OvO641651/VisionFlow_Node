@@ -9,7 +9,7 @@ from PySide2.QtWidgets import (
 )
 # 打开主窗口，显示小窗口，模体ui窗口，设置流程图画布，导入文件
 from PySide2.QtUiTools import QUiLoader # 导入ui
-from PySide2.QtGui import QIcon # QIcon设置图标，QImage显示图像
+from PySide2.QtGui import QBrush, QColor, QIcon # QIcon设置图标，QImage显示图像；QBrush/QColor 给日志红字用（目标5-M2）
 from PySide2.QtCore import QTimer, Qt, QPointF # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死
 
 import cv2
@@ -18,6 +18,7 @@ import time
 import os
 
 from Detector import DetectorShape
+from ImageIO import read_image      # 图片读取统一入口（支持中文路径，2026.10.12）
 from FlowChart import NodeItem, EdgeItem, FlowchartView
 from FlowPages import FlowPageManager
 from LineParamsDialog import LineParamsDialog
@@ -26,7 +27,8 @@ from GrayParamsDialog import GrayParamsDialog
 from GenericProcessDialog import GenericProcessDialog
 from ImageGraphicsView import ImageGraphicsView
 from ImageGalleryWidget import ImageGalleryWidget
-from NodeRegistry import KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec, result_bbox
+from NodeRegistry import (KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec,
+                          node_level_param_keys, result_bbox)
 # 参数校验（批次4 目标4）：规则表写在各算子里，这里只负责"跑一遍 + 拿结果"
 from ParamRules import run_validation
 from OutputOps import (SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO,
@@ -63,6 +65,30 @@ def _result_note(results):
         if isinstance(item, dict) and item.get("__note__"):
             return str(item["__note__"])
     return None
+
+
+# ----------------------------------------------------------------------
+# 通用错误通道（批次4 目标5-M2，2026.10.12 用户要求："在日志中使用红色字体写明出错的原因"）
+#
+# 怎么表达"这一行是错误"：算子在 results 的 dict 里带上 `"__error__": True` ——
+#   · 人脸：`{"__note__": "级联文件不存在：…", "__error__": True}`（见 FaceDetectOps.py）
+#   · 输出图像：`{"输出图像": "保存失败：…", "__error__": True}`（见 OutputOps.py）
+# 这条通道是**通用的**：任何算子、任何错误都能用它把那一行涂红，不用改引擎的元组形状。
+#
+# 为什么用"文案前缀标记"而不是给 exec_info 元组加第 6 项：
+#   元组的形状被缓存重放、`_update_execution_log()`、以及一堆老断言共用，
+#   加一项的回归面太大；前缀标记只改"怎么拼文案 / 怎么填表格"一处，
+#   而且**显示时会去掉标记**，用户在表格里看到的就是纯文案。
+# ----------------------------------------------------------------------
+LOG_ERROR_MARK = "\u26a0"        # ⚠ 只用来传递"这行是错误"，不给用户看
+
+
+def _result_error(results):
+    """这一轮的结果里有没有声明"出错了"（见上面通用错误通道的说明）"""
+    for item in results or []:
+        if isinstance(item, dict) and item.get("__error__"):
+            return True
+    return False
 
 
 class MainWindow:
@@ -897,6 +923,15 @@ class MainWindow:
         spec = get_spec(node.name)
         return spec is not None and spec.is_flow_level
 
+    def _node_level_param_keys(self, node):
+        """
+        这个节点声明了哪些"**节点级参数**"（不按图片归档，换图 / 换视频 / 换页都保持原样）。
+
+        见 `NodeRegistry.node_level_param_keys()`：现在只有「人脸」的级联文件用它
+        （用户 2026.10.12 报："更换图片后级联文件需要重新导入……我希望每幅图都可以使用"）。
+        """
+        return node_level_param_keys(get_spec(node.name))
+
     def _save_node_params(self, nodes, image_key):
         """
         把一批节点的当前参数存到某个图片名下。
@@ -910,7 +945,11 @@ class MainWindow:
                 # 流程级配置（起点节点 / 输出节点）不参与按图片归档，见 _is_flow_level_node
                 continue
             store = self._get_node_params_store(node)
-            snapshot = dict(node.params)
+            # ★ 节点级参数（比如人脸的级联文件）**不进图片槽**：它跟"当前是哪张图"无关，
+            #   存进去只会在每张图下面重复一份；它一直留在 node.params 里（见 _load_node_params），
+            #   也会跟着"当前图那一份"一起写进方案文件。
+            keep_out = self._node_level_param_keys(node)
+            snapshot = {key: value for key, value in node.params.items() if key not in keep_out}
             # 空字典不存：既省内存，也避免往 params 里灌 None 导致后面切片报错
             if snapshot:
                 store[image_key] = snapshot
@@ -926,12 +965,18 @@ class MainWindow:
                 # 流程级配置（起点节点 / 输出节点）不跟着图片走，切图时保持原样
                 continue
             store = self._get_node_params_store(node)
+            # ★ 节点级参数：`clear()` 之前先留一份，载入之后再放回去 ——
+            #   否则一换图就会把"级联文件"这种配置清掉（用户 2026.10.12 实测报的 bug：
+            #   "更换图片后级联文件需要重新导入，可能是每幅图片的参数设置会重置导致"）。
+            kept = {key: node.params[key] for key in self._node_level_param_keys(node)
+                    if key in node.params}
             # 先清空：这张图片以前没设置过的话，就保持空，
             # 各处的 .get(参数名, 默认值) 会自动取默认值（ROI 的默认宽高就是当前这张图的尺寸）
             node.params.clear()
             snapshot = store.get(image_key)
             if snapshot:
                 node.params.update(snapshot)
+            node.params.update(kept)
 
     def _switch_image_params(self, new_key):
         """
@@ -1526,7 +1571,7 @@ class MainWindow:
         if roi_w <= 0 or roi_h <= 0 or spec is None:
             # roi_w / roi_h 为 0 时跳过：_resolve_roi() 已经把 ROI 裁进图像范围了，
             # 所以"整块 ROI 落在图外"或"参数里填了 0"都会走到这里，图像原样往下传；
-            # spec 为 None（人脸、颜色这些还没实现的模块）也一样透传，
+            # spec 为 None（注册表里没登记的模块名）也一样透传，
             # 日志里如实写"模块未实现"，不再假装"执行成功"。
             return in_img, [], roi_info, spec
 
@@ -1564,7 +1609,8 @@ class MainWindow:
         #   不要再去问算子的 format_result —— 那个节点根本没跑起来。
         note = _result_note(results)
         if note:
-            return note
+            # ★ 出错的行（比如"未选择级联文件"）加一个标记，_update_execution_log() 见到它就涂红
+            return (LOG_ERROR_MARK + note) if _result_error(results) else note
         if roi_info[2] <= 0 or roi_info[3] <= 0:
             return "ROI 尺寸为 0，已跳过（图像原样传给下游）"
         if spec is None:
@@ -2458,10 +2504,19 @@ class MainWindow:
             # 将五个字段转换为字符串列表，准备填充到表格的五个列中
             values = [str(seq), time_str, module, source, result]
 
+            # ★ 通用错误通道（批次4 目标5-M2）：带 LOG_ERROR_MARK 的行 = 出错了
+            #   ⇒ 整行涂红；标记只是"内部信使"，显示前去掉，用户在表格里看到的是纯文案。
+            is_error = result.startswith(LOG_ERROR_MARK)
+            if is_error:
+                values[4] = result[len(LOG_ERROR_MARK):]
+                error_brush = QBrush(QColor(200, 0, 0))
+
             # 遍历当前行的每一列，col 为列号（0~4）
             for col, text in enumerate(values):
                 # 创建一个新的表格项，存储该单元格的文本内容
                 item = QtWidgets.QTableWidgetItem(text)
+                if is_error:
+                    item.setForeground(error_brush)
                 # 将表格项放入指定行和列的单元格中
                 # 如果该单元格已有内容，会自动替换；如果之前没有，会创建新单元格
                 self.execution_log.setItem(offset + row, col, item)
@@ -3157,7 +3212,7 @@ class MainWindow:
         """
         if not path or not os.path.isfile(path):
             return []
-        frame = cv2.imread(path)
+        frame = read_image(path)
         if frame is None:
             return []                      # 读不出来就跳过，不提示
         # 记住"这张图来自哪个文件"：参数 / 结果 / 缩放都用它当标识（见 _image_key_of）

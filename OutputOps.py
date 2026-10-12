@@ -34,6 +34,10 @@ import time
 
 import cv2
 
+# 图片读写统一走这个（**支持中文路径**）：cv2.imwrite 在 Windows 上写不了非 ASCII 文件名
+# （与读图那条同一个根因，2026.10.12 一起修掉 —— 输出目录 / 文件名里带中文时原来会"保存失败"）
+from ImageIO import write_image
+
 # 支持的图片格式 → 扩展名
 FORMATS = (
     ("PNG（无损，推荐）", ".png"),
@@ -355,12 +359,12 @@ def _save_image_file(img, target, params):
         folder = os.path.dirname(path)
         if folder:
             os.makedirs(folder, exist_ok=True)      # 目录不存在就自动建
-        ok = cv2.imwrite(path, target)
+        ok = write_image(path, target)
     except Exception as exc:                        # 无权限 / 非法路径 / 磁盘满 …
-        return img, [{"输出图像": "保存失败：{0}".format(exc)}]
+        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
 
     if not ok:
-        return img, [{"输出图像": "保存失败：{0}".format(path)}]
+        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(path)}]
 
     height, width = target.shape[:2]
     return img, [{"输出图像": "已保存 {0}（{1}×{2}）".format(
@@ -408,14 +412,14 @@ def _save_video_frame(img, frame, params, info):
             os.makedirs(folder, exist_ok=True)
             writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*fourcc), fps, size)
         except Exception as exc:                    # 无权限 / 非法路径 / 磁盘满 …
-            return img, [{"输出图像": "保存失败：{0}".format(exc)}]
+            return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
         if not writer.isOpened():
             try:
                 writer.release()
             except Exception:
                 pass
             # 编码器不支持：如实写日志、**不弹窗**，图像照旧透传（项目准则）
-            return img, [{"输出图像": "保存失败：不支持该视频格式（{0}）".format(label)}]
+            return img, [{"__error__": True, "输出图像": "保存失败：不支持该视频格式（{0}）".format(label)}]
         _RECORDINGS[key] = {"writer": writer, "path": path, "size": size, "frames": 0,
                             "signature": signature, "fps": fps, "label": label}
         notes.append("开始录制 → {0}（{1:g} fps，{2}×{3}）".format(
@@ -426,7 +430,7 @@ def _save_video_frame(img, frame, params, info):
         state["writer"].write(frame)
     except Exception as exc:
         _RECORDINGS.pop(key, None)
-        return img, [{"输出图像": "保存失败：{0}".format(exc)}]
+        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
     state["frames"] += 1
     notes.append("录制中：{0}（第 {1} 帧）".format(
         os.path.basename(state["path"]), state["frames"]))
