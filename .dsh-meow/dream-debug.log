@@ -518,3 +518,51 @@
 [2026-10-12T17:15:34.297Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
 [2026-10-12T17:17:44.561Z] hit-chain pid=2612 sid=4c85d180 textLen=50 hit=yes
 [2026-10-12T17:19:30.972Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:24:07.550Z] hit-chain pid=2612 sid=4c85d180 textLen=21 hit=null
+[2026-10-12T17:25:13.087Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:27:39.605Z] check sid=4c85d180 active=false idle=147s
+[2026-10-12T17:29:43.449Z] hit-chain pid=2612 sid=4c85d180 textLen=106 hit=null
+[2026-10-12T17:32:39.132Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:37:56.381Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:41:37.827Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:42:39.610Z] check sid=4c85d180 active=false idle=63s
+[2026-10-12T17:44:44.321Z] hit-chain pid=2612 sid=4c85d180 textLen=134 hit=yes
+[2026-10-12T17:46:20.263Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:50:02.456Z] hit-chain pid=2612 sid=4c85d180 textLen=164 hit=null
+[2026-10-12T17:54:44.041Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T17:57:39.613Z] check sid=4c85d180 active=false idle=176s
+[2026-10-12T18:06:57.923Z] hit-chain pid=2612 sid=4c85d180 textLen=642 hit=yes
+[2026-10-12T18:07:47.753Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:12:39.621Z] check sid=4c85d180 active=false idle=293s
+[2026-10-12T18:16:56.648Z] hit-chain pid=2612 sid=4c85d180 textLen=57 hit=yes
+[2026-10-12T18:17:28.033Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:21:09.667Z] hit-chain pid=2612 sid=4c85d180 textLen=229 hit=yes
+[2026-10-12T18:21:51.470Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:24:51.124Z] hit-chain pid=2612 sid=4c85d180 textLen=65 hit=yes
+[2026-10-12T18:25:29.068Z] turn-stopping pid=2612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:28:41.771Z] pre-step first pid=18612 sid=4c85d180 priorUser=41 userMsgs=1
+[2026-10-12T18:28:41.778Z] hit-chain pid=18612 sid=4c85d180 textLen=88 hit=yes
+[2026-10-12T18:28:57.968Z] turn-stopping pid=18612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:34:38.561Z] hit-chain pid=18612 sid=4c85d180 textLen=73 hit=yes
+[2026-10-12T18:41:18.143Z] turn-stopping pid=18612 sid=4c85d180 reason=none wasDream=false
+[2026-10-12T18:42:38.033Z] check sid=4c85d180 active=false idle=81s
+[2026-10-13T02:59:01.955Z] pre-step first pid=3320 sid=4c85d180 priorUser=43 userMsgs=1
+[2026-10-13T02:59:01.979Z] hit-chain pid=3320 sid=4c85d180 textLen=81 hit=null
+[2026-10-13T03:02:26.418Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T04:12:40.058Z] check sid=4c85d180 active=false idle=4214s
+[2026-10-13T04:13:34.283Z] hit-chain pid=3320 sid=4c85d180 textLen=482 hit=yes
+[2026-10-13T04:16:27.586Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T04:27:40.073Z] check sid=4c85d180 active=false idle=673s
+[2026-10-13T04:42:40.080Z] check sid=4c85d180 active=false idle=1573s
+[2026-10-13T04:57:40.092Z] check sid=4c85d180 active=false idle=2473s
+[2026-10-13T05:12:40.107Z] check sid=4c85d180 active=false idle=3373s
+[2026-10-13T10:03:25.936Z] check sid=4c85d180 active=false idle=20819s
+[2026-10-13T10:03:25.958Z] dream start pid=3320 session=4c85d180 rounds=3 T=1791864986716
+[2026-10-13T11:03:27.262Z] check sid=4c85d180 active=true idle=24421s
+[2026-10-13T11:38:04.023Z] check sid=4c85d180 active=true idle=26497s
+[2026-10-13T11:38:55.835Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=true
+[2026-10-13T11:38:55.841Z] dream group 2/3 steered
+[2026-10-13T11:39:38.369Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=true
+[2026-10-13T11:39:38.374Z] dream group 3/3 steered
+[2026-10-13T11:40:50.942Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=true
+[2026-10-13T11:40:50.958Z] dream done session=4c85d180 groups=3 stamped=41

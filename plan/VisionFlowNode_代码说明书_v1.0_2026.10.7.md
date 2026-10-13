@@ -1,15 +1,20 @@
 # VisionFlowNode 代码说明书
 
 > **这份文档写什么**：工程里**每个文件干什么**、**每个函数/方法干什么、怎么实现的**（实现原理与关键判断）。
+>
+> **文档版本：v1.0**（2026.10.7 首次成文；**2026.10.13 批次4 收口时全文校准** —— 按用户口径**版本号不变**）。
 > **怎么用**：想改某个功能时，先在下面的"文件总览"里找到对应文件 → 再翻到该文件的章节看函数清单；
 > 每个函数一行，形如 `函数名` | 作用 | 实现原理与要点。
 >
 > **口径与免责**：
 > 1. 函数说明**以代码里的中文 docstring 与真实实现为依据**（本项目 docstring 写得很密，是权威来源）；
 > 2. 表里出现「（未注释，按调用点推断：……）」的地方，是**我读代码后推断的**，不是作者原话；
-> 3. 行号（`L123` 这种）是 **2026.10.7 这一版**的行号，改动代码后行号会漂；
+> 3. 行号（`L123` 这种）是 **2026.10.7 这一版**的行号（全篇只有 1 处），改动代码后行号会漂；**表格里的"文件行数"取 2026.10.13 实测值**（`len(text.split("\n"))` 口径）；
 > 4. 本文件由 4 段独立编写的内容拼成（核心 6 个文件由主 agent 写，外围 12 个文件由 3 个子任务分别写），
 >    因此个别文件的表格列名/详略略有差异——内容都以源码为准。
+>
+> **2026.10.13 校准（批次4 目标5-M4，版本号仍 v1.0）**：批次1~4 收口时通读校对了一遍 ——
+> ① 刷新**全部文件行数**；② **新增 4 个文件章节**：`ParamRules.py` / `ImageIO.py` / `ColorExtractOps.py` / `FaceDetectOps.py`（都按原风格**逐函数**写）；③ 修正常识性口径：**"加一个算子"现在是"新建一个节点文件"**、**连续执行 = 选中节点 + 它的全部上游**（原"截到选中节点"已废弃）、参数归档补**单参数级例外 `per_node`**、`main.py` 补**通用错误通道**（日志红字）、`NodeRegistry` 补 `validate` 字段与 `node_level_param_keys()`、通用参数窗口补 **`visible_when` / `slider_int` / `plain`**；④ "识别组未实现"改为**已实现**（人脸识别 / 颜色提取）。
 
 ---
 
@@ -17,24 +22,36 @@
 
 | 文件 | 行数 | 一句话职责 | 分层 |
 |---|---|---|---|
-| `main.py` | 3221 | 主窗口 + 数据流引擎 + 周边设施（方案、归档、图库、相机/视频接线） | ① 核心 |
-| `NodeRegistry.py` | 259 | 节点契约（`NodeSpec`）+ 注册表（四类 kind、`get_spec`、`result_bbox`） | ② 契约 |
-| `ProcessOps.py` | 319 | 处理类算子算法 + `PROCESS_SPECS`（灰度/取反/滤波/二值化/形态学/边缘提取） | ③ 算子 |
-| `SourceOps.py` | 317 | 图像源类算子 + `SOURCE_SPECS`（图片源/视频源/相机源） | ③ 算子 |
-| `OutputOps.py` | 512 | 输出类算子 + `OUTPUT_SPECS`（输出图像：图片序列 / 视频文件 / 保存内容） | ③ 算子 |
-| `GenericProcessDialog.py` | 433 | 通用参数窗口：按 `param_specs` 自动生成"运行参数"页 | ④ 参数窗口 |
-| `LineParamsDialog.py` | 902 | 参数窗口**基类**（三页签、ROI 绘制/继承、执行按钮；加载 `LineParamsDialog.ui`） | ④ 参数窗口 |
-| `CircleParamsDialog.py` | 253 | 圆专用参数窗口（重写部分控件与 `_load_params/_update_params`） | ④ 参数窗口 |
-| `GrayParamsDialog.py` | 119 | 灰度专用参数窗口（"作用于整图"联动置灰 ROI 区） | ④ 参数窗口 |
+| `main.py` | 3327 | 主窗口 + 数据流引擎 + 周边设施（方案、归档、图库、相机/视频接线） | ① 核心 |
+| `NodeRegistry.py` | 388 | 节点契约（`NodeSpec`）+ 注册表（四类 kind、`get_spec`、`result_bbox`、`node_level_param_keys`） | ② 契约 |
+| `ParamRules.py` | 107 | 参数校验的公共零件（读参数 / 夹范围 / 强制奇数；窗口层与引擎层共用） | ② 契约 |
+| `ProcessOps.py` | 389 | 处理类算子算法 + `PROCESS_SPECS`（灰度/取反/滤波/二值化/形态学/边缘提取） | ③ 算子 |
+| `ColorExtractOps.py` | 172 | 颜色提取（一个节点一个文件）+ `COLOR_SPECS`（HSV / RGB 两套阈值） | ③ 算子 |
+| `SourceOps.py` | 322 | 图像源类算子 + `SOURCE_SPECS`（图片源/视频源/相机源） | ③ 算子 |
+| `OutputOps.py` | 517 | 输出类算子 + `OUTPUT_SPECS`（输出图像：图片序列 / 视频文件 / 保存内容） | ③ 算子 |
+| `FaceDetectOps.py` | 201 | 人脸识别（一个节点一个文件）+ `FACE_SPECS`（级联文件 / 3 个调参） | ③ 算子 |
+| `Detector.py` | 138 | 直线 / 圆检测算法封装 + 造测试图 | ⑦ 算法 |
+| `ImageIO.py` | 79 | 图片读写统一入口（走字节流 ⇒ **支持中文路径**） | ⑨ 公共工具 |
+| `GenericProcessDialog.py` | 603 | 通用参数窗口：按 `param_specs` 自动生成"运行参数"页（含行联动 / 进度条） | ④ 参数窗口 |
+| `LineParamsDialog.py` | 1241 | 参数窗口**基类**（三页签、ROI 绘制/继承、执行按钮、软范围、滚动区、校验提示行；加载 `LineParamsDialog.ui`） | ④ 参数窗口 |
+| `CircleParamsDialog.py` | 274 | 圆专用参数窗口（重写部分控件与 `_load_params/_update_params`） | ④ 参数窗口 |
+| `GrayParamsDialog.py` | 120 | 灰度专用参数窗口（"作用于整图"联动置灰 ROI 区） | ④ 参数窗口 |
 | `FlowChart.py` | 569 | 流程图画布：`NodeItem` / `EdgeItem` / `FlowchartView`（拖放、连线、右键删除） | ⑤ 画布 |
-| `FlowPages.py` | 626 | 多页签页面管理 `FlowPageManager`（增删改、就地改名、关闭前回调） | ⑤ 画布 |
-| `ImageGraphicsView.py` | 195 | 显示图像/视频的 `QGraphicsView` 子类（滚轮缩放、按图片分别记缩放平移） | ⑥ 显示 |
-| `ImageGalleryWidget.py` | 477 | 图像列表 + 上方工具栏的包装类（对外只暴露自己的接口） | ⑥ 显示 |
-| `Detector.py` | 137 | 直线 / 圆检测算法封装 + 造测试图 | ⑦ 算法 |
-| `main.ui` | — | 主界面布局（树、画布、显示区、工具栏、图库、执行日志） | ⑧ 界面 |
-| `SetCameraID.ui` | — | "设置相机编号"小窗口 | ⑧ 界面 |
-| `LineParamsDialog.ui` | — | 参数窗口的布局（基本参数 / 运行参数 / 显示结果三页） | ⑧ 界面 |
-| `pyside6.txt` | 5512 行 | 开发日志（每个改动一条；`plan\pyside6_开发日志.md` 是它的 Markdown 版） | 记录 |
+| `FlowPages.py` | 627 | 多页签页面管理 `FlowPageManager`（增删改、就地改名、关闭前回调） | ⑤ 画布 |
+| `ImageGraphicsView.py` | 196 | 显示图像/视频的 `QGraphicsView` 子类（滚轮缩放、按图片分别记缩放平移） | ⑥ 显示 |
+| `ImageGalleryWidget.py` | 480 | 图像列表 + 上方工具栏的包装类（对外只暴露自己的接口；缩略图走 `ImageIO`） | ⑥ 显示 |
+| `main.ui` | 623 | 主界面布局（树、画布、显示区、工具栏、图库、执行日志） | ⑧ 界面 |
+| `SetCameraID.ui` | 72 | "设置相机编号"小窗口 | ⑧ 界面 |
+| `LineParamsDialog.ui` | 783 | 参数窗口的布局（基本参数 / 运行参数 / 显示结果三页） | ⑧ 界面 |
+| `pyside6.txt`（冻结） | — | 开发日志原始记录；**在用版 = `plan\pyside6_开发日志.md`**（开头有《标题命名规则》、末尾有《全项目里程碑索引》） | 记录 |
+| `plan\批次4_验收点清单_v1.md` | — | 照着一层层点就能验收（批次4 全量验收点） | 记录 |
+
+> **批次5 预告（2026.10.13）**：批次5 会做**目录重构** ⇒ 本表"文件"一列的路径届时会变：
+> `core/`（契约 + 零件 + **拆出来的引擎 `flow_engine` / `project_store` / `param_store`**）、
+> `services/`（相机 / 视频 / 图库服务）、`ops/`（算子，按 kind 分 `source/ process/ detect/ sink/`）、
+> `ui/`（参数窗口）、`widgets/`（画布 / 显示 / 图库控件）、`temp/`（门禁用例，2026.10.13 已进仓库）；
+> **`main.py` 只留"入口 + 界面装配"**（计划先用 Mixin 拆、门禁用例 0 改动）。
+> 规划见《批次4 技术方案》§6E 与《项目技术文档》§十；`main.py` 的方法清单见本文件 `## main.py` 一节。
 
 ## 分层与调用关系（谁调谁）
 
@@ -53,14 +70,17 @@
               └───┬──────────────────┬──────────────────┬──────────────────┬───────────┘
                   │                  │                  │                  │
         ┌─────────▼───────┐ ┌────────▼────────┐ ┌───────▼────────┐ ┌───────▼────────┐
-        │ ProcessOps.py   │ │ SourceOps.py    │ │ OutputOps.py   │ │ 检测类（注册在   │
-        │ 处理类 6 个      │ │ 图像源类 3 个    │ │ 输出类 1 个     │ │ NodeRegistry 里）│
-        └─────────────────┘ └─────────────────┘ └────────────────┘ └───────┬────────┘
-                                                                          │
-                                                                  ┌───────▼────────┐
-                                                                  │ Detector.py    │
-                                                                  │ 直线 / 圆算法   │
-                                                                  └────────────────┘
+        │ ProcessOps.py   │ │ SourceOps.py    │ │ OutputOps.py   │ │ FaceDetectOps.py│
+        │ 处理类 6 个      │ │ 图像源类 3 个    │ │ 输出类 1 个     │ │ 人脸识别 1 个   │
+        ├─────────────────┤ └─────────────────┘ └────────────────┘ └───────┬────────┘
+        │ ColorExtractOps │                                                 │
+        │ 颜色提取 1 个    │                                         ┌───────▼────────┐
+        └─────────────────┘                                         │ Detector.py    │
+                                                                    │ 直线 / 圆算法   │
+                                                                    └────────────────┘
+
+        公共零件：ParamRules.py（参数校验规则表，窗口层 / 引擎层共用）
+        公共工具：ImageIO.py（图片读写，支持中文路径；算子 / 图库 / 输出节点都用它）
 
                 参数窗口一侧：GenericProcessDialog ← LineParamsDialog ← （Circle / Gray 专用窗口）
                 都用：LineParamsDialog.ui 那份布局
@@ -68,9 +88,9 @@
 
 **三条最该记住的约定**（在 `main.py` / `NodeRegistry.py` 章节里有详细说明）：
 
-1. **加一个算子 = 一个算法方法 + 一张参数表 + 树里一项**：算法与参数表放分类模块（`ProcessOps` / `SourceOps` / `OutputOps`），注册表只在末尾汇总；分类模块**不 import 注册表**（避免循环导入）。
+1. **加一个算子 = 一个节点文件（算法 + `*_SPECS` 参数表）+ 注册表末尾一行 + 树里一项**：2026.10.12 起"**一个节点一个文件**"（`ColorExtractOps.py` / `FaceDetectOps.py` 就是这样），老的三份大类文件（`ProcessOps` / `SourceOps` / `OutputOps`）留批次5 按同一原则拆；节点文件**不 import 注册表**（注册表反向 import 它，避免循环导入）；有参数规则的再加一条 `validate`（`ParamRules.py` 提供零件）。
 2. **数据层与渲染层分离**：`run()` 改数据，`draw()` 只画显示；叠加永不回流。
-3. **参数按图片归档，但"流程级节点"（起点节点 + 输出节点）除外**：判据是 `NodeSpec.is_flow_level`。
+3. **参数按图片归档，但有两类例外**：① **整节点级** —— "流程级节点"（起点节点 + 输出节点），判据 `NodeSpec.is_flow_level`；② **单参数级** —— `param_specs` 里声明 `"per_node": True` 的参数（现有人脸的 `cascade_file`），由 `NodeRegistry.node_level_param_keys()` 读出来、保存/载入时单独处理。
 
 ---
 
@@ -79,21 +99,22 @@
 
 > **本章属于**：① 入口 + 数据流引擎（核心）
 
-## main.py（3221 行；主窗口 + 数据流引擎）
+## main.py（3327 行；主窗口 + 数据流引擎）
 
 
 **文件作用**：整个软件的主入口与大脑。它装下三件事：① 主窗口 `MainWindow`（把 `main.ui` 加载进来、用 `findChild` 收编控件、接线所有按钮/菜单/信号）；② **数据流引擎**（拓扑排序、图像源绑定、ROI 继承、按节点契约执行、渲染层合成）；③ **周边设施**（方案持久化、参数按图片归档、图库导入、相机与视频的播放/录制接线、执行日志）。几乎所有"跨模块"的逻辑都在这里收口，其余文件只提供"声明"或"单一职责的小部件"。
 
-**关键设计与原理（读这个文件前必须知道的 8 条）**：
+**关键设计与原理（读这个文件前必须知道的 9 条）**：
 
 1. **数据层与渲染层彻底分离**：`_run_flow_pipeline*` 只算数据（图像 + 结果数据），叠加（绿线/红圆/ROI 框）一律在 `_render_display()` 里画到显示图上，**永不回流**。
 2. **影响只能靠声明的通道**：节点之间传图像靠"图像源绑定"（`_resolve_input`），传 ROI 靠"ROI 继承"（`_resolve_roi` + `roi_of` 字典），没有第二条暗路。
-3. **连续执行 = 执行到当前选中节点为止**（`stop_at` 显式参数，由 `_run_flow_pipeline` 从 `self.selected_node` 传下去）；**单步执行 = 只跑选中的那一个节点**（`_run_flow_pipeline_step`，输入沿绑定追到起点）。两者共用 `_run_nodes` 里的"取输入 / ROI / 日志"那一段，但"跑哪些节点"截然不同。
-4. **参数按图片归档**：每个节点的参数在内存里按"图片标识"存多份（`params_per_image`），切图时 `_switch_image_params` 存档+载入。**例外**：起点节点（图片源/视频源/相机源）与输出类节点（输出图像）属于"流程级配置"，靠 `_is_flow_level_node()` 跳过归档。
+3. **连续执行 = "选中节点 + 它的全部上游"**（`stop_at` 由 `_run_flow_pipeline` 从 `self.selected_node` 传下去，先经 `_upstream_closure()` 收窄成**上游闭包** —— **与选中节点无关的并列分支不执行**，未执行的节点会在日志里列出；2026.10.8 目标5-M1 改，此前"按拓扑序前缀截到选中节点"的口径已废弃）；**单步执行 = 只跑选中的那一个节点**（`_run_flow_pipeline_step`，输入沿绑定追到起点）。两者共用 `_run_nodes` 里的"取输入 / ROI / 日志"那一段，但"跑哪些节点"截然不同。
+4. **参数按图片归档**：每个节点的参数在内存里按"图片标识"存多份（`params_per_image`），切图时 `_switch_image_params` 存档+载入。**两类例外**：① 起点节点（图片源/视频源/相机源）与输出类节点（输出图像）属于"流程级配置"，靠 `_is_flow_level_node()` 跳过整节点归档；② `_node_level_param_keys()` 认识的**节点级参数**（`param_specs` 里 `"per_node": True`，如人脸的 `cascade_file`）不进图片槽 —— `_save_node_params()` 剔出、`_load_node_params()` 在 `clear()` 前留一份、载入后放回。
 5. **结果缓存键 =（图片标识, 页面 key, 执行方式）**（`_result_cache_key`）：单步与连续分开存、按页分开、只在内存。而**画面（缩放/平移）键**是另一套（`_display_key_of` / `_camera_display_key`），视频整段共用 `video:路径`、相机共用 `camera:编号`。
 6. **"起点节点"是流程真正的取图处**：`_source_node_frame()` 按 `self.flow_nodes` 顺序问每个起点类节点要图；`_flow_source_frame()` 决定这一轮的"全局图像源"帧（主窗口当前图 > 起点节点兜底 > 报错文案）。
 7. **设备类只在主窗口开一次**：相机由 `_open_camera_device()/ _release_camera_device()` 统一开关（相机源节点通过注入的取帧器 `_latest_camera_frame()` 复用）；视频由 `SourceOps._open_video()` 各自缓存 `VideoCapture`（各读各的，不抢读指针）。
 8. **输出类节点的三个 provider**：`_bind_output_providers()` 把"输入图片名 / 带检测叠加图 / 这一轮上下文"三个取用器绑到**当前正在跑的主窗口**上（一个进程可能有多个 MainWindow，例如测试里）。
+9. **通用错误通道（日志红字）**：结果 dict 里带 `{"__error__": True}` ⇒ `_format_result_text()` 在文案前加内部标记 `LOG_ERROR_MARK`（`\u26a0`）⇒ `_update_execution_log()` 把那一行**整行涂红**（`#c80000`）并把标记去掉。现有人脸识别（未选 / 不存在 / 坏级联文件）与输出图像（5 处"保存失败"）在用它；`_result_error()` 是判断入口。
 
 ### 模块级
 
@@ -116,7 +137,7 @@
 | `set_camera_id()` | 设置相机编号 | 加载 `SetCameraID.ui` 小窗口，确定后写 `self.camera_id` |
 | `_on_tree_double_click(_item, _column)` | 双击左侧树项 | 交给 `_create_node_from_name()` |
 | `_create_node_from_name(name)` | 双击树项在画布上建节点 | 算一个错开的位置 → `add_flow_node()` |
-| `on_node_double_clicked(node)` | 双击方框 → 开这个算子的参数窗口 | **路由"专用优先、通用兜底"**：直线/圆/灰度→专用窗口；其余有 `param_specs` 的→`GenericProcessDialog`；未实现的（人脸/颜色）保持无反应 |
+| `on_node_double_clicked(node)` | 双击方框 → 开这个算子的参数窗口 | **路由"专用优先、通用兜底"**：直线/圆/灰度→专用窗口；其余有 `param_specs` 的→`GenericProcessDialog`；**2026.10.12 起这两个识别节点都已实现**（人脸识别走通用窗口 + `draw`，颜色提取走通用窗口），未注册的名字（老方案文件里的旧节点名）才保持无反应 |
 | `_open_node_dialog(node, dialog_class)` | 开参数窗口的统一流程 | 记下开窗前的参数 → 建窗口（`node=/main_window=`）→ 关窗后 `_mark_dirty_if_params_changed()` 决定要不要标"有改动" |
 | `_mark_dirty_if_params_changed(node, before)` | 参数真的变了才标脏 | 比较 `before` 与当前 `node.params`，不同则 `flow_page_mgr.mark_dirty()` |
 | `_confirm_close_flow_page(page)` | 关页前的"要保存吗" | 未标脏直接放行；否则弹中文按钮的 `QMessageBox`（保存/不保存/取消），"保存"时先把这一页切成当前页再 `save_project()` |
@@ -274,7 +295,7 @@
 
 > **本章属于**：② 节点契约（注册表）
 
-## NodeRegistry.py（259 行；节点能力注册表 = "节点契约"）
+## NodeRegistry.py（388 行；节点能力注册表 = "节点契约"）
 
 
 **文件作用**：定义"一个算子应该声明什么"，并把各分类模块（`ProcessOps` / `SourceOps` / `OutputOps`）导出的声明表组装成 `NodeSpec` 注册进 `NODE_SPECS`；引擎、参数窗口、日志文案都从这里查"这个算子是什么"。它是整个扩展架构的枢纽：**加一个算子 = 一个算法方法 + 一张参数表 + 树里一项**。
@@ -288,7 +309,7 @@
 
 | 类 / 函数 | 作用 | 实现原理与要点 |
 |---|---|---|
-| `class NodeSpec` | 一个算子的能力声明 | 字段：name / kind / run / draw / format_result / whole_image_param / param_specs |
+| `class NodeSpec` | 一个算子的能力声明 | 字段：name / kind / run / draw / format_result / whole_image_param / param_specs / **validate**（参数校验规则，批次4 目标4 加） |
 | `NodeSpec.__init__` | 组装声明 | 保存各字段；参数默认 None 表示"走专用窗口" |
 | `NodeSpec.modifies_image`（属性） | 输出图像会不会和输入不一样 | `kind in (KIND_PROCESS, KIND_SOURCE)`；检测类与输出类都是 False（多上游时用它挑"真正改图"的那一支） |
 | `NodeSpec.is_flow_level`（属性） | 参数是不是流程级配置 | `kind in (KIND_SOURCE, KIND_SINK)`；这类节点的参数不按图片归档 |
@@ -298,9 +319,10 @@
 | `_draw_circle(display_img, results, params)` | 把圆结果画到显示层 | 每个 `(cx,cy,r)` 画红圆 + 红圆心 |
 | `_format_line(results)` | 直线日志文案 | `"检测到N条直线"` |
 | `_format_circle(results)` | 圆日志文案 | `"检测到N个圆"` |
-| `_register_category(entries, kind)` | 把声明表组装成 NodeSpec | 遍历 entry dict，按字段建 `NodeSpec` 并登记（draw 一律 None，检测类在文件里手工登记） |
+| `_register_category(entries, kind)` | 把声明表组装成 NodeSpec | 遍历 entry dict，按字段建 `NodeSpec` 并登记；**把 entry 里的 `draw` / `validate` 透传进去**（直线 / 圆是人脸识别之前就有的检测类，仍在文件里手工登记） |
 | `get_spec(name)` | 查算子声明 | 返回 None 表示"这个模块没实现"（引擎会透传 + 日志写"模块未实现"） |
-| `is_implemented(name)` | 这个模块实现了吗 | 查注册表（人脸/颜色目前 False） |
+| `is_implemented(name)` | 这个模块实现了吗 | 查注册表（**2026.10.12 起 14 个节点叶子全部为 True**：人脸识别 / 颜色提取已实现）（人脸识别 / 颜色提取已实现） |
+| `node_level_param_keys(spec)` | 这个算子有哪些"**节点级参数**" | 读 `param_specs` 里的 `"per_node": True`，返回键集合；`main.py` 的参数归档用它决定"哪些键不进图片槽"（现有人脸的 `cascade_file`） |
 | `result_bbox(results)` | 把结果算成原图坐标包围盒 | 支持直线 `(x1,y1,x2,y2)` 与圆 `(cx,cy,r)`；**只认 tuple/list**（dict 会被跳过）；无可用结果返回 None。供下游"ROI 继承" |
 | `NODE_SPECS`（模块级 dict） | 注册表本体 | 键 = 算子名（与树、方框文字一致） |
 
@@ -308,12 +330,59 @@
 
 ---
 
+---
+
+> **本章属于**：② 契约 · 公共零件
+
+## ParamRules.py（107 行；参数校验的公共零件）
+
+**文件作用**：批次4 目标4「参数校验」的**公共零件** —— 读参数、夹范围、强制奇数这些琐碎判断放这里，供**参数窗口**（`LineParamsDialog._validate_params()`）与**引擎**（`main.py::_execute_node`）**共用同一张规则表**。为什么要单独一个文件：`ProcessOps.py` **不能** import `NodeRegistry.py`（注册表是反向 import 它的，会循环导入），零件也不能写在注册表里；本文件不依赖任何算子模块，谁都能 import。
+
+**关键设计与原理**：
+- **统一签名** `validate(params) -> (fixed_params, corrections, errors)`（就是 `NodeSpec.validate`）：`corrections` 给执行日志 / 窗口提示用（一条一句、已含"改前 → 改后"）；`errors` 非空 ⇒ **引擎侧跳过这个节点**（窗口侧只提示、不拦）；
+- **只写回"入参里本来就有的键"**（`run_validation()` 末尾统一过滤）：规则为了取值方便会把默认值也填进 `fixed`，但**默认值不算纠正** —— 灌进 `node.params` 会 ① 把一堆默认值写进方案文件；② 让"视频参数整段共用"把本来空参数的节点误判成"参数变了"，每轮多写一行提示（2026.10.7 实测踩到、靠门禁抓出来的）；
+- **规则自己抛异常不许拖累执行**：`run_validation()` 兜住并转成一条 `errors`；
+- **纯函数、O(1)、不做 IO**：视频播放时每秒会跑 25 次，规则里绝不许查文件是否存在。
+
+| 函数 | 作用 | 实现原理与要点 |
+|---|---|---|
+| `read_int(params, key, default, label, notes)` | 把参数读成 int | 读不出来（方案文件被手改坏 / 不是数字）⇒ 用默认值并记一条说明 |
+| `read_float(params, key, default, label, notes)` | 把参数读成 float | 同上 |
+| `clamp_int(value, low, high, label, notes)` | 把整数夹进 `[low, high]` | **只有真的越界了才记说明**（不许无脑加说明刷屏） |
+| `clamp_float(value, low, high, label, notes)` | 浮点夹取 | 口径同 `clamp_int` |
+| `force_odd(value, low, high, label, notes)` | 夹范围并强制成奇数 | 卷积核 / 形态学结构元 / Sobel·Laplacian 的 `ksize` 都要求正奇数，否则 OpenCV 直接抛；与 `ProcessOps._odd()` 同一口径 —— 那边是**算法侧兜底**（保证不崩），这边是**参数侧说明**（让用户知道值被改了） |
+| `run_validation(spec, params)` | **窗口层与引擎层共用的唯一入口** | `spec` 为 None（模块未实现）或没有 `validate` ⇒ 直接放行；副本进副本出（不就地改）；`fixed` 过滤成"只含入参原有的键"；规则抛异常 ⇒ `参数校验规则异常（…）` |
+
+---
+
+> **本章属于**：⑨ 公共工具
+
+## ImageIO.py（79 行；图片读写：支持中文路径）
+
+**文件作用**：图片读写的**统一入口**，解决 Windows 上"**中文（非 ASCII）路径读不了 / 写不了**"的老问题。用户 2026.10.12 实测报的：打开 `E:\OpenCV_python\python_opencv\OpenCV_Book\data` 时日志里刷 `cv::findDecoder imread_('…/所有数据按行排列结果.png'): can't open/read file`，而 `image\lena.png`（纯英文名）一点事没有。
+
+**关键设计与原理**：
+- **根因**（只读探针实测，cv2 4.13 / Windows）：`cv2.imread` / `cv2.imwrite` 走的是**窄字符（ANSI）文件 API**，文件名带中文就找不到文件；而且 `imread` 是**返回 None（不抛异常）** ⇒ 表现为"静默读不出来"。同一条路径换成"先读字节流、再交给 cv2 解码"就完全正常（实测 `imread` → None、`imdecode(fromfile)` → 5000×400×3）；
+- **做法**：读 = `np.fromfile(path)` → `cv2.imdecode(buf, flags)`；写 = `cv2.imencode(ext, img)` → `buf.tofile(path)` —— 不碰窄字符 API，中文 / 空格 / emoji 路径都能用；
+- **返回值契约与 `cv2.imread` / `cv2.imwrite` 一致**（失败返回 None / False）⇒ 调用方的 `if img is None:` / `if not ok:` **一行都不用改**；
+- **视频不受影响**（`VideoCapture` / `VideoWriter` 走 FFmpeg 后端，实测中文路径能正常读写），所以这里只处理图片；
+- **四个入口**（2026.10.12 全量替换）：`SourceOps._load_image`（图片源读图）、`main.py::_import_single_image`（导入图片进图库）、`ImageGalleryWidget`（缩略图）、`OutputOps._save_image_file`（**保存也一起修** —— 输出目录 / 文件名带中文时原来会判"保存失败"）。
+
+| 函数 | 作用 | 实现原理与要点 |
+|---|---|---|
+| `read_image(path, flags=cv2.IMREAD_COLOR)` | 读一张图（**支持中文路径**） | 空路径 ⇒ None；`np.fromfile` 抛 `OSError/ValueError`（不存在 / 是目录 / 无权限）⇒ None；字节流为空 ⇒ None；`imdecode` 失败（坏文件 / 不是图片）⇒ None —— 与 `cv2.imread` 同一契约 |
+| `write_image(path, img, params=None)` | 写一张图（**支持中文路径**） | `img` 为空或路径为空 ⇒ False；扩展名从路径取（空则 `.png`）；`imencode` 抛异常 / 不认识扩展名 ⇒ False；`buf.tofile(path)` 失败 ⇒ False；成功 True |
+
+---
+
 > **本章属于**：③ 算子实现 · 处理类
 
-## ProcessOps.py（319 行；处理类算子）
+## ProcessOps.py（389 行；处理类算子）
 
 
 **文件作用**："处理"这一大类的**算法实现**（灰度/取反/滤波/二值化/形态学/边缘提取）与它们的参数声明 `PROCESS_SPECS`。处理类的共同语义：**输出图像和输入不一样**，下游看得见。
+
+> 注：**颜色提取**同属处理类，但按"一个节点一个文件"的约定独立成 `ColorExtractOps.py`（见该章）。
 
 **关键设计与原理**：
 - **一律"copy 出来 → 只在 ROI 上改 → 回填"**（`_apply_to_roi`）：绝不就地改传入数组（否则污染上游数据层）。
@@ -342,9 +411,34 @@
 
 ---
 
+---
+
+> **本章属于**：③ 算子实现 · 处理类（一个节点一个文件）
+
+## ColorExtractOps.py（172 行；颜色提取 = 一个节点一个文件）
+
+**文件作用**："识别"分组里的**颜色提取**（树名 2026.10.12 由"颜色"改来）：**阈值内的像素保留原色、阈值外的像素变黑**（用户原话："运行后则提取出阈值颜色的画面。不在阈值中的画面变成黑色。"）。它是**处理类**（`KIND_PROCESS`，和灰度 / 二值化一样**改数据层**），只处理 ROI 那一块、ROI 以外保持原样；两种颜色模型（HSV / RGB）用下拉框切换，**13 个参数里 12 个阈值都是"进度条 + 微调框"**。
+
+**关键设计与原理**：
+- **复用处理类的通用外壳** `ProcessOps._apply_to_roi()`（copy → 只在 ROI 上变换 → 回填 → 保证 3 通道）⇒ "绝不就地改传入对象"这条契约只有一份实现，不会两处跑偏；
+- **HSV 的 H 是 0~179**（OpenCV 口径，不是 0~360），S / V 是 0~255；**RGB 那套会先 `BGR2RGB` 再 `inRange`**，保证"参数里的 R 就是用户看到的 R"；
+- **"阈值外置黑"的写法** = `out = np.zeros_like(patch)` + `out[mask > 0] = patch[mask > 0]`（而不是 `bitwise_and`）—— 直观，且顺手用 `countNonZero` 统计命中像素；
+- **行联动**靠通用参数窗口的 `visible_when`：选哪个模型只显示哪一套 6 个阈值（见 `GenericProcessDialog.py` 一章）；
+- **默认值** = HSV + 一组"红色"（H 0~10 / S 70~255 / V 50~255）；RGB 那套默认也是一组红（R 150~255 / G 0~100 / B 0~100）。
+
+| 函数 | 作用 | 实现原理与要点 |
+|---|---|---|
+| `_limits_for(model, params)` | 按当前模型取 `(下限, 上限)` 两组分量 | `RGB` ⇒ `rgb_r/g/b_low/high`；否则 HSV ⇒ `hsv_h/s/v_low/high`；都返回长度 3 的 int 元组 |
+| `run_color_extract(detector, img, roi, params)` | **颜色提取节点入口**（处理类） | ① 按模型转 HSV / RGB；② `cv2.inRange` 出掩膜；③ `zeros_like` + 掩膜回填（**阈值外黑、阈值内原色**）；④ `countNonZero` 记命中像素；⑤ 走 `_apply_to_roi` 保证"只动 ROI + 输出 3 通道"；结果 dict = `{"提取像素", "总像素", "模型"}` |
+| `_format_extract(results)` | 日志"结果数据"列文案 | `提取到 N 个像素（x.x%）`（短文案 —— 这一列会截断） |
+| `validate_color_extract(params)` | 参数校验（目标4 规则表） | 按**当前模型**那 6 个通道夹取（H 上限 179、其余 255）+ **"下限 > 上限自动互换"**：`cv2.inRange` 对 lo > hi 不报错，而是**整幅图都不命中（全黑）** ⇒ 用户看到"提取出来一片黑"，属目标4 要消灭的静默；**另一套（当前没显示的）不校验也不改**（免得提示里冒出一堆用户看不见的参数名） |
+| `COLOR_SPECS`（模块级 tuple） | 算子声明表 | 1 条：`color_model`(combo HSV/RGB) + HSV 6 个 + RGB 6 个（**全都是 `slider_int`**，各自带 `visible_when`） |
+
+---
+
 > **本章属于**：③ 算子实现 · 图像源类（采集）
 
-## SourceOps.py（317 行；图像源类算子）
+## SourceOps.py（322 行；图像源类算子）
 
 
 **文件作用**："采集"这一大类的实现：**图片源 / 视频源 / 相机源**。它们的共同点是"流程起点"——自己造图，没有上游。
@@ -357,7 +451,7 @@
 | 函数 | 作用 | 实现原理与要点 |
 |---|---|---|
 | `first_image_in_folder(folder)` | 文件夹里第一张图（按文件名排序） | 遍历 + 扩展名过滤；没有返回空串 |
-| `_load_image(path)` | 读一张图片（带缓存） | 按路径缓存 ndarray；读不出来返回 None |
+| `_load_image(path)` | 读一张图片（带缓存） | 按路径缓存 ndarray；**读写走 `ImageIO.read_image()`**（2026.10.12 起，支持中文路径；原先用 `cv2.imread` 会静默返回 None）；读不出来返回 None |
 | `_cached_test_image()` | 测试图（只生成一次） | 复用 `Detector.make_test_image()` |
 | `run_source(detector, img, roi, params)` | **图片源** | 按 `source_type` 分流：图片 → 读 `source_path`；文件夹 → `first_image_in_folder`；测试图 → `_cached_test_image`；"当前图像" → 返回传入 `img`。返回值带 `[{"图片源": …}]` 说明 |
 | `format_source(results)` | 图片源日志文案 | 短文案 |
@@ -377,7 +471,7 @@
 
 > **本章属于**：③ 算子实现 · 输出类（输出图像）
 
-## OutputOps.py（512 行；输出类算子 = M5「输出图像」）
+## OutputOps.py（517 行；输出类算子 = M5「输出图像」）
 
 
 **文件作用**："输出"这一大类（目前一个节点）：把它从上游拿到的图像**写进磁盘**——图片序列或视频文件，内容可以是"数据层图像"或"带检测叠加"。它是 M5 的核心，也是全工程唯一在流水线里**产生副作用（写文件）**的节点，因此"什么时候开始写、什么时候收尾、参数变化怎么办"都在这里定义。
@@ -406,7 +500,7 @@
 | `close_recording(node_key, reason)` | 收尾某个节点的录制 | 从 `_RECORDINGS` 摘表 + 收尾；没在录返回空串 |
 | `close_all_recordings(reason)` | 收尾全部录制 | 遍历表逐个收尾，返回消息列表（主窗口写日志） |
 | `recording_count()` | 现在有几个在录 | `len(_RECORDINGS)`（测试与界面反馈用） |
-| `_save_image_file(img, target, params)` | 图片序列模式 | 算路径 → `os.makedirs` → `cv2.imwrite`；失败/写不进去都返回说明文案；成功返回"已保存 名字（W×H）" |
+| `_save_image_file(img, target, params)` | 图片序列模式 | 算路径 → `os.makedirs` → **`ImageIO.write_image()`**（支持中文路径；2026.10.12 起）→ 失败/写不进去都返回说明文案，且**带 `__error__` 让日志那一行变红**；成功返回"已保存 名字（W×H）" |
 | `_save_video_frame(img, frame, params, info)` | 视频文件模式（一帧） | 取 `video_format` → 目录校验 → 算 `signature`（目录/名/格式/策略/帧率/保存内容）→ 尺寸或 signature 变了先收尾旧文件并**摘表** → 没在录就 `cv2.VideoWriter(...)`（`isOpened()` False ⇒ "不支持该视频格式"）→ `write(frame)` → 返回"开始录制…"/"录制中…（第 n 帧）" |
 | `run_save(detector, img, roi, params)` | **输出图像节点入口** | ① 按 `save_content` 决定存"数据层图像"还是取叠加图（取不到退回数据层）；② 按 `output_kind` 决定图片/视频（"自动"看 `source_kind`：视频/相机 ⇒ 视频文件）；③ 分派到上面两条；④ 始终 `return img` |
 | `format_save(results)` | 输出节点日志文案 | 取 `results[0]["输出图像"]` |
@@ -419,13 +513,15 @@
 
 > **本章属于**：④ 参数窗口 · 通用
 
-## GenericProcessDialog.py（433 行；通用参数窗口）
+## GenericProcessDialog.py（603 行；通用参数窗口）
 
 
 **文件作用**：**按算子的参数声明自动生成界面**——"运行参数"页里的每一行都由 `param_specs` 决定（控件类型、中文名、默认值、选项）。有了它，"加一个算子"就不用再写界面（决策 b）。它继承 `LineParamsDialog`（复用那个 `.ui` 与"基本参数 / 显示结果"页），只重写/新增与动态参数有关的部分。
 
 **关键设计与原理**：
-- **控件类型**：`int` / `float` / `combo` / `bool` / `file`（浏览选文件）+ **M5 新增 `text`（纯文本）/ `dir`（选目录）**；`file` 的"浏览…"在**非起点节点**上会弹"选图片"框并把图导进图库，所以"输出文件名"必须用 `text` 而不是 `file`。
+- **控件类型**：`int` / `float` / `combo` / `bool` / `file`（浏览选文件，**`options["plain"] = True` 时只选文件、不导入图库** —— 给级联文件这种"与图片无关"的参数用）/ **`text`（纯文本）/ `dir`（选目录）/ `slider_int`（进度条 + 微调框，批次4 目标5-M2 加，界面上是 `参数名 ──进度条── 数值`）**；`file` 的"浏览…"在**非起点节点**上默认会弹"选图片"框并把图导进图库，所以"输出文件名"必须用 `text`。
+- **行联动 `visible_when`**：options 里写 `"visible_when": (依赖键, [允许的值…])`，只有依赖参数取到这些值那一行才显示（颜色提取选 HSV 就只显示 HSV 那 6 行）；实现 = `_linked_rows` + `_bind_linked_rows()` + `_apply_param_visibility()`（用 `setVisible`）。
+- **combo 可压窄**：`setSizeAdjustPolicy(AdjustToMinimumContentsLengthWithIcon)` + `setMinimumContentsLength(10)` —— 窗口够宽照样撑满，窄了显示省略号（否则 combo 的最小宽按最长那一项算，会把整行顶出视口、而横向滚动条是禁用的 ⇒ 右侧被静默裁掉）。
 - **combo 支持 `options["disabled"]`**：把"预留"档位**置灰**（相机类型的网络/工业相机就用它，`QStandardItem.setEnabled(False)`）。
 - **三类节点的窗口裁剪**：起点节点（`KIND_SOURCE`）去掉"基本参数"页 + 去掉"执行/连续执行"按钮；输出类节点（`KIND_SINK`）只去掉"基本参数"页；两者都清掉 ROI 参数。
 - **`default_from` 动态默认值**：在 `_load_params()` **之后**才能补（`_apply_dynamic_defaults`），否则会被 `_load_params()` 用"空默认值"再 `setText("")` 冲掉——这是实测踩过的坑。
@@ -439,6 +535,8 @@
 | `_hide_item(item)` | 藏一个布局项里的所有控件 | 递归处理嵌套布局（处理类用不到直线那些行，要整体藏掉） |
 | `_hide_line_rows(layout)` | 藏掉"运行参数"页里**已有的**行 | 那些行是直线专用控件（`.ui` 里写死的），通用窗口用不上 |
 | `_build_param_rows()` | 按 `param_specs` 生成行 | 每行"中文名: 控件"；控件名统一 `param_<键名>`（便于 `findChild`） |
+| `_make_widget(key, kind, options)` 的 `slider_int` 分支 | 造"进度条 + 微调框" | `QSlider`（真范围）+ `QSpinBox`（软范围）**双向联动**（值相同不发信号，不会死循环）；进度条最小宽 60（再宽会把行顶出视口）；`_tighten_param_rows()` 里进度条行**参与标签对齐但不补弹簧**，且**不能按 `isHidden()` 跳过**（会被行联动显隐） |
+| `_apply_param_visibility()` | 按 `visible_when` 显隐行 | 遍历 `_linked_rows`，依赖参数当前值命中才 `setVisible(True)`（**必须 setVisible**：清空文字那一行仍然占位置）；行显隐会改变内容最小宽，所以要同步一次滚动区最小宽 |
 | `_apply_dynamic_defaults()` | 补"动态默认值" | 遍历参数，跳过"节点已存过值"的；调 `_apply_source_default()`；**必须在 `_load_params()` 之后** |
 | `_apply_source_default(widget, kind, options)` | 按 `default_from` 填默认值 | 目前支持 `input_image_name`：向主窗口要"这个节点这一轮的输入图片名"；控件已有内容就不动 |
 | `_make_widget(key, kind, options)` | 造控件（按类型） | combo（含 disabled 置灰）/ int（含 `odd` 纠偏）/ float / bool / file（编辑框+浏览…）/ text / dir（编辑框+选择目录…）；造不出来返回 None |
@@ -495,6 +593,9 @@
 | `LineParamsDialog._save_input_source` | 把下拉框当前的图像源绑定写到 `node.input_source` | `node` 为空或控件不存在则返回；`currentData()` 若是 `AUTO_SOURCE` 字符串则存 `None`（引擎会沿连线去找上游），否则原样存绑定对象（全局源字符串或上游节点对象） |
 | `LineParamsDialog._load_params` | 从 `node.params` 回填 UI；ROI 宽高默认值用"当前图像尺寸" | 写 `roi_x/roi_y`（默认 0）；宽高默认值 `640×480`，优先 `_node_input_frame(node)`，其次 `main_window.current_static_image`（`shape[:2]` 是 h,w，注意赋值顺序 `h, w = ...; default_w, default_h = w, h`），再其次 `cap.get(CAP_PROP_FRAME_WIDTH/HEIGHT)`（只有 >0 才用）；写 `hide_roi`（默认 False）、`roi_w/roi_h`、`roi_shape`（默认 "矩形"）、`roi_inherit`（**默认 True**，明确存过 False 才回到"绘制"）、`roi_margin`（默认 0）、`roi_source`（经 `_set_roi_source_to_ui`）；最后加载 5 个运行参数：`canny_low=50`、`canny_high=150`、`hough_threshold=100`、`min_line_length=100`、`max_line_gap=10` |
 | `LineParamsDialog._update_params` | 把 UI 上的值写回 `node.params`（子类重写它以扩展） | 写 `roi_x/roi_y/roi_w/roi_h`、`roi_shape`、`roi_inherit`、`roi_margin`、`roi_source`（经 `_roi_source_from_ui`）、顺手再 `_save_input_source()` 一次、5 个运行参数、`hide_roi`。**它不保存 `gray_full_image`**，那由 Gray 子类补 |
+| `LineParamsDialog._validate_params()`（批次4 目标4） | 跑一遍参数校验，把"能纠正的"改掉并显示提示 | 调 `ParamRules.run_validation()`；有纠正 ⇒ **黄字**提示"已自动纠正…"并写回控件；有 errors ⇒ **红字**提示（**绝不弹窗**）；三个入口（执行 / 连续执行 / 确定）都会先走它 |
+| 软范围：`_apply_soft_range()` / `_soft_range_all()` / `_clamp_soft_range()` / `_commit_number_edits()` | 让数值框"**可以先把越界值打完，回车 / 失焦 / 点执行时才夹回**" | 三步：控件自身范围放宽（真范围存动态属性 `_soft_min` / `_soft_max`）+ 关 `keyboardTracking` + 在 `valueChanged` 里夹回；放宽范围会变宽 ⇒ 用 `setFixedWidth(sizeHint()+12)` 锁回去；读参数前先 `_commit_number_edits()` 提交"打了字没回车"的输入 |
+| `LineParamsDialog._sync_scroll_min_width()`（目标4 布局） | 把滚动区最小宽抬到"内容最小宽" | "运行参数"页整页在 `QScrollArea` 里（**提示行出现不改变窗口大小**）；**横向条禁用** ⇒ 内容超宽会被**静默裁掉**，所以"不许把窗口缩到装不下内容"；行显隐后要再同步一次 |
 | `LineParamsDialog.on_step_click` | "执行"按钮：单步执行当前节点；返回值被"确定"用来决定窗口关不关 | 先 `_update_params()`；`roi_w==0 or roi_h==0` → `QMessageBox.warning("请输入ROI区域！")` 并 `return False`；有主窗口时先判断 `video_ready`（`current_static_image is None` 且 `cap` 已打开）：**不是视频**就走静态统一入口 `run_flow_step(node)`，成功则 `update_result_count(last_detected_data)` 并返回 True，失败返回 False（提示已由主窗口弹过）；**是视频**则设 `video_processing_mode="step"`、`video_step_node=node`、调 `update_frame()` 并返回 True；没有主窗口返回 False |
 | `LineParamsDialog.on_cont_click` | "连续执行"按钮：按完整流程图顺序执行 | 同样先 `_update_params()` 并拦截 ROI 全 0（警告后 `return`，无返回值）；不是视频就调 `run_flow_continuous()`，成功则刷新结果计数；是视频则设 `video_processing_mode="continuous"`、`video_step_node=None`、`update_frame()` 恢复完整流程检测 |
 | `LineParamsDialog.on_ok` | "确定"按钮：先执行一次单步检测，成功才关窗 | `if self.on_step_click(): self.accept()` —— ROI 为 0 或没有可用图时窗口保持不关闭 |
@@ -838,6 +939,32 @@
 
 ---
 
+---
+
+> **本章属于**：③ 算子实现 · 检测类（一个节点一个文件）
+
+## FaceDetectOps.py（201 行；人脸识别 = 一个节点一个文件）
+
+**文件作用**："识别"分组里的**人脸识别**（树名 2026.10.12 由"人脸"改来）：**检测类**（`KIND_DETECT`）—— 图像**原样透传**（`return img`，连副本都不建），只多产出人脸框列表，每项 `(左上x, 左上y, 右下x, 右下y)`（**与直线的端点格式一致** ⇒ `NodeRegistry.result_bbox()` 一行都不用改，下游"ROI 继承 → 继承上游结果框"就能直接用人脸框）；绿框由 `draw()` **只画显示层**。
+
+**关键设计与原理**：
+- **级联文件不设默认值**（用户 2026.10.12 要求）⇒ 用户直接运行必然"出错"，所以口径是**用日志红字把原因讲清**；
+- **出错不抛、不弹窗**：没选 / 文件不存在 / 不是有效级联文件 ⇒ 原样透传 + 结果里递 `{"__note__": …, "__error__": True}`，引擎把那一行涂红（通用错误通道）。**为什么必须自己先挡**：实测 `cv2.CascadeClassifier('')`（空路径）与坏 xml **都会抛**，而引擎里没有 try/except ⇒ 抛出来就是"点了执行什么都没发生"（目标4 消灭过的静默失败）；
+- **级联分类器缓存**：键 = `(绝对路径, 修改时间, 大小)`、最多留 4 个 —— 视频 / 相机路径下每秒要跑 25 次，每次重新解析 xml（几十毫秒）会把播放拖垮（同类坑 2026.10.7 踩过）；
+- **`cascade_file` 是"节点级参数"**（`per_node: True`）：换图 / 换视频 / 换页**都不重置**（它是"这个节点用哪个模型文件"的配置，跟当前是哪张图无关；用户实测报"更换图片后级联文件需要重新导入"）；另外三个调参参数照旧**每幅图独立**（用户："其他的参数需要保持原样"）；
+- **`plain: True`**：浏览时**只选文件、绝不导入图库**（通用窗口的 `file` 控件在非起点节点上默认弹"选图片"并顺手把图导进图库 —— 对级联文件是彻头彻尾的副作用）。
+
+| 函数 | 作用 | 实现原理与要点 |
+|---|---|---|
+| `_load_cascade(path)` | 取（必要时加载）级联分类器 | 返回 `(分类器, 错误说明)`：成功时说明是空串、失败时分类器是 None（**不抛异常**）；`os.stat` 失败 ⇒ "级联文件不存在：…"；缓存命中直接返回；`CascadeClassifier` 抛异常或 `empty()` ⇒ "…不是有效的 OpenCV 级联文件"；缓存满 4 个先 `clear()` |
+| `_error(message)` | 包一行"错误"结果 | `{"__note__": message, "__error__": True}` —— 用结果 dict 递文案是引擎的老约定（`result_bbox()` 只认 tuple/list、会跳过 dict），`__error__` 是 2026.10.12 加的**通用错误通道**标记 |
+| `_run_face(detector, img, roi, params)` | **人脸识别节点入口**（检测类） | 空路径 ⇒ 红字"未选择级联文件…"；加载失败 ⇒ 红字原因；ROI 0 尺寸 ⇒ 返回空（防崩）；`cvtColor` 转灰度（**不改 patch**：`cvtColor` 生成新数组）；`detectMultiScale(gray, scale, neighbors, minSize=(n,n))`；框按 **ROI 偏移**换算回原图坐标；异常 ⇒ 红字 |
+| `_draw_face(display_img, results, params)` | 把人脸框画到**显示层** | 每个 `(x1,y1,x2,y2)` 画绿色矩形（0,255,0）粗 2 —— 和直线一样只活在显示图上、永不回流 |
+| `_format_face(results)` | 日志"结果数据"列文案 | `检测到N张人脸` |
+| `validate_face(params)` | 参数校验（目标4 规则表） | 实测依据（cv2 4.13 只读探针）：`scaleFactor ≤ 1` **直接抛异常** ⇒ 夹到 1.01~2.0；`minNeighbors = 0 / -1` 不崩但**检出 80 个**（噪声爆炸）⇒ 夹到 1~20；`minSize` 夹到 5~2000 |
+| `FACE_SPECS`（模块级 tuple） | 算子声明表 | 1 条：`cascade_file`(file + `plain` + **`per_node`**) + `face_scale_factor`(float 1.01~2.0) + `face_min_neighbors`(int 1~20) + `face_min_size`(int 5~2000) |
+
+---
 > **本章属于**：⑧ 界面文件（主窗口 / 设置相机编号 / 参数窗口）
 
 ## main.ui / SetCameraID.ui
