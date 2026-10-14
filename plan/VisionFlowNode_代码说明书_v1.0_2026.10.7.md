@@ -25,12 +25,12 @@
 | `main.py` | 3327 | 主窗口 + 数据流引擎 + 周边设施（方案、归档、图库、相机/视频接线） | ① 核心 |
 | `NodeRegistry.py` | 388 | 节点契约（`NodeSpec`）+ 注册表（四类 kind、`get_spec`、`result_bbox`、`node_level_param_keys`） | ② 契约 |
 | `ParamRules.py` | 107 | 参数校验的公共零件（读参数 / 夹范围 / 强制奇数；窗口层与引擎层共用） | ② 契约 |
-| `ProcessOps.py` | 389 | 处理类算子算法 + `PROCESS_SPECS`（灰度/取反/滤波/二值化/形态学/边缘提取） | ③ 算子 |
+| `ops/process/` 下 **6 个节点文件**（`GrayOps.py` · `InvertOps.py` · `BlurOps.py` · `ThresholdOps.py` · `MorphologyOps.py` · `EdgeExtractOps.py`） | 54/32/67/71/77/79 | 处理类算子：**一个节点一个文件**（算法 + 引擎入口 + 参数校验 + `*_SPECS`）；原大类文件 389 行已于 2026.10.14 拆分 | ③ 算子 |
 | `ColorExtractOps.py` | 172 | 颜色提取（一个节点一个文件）+ `COLOR_SPECS`（HSV / RGB 两套阈值） | ③ 算子 |
-| `SourceOps.py` | 322 | 图像源类算子 + `SOURCE_SPECS`（图片源/视频源/相机源） | ③ 算子 |
+| `ops/source/` 下 **3 个节点文件**（`ImageSourceOps.py` · `VideoSourceOps.py` · `CameraSourceOps.py`） | 163/113/63 | 图像源类算子：**一个节点一个文件**（算法 + `run_*` + `*_SPECS`）；原大类文件 322 行已于 2026.10.14 拆分 | ③ 算子 |
 | `OutputOps.py` | 517 | 输出类算子 + `OUTPUT_SPECS`（输出图像：图片序列 / 视频文件 / 保存内容） | ③ 算子 |
 | `FaceDetectOps.py` | 201 | 人脸识别（一个节点一个文件）+ `FACE_SPECS`（级联文件 / 3 个调参） | ③ 算子 |
-| `Detector.py` | 138 | 直线 / 圆检测算法封装 + 造测试图 | ⑦ 算法 |
+| `Detector.py` | 74 | **兼容门面**：`DetectorShape` 转发给 `LineDetectOps.py` / `CircleDetectOps.py`（2026.10.14 拆分）+ `make_test_image` | ⑦ 算法 |
 | `ImageIO.py` | 79 | 图片读写统一入口（走字节流 ⇒ **支持中文路径**） | ⑨ 公共工具 |
 | `GenericProcessDialog.py` | 603 | 通用参数窗口：按 `param_specs` 自动生成"运行参数"页（含行联动 / 进度条） | ④ 参数窗口 |
 | `LineParamsDialog.py` | 1241 | 参数窗口**基类**（三页签、ROI 绘制/继承、执行按钮、软范围、滚动区、校验提示行；加载 `LineParamsDialog.ui`） | ④ 参数窗口 |
@@ -70,7 +70,7 @@
               └───┬──────────────────┬──────────────────┬──────────────────┬───────────┘
                   │                  │                  │                  │
         ┌─────────▼───────┐ ┌────────▼────────┐ ┌───────▼────────┐ ┌───────▼────────┐
-        │ ProcessOps.py   │ │ SourceOps.py    │ │ OutputOps.py   │ │ FaceDetectOps.py│
+        │ GrayOps.py 等 6 │ │ 图像源 3 文件  │ │ OutputOps.py   │ │ FaceDetectOps.py│
         │ 处理类 6 个      │ │ 图像源类 3 个    │ │ 输出类 1 个     │ │ 人脸识别 1 个   │
         ├─────────────────┤ └─────────────────┘ └────────────────┘ └───────┬────────┘
         │ ColorExtractOps │                                                 │
@@ -88,7 +88,7 @@
 
 **三条最该记住的约定**（在 `main.py` / `NodeRegistry.py` 章节里有详细说明）：
 
-1. **加一个算子 = 一个节点文件（算法 + `*_SPECS` 参数表）+ 注册表末尾一行 + 树里一项**：2026.10.12 起"**一个节点一个文件**"（`ColorExtractOps.py` / `FaceDetectOps.py` 就是这样），老的三份大类文件（`ProcessOps` / `SourceOps` / `OutputOps`）留批次5 按同一原则拆；节点文件**不 import 注册表**（注册表反向 import 它，避免循环导入）；有参数规则的再加一条 `validate`（`ParamRules.py` 提供零件）。
+1. **加一个算子 = 一个节点文件（算法 + `*_SPECS` 参数表）+ 注册表末尾一行 + 树里一项**：2026.10.12 起"**一个节点一个文件**"（`ColorExtractOps.py` / `FaceDetectOps.py` 就是这样），**批次5 目标1（2026.10.14）已把处理类大类文件拆成 6 个节点文件、并把颜色提取移到 `ops/color/`**；其余大类文件（`ProcessOps` / `SourceOps` / `OutputOps`）留批次5 按同一原则拆；节点文件**不 import 注册表**（注册表反向 import 它，避免循环导入）；有参数规则的再加一条 `validate`（`ParamRules.py` 提供零件）。
 2. **数据层与渲染层分离**：`run()` 改数据，`draw()` 只画显示；叠加永不回流。
 3. **参数按图片归档，但有两类例外**：① **整节点级** —— "流程级节点"（起点节点 + 输出节点），判据 `NodeSpec.is_flow_level`；② **单参数级** —— `param_specs` 里声明 `"per_node": True` 的参数（现有人脸的 `cascade_file`），由 `NodeRegistry.node_level_param_keys()` 读出来、保存/载入时单独处理。
 
@@ -298,7 +298,7 @@
 ## NodeRegistry.py（388 行；节点能力注册表 = "节点契约"）
 
 
-**文件作用**：定义"一个算子应该声明什么"，并把各分类模块（`ProcessOps` / `SourceOps` / `OutputOps`）导出的声明表组装成 `NodeSpec` 注册进 `NODE_SPECS`；引擎、参数窗口、日志文案都从这里查"这个算子是什么"。它是整个扩展架构的枢纽：**加一个算子 = 一个算法方法 + 一张参数表 + 树里一项**。
+**文件作用**：定义"一个算子应该声明什么"，并把各分类模块（`ops/*/` 下各节点文件）导出的声明表组装成 `NodeSpec` 注册进 `NODE_SPECS`；引擎、参数窗口、日志文案都从这里查"这个算子是什么"。它是整个扩展架构的枢纽：**加一个算子 = 一个算法方法 + 一张参数表 + 树里一项**。
 
 **关键设计与原理**：
 - **两类 kind 的语义**：`KIND_PROCESS`（改数据层图像）、`KIND_DETECT`（图像原样透传、只产出结果）、`KIND_SOURCE`（流程起点、自己造图）、`KIND_SINK`（输出类：图像原样透传，只把结果送出去——写磁盘）。
@@ -336,7 +336,7 @@
 
 ## ParamRules.py（107 行；参数校验的公共零件）
 
-**文件作用**：批次4 目标4「参数校验」的**公共零件** —— 读参数、夹范围、强制奇数这些琐碎判断放这里，供**参数窗口**（`LineParamsDialog._validate_params()`）与**引擎**（`main.py::_execute_node`）**共用同一张规则表**。为什么要单独一个文件：`ProcessOps.py` **不能** import `NodeRegistry.py`（注册表是反向 import 它的，会循环导入），零件也不能写在注册表里；本文件不依赖任何算子模块，谁都能 import。
+**文件作用**：批次4 目标4「参数校验」的**公共零件** —— 读参数、夹范围、强制奇数这些琐碎判断放这里，供**参数窗口**（`LineParamsDialog._validate_params()`）与**引擎**（`main.py::_execute_node`）**共用同一张规则表**。为什么要单独一个文件：**各节点文件不能反向 import `NodeRegistry.py`**（注册表是反向 import 它们的，会循环导入），零件也不能写在注册表里；本文件不依赖任何算子模块，谁都能 import。
 
 **关键设计与原理**：
 - **统一签名** `validate(params) -> (fixed_params, corrections, errors)`（就是 `NodeSpec.validate`）：`corrections` 给执行日志 / 窗口提示用（一条一句、已含"改前 → 改后"）；`errors` 非空 ⇒ **引擎侧跳过这个节点**（窗口侧只提示、不拦）；
@@ -350,7 +350,7 @@
 | `read_float(params, key, default, label, notes)` | 把参数读成 float | 同上 |
 | `clamp_int(value, low, high, label, notes)` | 把整数夹进 `[low, high]` | **只有真的越界了才记说明**（不许无脑加说明刷屏） |
 | `clamp_float(value, low, high, label, notes)` | 浮点夹取 | 口径同 `clamp_int` |
-| `force_odd(value, low, high, label, notes)` | 夹范围并强制成奇数 | 卷积核 / 形态学结构元 / Sobel·Laplacian 的 `ksize` 都要求正奇数，否则 OpenCV 直接抛；与 `ProcessOps._odd()` 同一口径 —— 那边是**算法侧兜底**（保证不崩），这边是**参数侧说明**（让用户知道值被改了） |
+| `force_odd(value, low, high, label, notes)` | 夹范围并强制成奇数 | 卷积核 / 形态学结构元 / Sobel·Laplacian 的 `ksize` 都要求正奇数，否则 OpenCV 直接抛；与 `core/ImageOps.odd_kernel()` 同一口径 —— 那边是**算法侧兜底**（保证不崩），这边是**参数侧说明**（让用户知道值被改了） |
 | `run_validation(spec, params)` | **窗口层与引擎层共用的唯一入口** | `spec` 为 None（模块未实现）或没有 `validate` ⇒ 直接放行；副本进副本出（不就地改）；`fixed` 过滤成"只含入参原有的键"；规则抛异常 ⇒ `参数校验规则异常（…）` |
 
 ---
@@ -377,7 +377,9 @@
 
 > **本章属于**：③ 算子实现 · 处理类
 
-## ProcessOps.py（389 行；处理类算子）
+## ops/process/ 下的 6 个处理类节点文件（批次5 目标1 拆分；原大类文件 389 行）
+
+> **2026.10.14 变更（批次5 目标1）**：原先这 6 个节点都在一个 `ProcessOps` 大类文件里（389 行），现在**一个节点一个文件**：`GrayOps.py`（灰度）· `InvertOps.py`（取反）· `BlurOps.py`（滤波）· `ThresholdOps.py`（二值化）· `MorphologyOps.py`（形态学）· `EdgeExtractOps.py`（边缘提取）；每个文件里都有"算法 + `_run_*` 引擎入口 + `validate_*` + `*_SPECS` 声明表"。**公共零件**（`to_bgr` / `apply_to_roi` / `odd_kernel`）提到 `core/ImageOps.py`（下节）。
 
 
 **文件作用**："处理"这一大类的**算法实现**（灰度/取反/滤波/二值化/形态学/边缘提取）与它们的参数声明 `PROCESS_SPECS`。处理类的共同语义：**输出图像和输入不一样**，下游看得见。
@@ -386,25 +388,25 @@
 
 **关键设计与原理**：
 - **一律"copy 出来 → 只在 ROI 上改 → 回填"**（`_apply_to_roi`）：绝不就地改传入数组（否则污染上游数据层）。
-- **输出永远 3 通道 BGR**（`_to_bgr` 兜底）：单通道图丢给下游的 `cv2.line/circle` 会抛异常。
+- **输出永远 3 通道 BGR**（`to_bgr()` 兜底，在 `core/ImageOps.py`）：单通道图丢给下游的 `cv2.line/circle` 会抛异常。
 - **灰度是唯一带 `whole_image_param` 的**：`gray_full_image` 为真时引擎把 ROI 当整图（"所见即所算"）。
 - 形态学/自适应阈值要求**奇数核**：`_odd()` 夹范围并强制奇数。
 
 | 类 / 函数 | 作用 | 实现原理与要点 |
 |---|---|---|
-| `_to_bgr(img)` | 保证 3 通道 BGR | 单通道 → `cv2.cvtColor(GRAY2BGR)`；已是 3 通道直接返回 |
-| `class ProcessOps` | 处理类算法集合 | 每个方法签名 `(img, roi, params) -> 新图` |
-| `ProcessOps._apply_to_roi(img, roi, func)` | 处理类通用外壳 | `img.copy()` → 切 ROI → `func(patch)` → 回填 → `_to_bgr`；ROI 非法就返回整图副本 |
-| `ProcessOps._odd(value, low, high)` | 夹范围 + 强制奇数 | 卷积核/自适应块尺寸必须是奇数 |
-| `ProcessOps.to_gray(img)` | 灰度化（数据层版） | 始终返回 3 通道 BGR 灰度图（供别处复用） |
-| `ProcessOps.gray(img, roi, params)` | 灰度 | ROI 内转灰度；`gray_full_image` 为真时整图 |
-| `ProcessOps.invert(img, roi, params)` | 取反 | `255 - x` |
-| `ProcessOps.blur(img, roi, params)` | 滤波 | 均值 / 高斯 / 中值（按 `blur_type`，核大小过 `_odd`） |
-| `ProcessOps.threshold(img, roi, params)` | 二值化 | 先转灰度再算：固定阈值 / Otsu / 自适应（块大小过 `_odd`），结果补回 3 通道 |
-| `ProcessOps.morphology(img, roi, params)` | 形态学 7 档 | 腐蚀 / 膨胀 / 开 / 闭 / 梯度 / 顶帽 / 黑帽；核形状（矩形/椭圆/十字）+ 核大小（奇数）+ 迭代次数 |
-| `ProcessOps.edge(img, roi, params)` | 边缘提取 | Canny / Sobel / Laplacian（按 `edge_type`） |
+| `to_bgr(img)`（`core/ImageOps.py`） | 保证 3 通道 BGR | 单通道 → `cv2.cvtColor(GRAY2BGR)`；已是 3 通道直接返回 |
+| 6 个节点文件里的算法函数（`to_gray` / `invert` / `blur` / `threshold` / `morphology` / `edge`） | 处理类算法 | 都跑在 `core/ImageOps.py` 的 `apply_to_roi()` 外壳上，签名 `(img, roi, params) -> 新图` |
+| `apply_to_roi(img, roi, func)`（`core/ImageOps.py`） | 处理类通用外壳 | `img.copy()` → 切 ROI → `func(patch)` → 回填 → `to_bgr`；ROI 非法就返回整图副本 |
+| `odd_kernel(value, low, high)`（`core/ImageOps.py`） | 夹范围 + 强制奇数 | 卷积核/自适应块尺寸必须是奇数 |
+| `to_gray(img)`（`GrayOps.py`） | 灰度化（数据层版） | 始终返回 3 通道 BGR 灰度图（供别处复用） |
+| `gray(img, roi, params)`（`GrayOps.py`） | 灰度 | ROI 内转灰度；`gray_full_image` 为真时整图 |
+| `invert(img, roi, params)`（`InvertOps.py`） | 取反 | `255 - x` |
+| `blur(img, roi, params)`（`BlurOps.py`） | 滤波 | 均值 / 高斯 / 中值（按 `blur_type`，核大小过 `_odd`） |
+| `threshold(img, roi, params)`（`ThresholdOps.py`） | 二值化 | 先转灰度再算：固定阈值 / Otsu / 自适应（块大小过 `_odd`），结果补回 3 通道 |
+| `morphology(img, roi, params)`（`MorphologyOps.py`） | 形态学 7 档 | 腐蚀 / 膨胀 / 开 / 闭 / 梯度 / 顶帽 / 黑帽；核形状（矩形/椭圆/十字）+ 核大小（奇数）+ 迭代次数 |
+| `edge(img, roi, params)`（`EdgeExtractOps.py`） | 边缘提取 | Canny / Sobel / Laplacian（按 `edge_type`） |
 | `format_process(results)` | 处理类日志文案 | 短文案（"结果数据"列会截断） |
-| `_run_gray / _run_invert / _run_blur / _run_threshold / _run_morphology / _run_edge` | 6 个 `run` 适配器 | 统一签名 `(detector, img, roi, params)`，内部转调 `ProcessOps.<方法>`（`detector` 用不到） |
+| 各区 `_run_gray` / `_run_invert` / `_run_blur` / `_run_threshold` / `_run_morphology` / `_run_edge`（分散在 6 个文件里） | 6 个 `run` 适配器 | 统一签名 `(detector, img, roi, params)`，内部转调 `ProcessOps.<方法>`（`detector` 用不到） |
 | `PROCESS_SPECS`（模块级 tuple） | 6 个处理类算子的声明表 | 每条 `{name, run, format_result, whole_image_param?, param_specs}` |
 
 ---
@@ -420,7 +422,7 @@
 **文件作用**："识别"分组里的**颜色提取**（树名 2026.10.12 由"颜色"改来）：**阈值内的像素保留原色、阈值外的像素变黑**（用户原话："运行后则提取出阈值颜色的画面。不在阈值中的画面变成黑色。"）。它是**处理类**（`KIND_PROCESS`，和灰度 / 二值化一样**改数据层**），只处理 ROI 那一块、ROI 以外保持原样；两种颜色模型（HSV / RGB）用下拉框切换，**13 个参数里 12 个阈值都是"进度条 + 微调框"**。
 
 **关键设计与原理**：
-- **复用处理类的通用外壳** `ProcessOps._apply_to_roi()`（copy → 只在 ROI 上变换 → 回填 → 保证 3 通道）⇒ "绝不就地改传入对象"这条契约只有一份实现，不会两处跑偏；
+- **复用处理类的通用外壳** `core/ImageOps.apply_to_roi()`（copy → 只在 ROI 上变换 → 回填 → 保证 3 通道）⇒ "绝不就地改传入对象"这条契约只有一份实现，不会两处跑偏；
 - **HSV 的 H 是 0~179**（OpenCV 口径，不是 0~360），S / V 是 0~255；**RGB 那套会先 `BGR2RGB` 再 `inRange`**，保证"参数里的 R 就是用户看到的 R"；
 - **"阈值外置黑"的写法** = `out = np.zeros_like(patch)` + `out[mask > 0] = patch[mask > 0]`（而不是 `bitwise_and`）—— 直观，且顺手用 `countNonZero` 统计命中像素；
 - **行联动**靠通用参数窗口的 `visible_when`：选哪个模型只显示哪一套 6 个阈值（见 `GenericProcessDialog.py` 一章）；
@@ -438,7 +440,9 @@
 
 > **本章属于**：③ 算子实现 · 图像源类（采集）
 
-## SourceOps.py（322 行；图像源类算子）
+## ops/source/ 下的 3 个图像源节点文件（批次5 目标1 拆分；原大类文件 322 行）
+
+> **2026.10.14 变更（批次5 目标1 第三轮）**：原先图片源 / 视频源 / 相机源都在一个 `SourceOps` 大类文件里（322 行），现在**一个节点一个文件**：`ImageSourceOps.py`（图片源，含 `_load_image` / `first_image_in_folder` / `_cached_test_image`）· `VideoSourceOps.py`（视频源，含 `_open_video` / `video_info`）· `CameraSourceOps.py`（相机源，含 `CAMERA_FRAME_PROVIDER` / `set_camera_frame_provider`）；每个文件里都有"算法 + `run_*` 引擎入口 + `format_*` 文案 + `*_SPECS` 声明表"。下面这张表按**功能**列（函数名不变，只是换了文件）。
 
 
 **文件作用**："采集"这一大类的实现：**图片源 / 视频源 / 相机源**。它们的共同点是"流程起点"——自己造图，没有上游。
@@ -921,7 +925,7 @@
 
 **关键设计与原理**：
 - **⚠ 两个检测函数都会就地修改传入数组**：`line_detector` 里的 `cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), 2)` 和 `circle_detector` 里的两条 `cv2.circle(img, ..., (0, 0, 255), ...)` 都是**直接画在传进来的 `img` 上**（不是副本），并把**同一个对象** `img` 原样 return 回去。所以调用方必须自己传副本——NodeRegistry 的 `_run_line` / `_run_circle` 正是先 `patch = img[y:y+h, x:x+w].copy()` 再调，注释里明确写了"如果忘了 copy()，画绿线时会把数据层图像改掉，下游就又'看见'绿线了"；独立测试 `main()` 里则是拿 `canvas, _ = ...` 接住这个被画过的数组去 `imshow`。
-- **灰度化写法**：`len(img.shape) == 2` 时直接 `gray = img`（已经是单通道），否则 `cvtColor(img, COLOR_BGR2GRAY)`；边车/圆检测在 gray 上做，但绘制仍然发生在原始 `img` 上。类注释说明：原来的灰度化函数 `gray_bgr` 已于 2026.10.3 搬到 `ProcessOps.to_gray()`，本文件只放检测类算法，处理类统一归 ProcessOps.py。
+- **灰度化写法**：`len(img.shape) == 2` 时直接 `gray = img`（已经是单通道），否则 `cvtColor(img, COLOR_BGR2GRAY)`；边车/圆检测在 gray 上做，但绘制仍然发生在原始 `img` 上。类注释说明：原来的灰度化函数 `gray_bgr` 已于 2026.10.3 搬到处理类（现在是 `ops/process/GrayOps.py` 的 `to_gray()`），本文件只放检测类算法、**且 2026.10.14 起只是"兼容门面"**（真算法在 `ops/detect/LineDetectOps.py` 与 `CircleDetectOps.py`）。
 - **ROI 偏移的处理顺序很关键**：算法是在 ROI 子图（patch）上跑的，所以 `x1,y1,x2,y2` 是子图局部坐标——**绘制用的是偏移前的局部坐标**，只有加进返回的 data 列表时才逐项 `+= roi_offset_x / roi_offset_y` 换回主图真实坐标；圆同理，`(x, y, r)` 中只有 x、y 加偏移，半径 r 不加。调用方（NodeRegistry）靠这个偏移量，让"在 ROI 副本上算出的结果"能直接对上原图坐标。
 - **返回值统一是 `(img, data)`**：直线 data 元素是四元组 `(x1, y1, x2, y2)`，圆 data 元素是三元组 `(cx, cy, r)`；检测不到时 data 是空列表（`lines is not None` / `circles is not None` 才进入循环）。`_draw_circle` 用 `len(item) == 3`、`_draw_line` 用 `len(item) == 4` 来区分两类结果。
 - **`make_test_image()` 是给全工程复用的"没有素材时的兜底图"**：480x640 黑底，画一个白色矩形边框、一个白色圆、一条白色长横线；GrayParamsDialog、CircleParamsDialog、LineParamsDialog、SourceOps 都 import 它来造测试图（工程里没有 `image/` 目录时也能跑，不会直接崩）。

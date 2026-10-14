@@ -17,21 +17,21 @@ import json
 import time
 import os
 
-from Detector import DetectorShape
-from ImageIO import read_image      # 图片读取统一入口（支持中文路径，2026.10.12）
-from FlowChart import NodeItem, EdgeItem, FlowchartView
-from FlowPages import FlowPageManager
-from LineParamsDialog import LineParamsDialog
-from CircleParamsDialog import CircleParamsDialog
-from GrayParamsDialog import GrayParamsDialog
-from GenericProcessDialog import GenericProcessDialog
-from ImageGraphicsView import ImageGraphicsView
-from ImageGalleryWidget import ImageGalleryWidget
-from NodeRegistry import (KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec,
+from core.Detector import DetectorShape
+from core.ImageIO import read_image      # 图片读取统一入口（支持中文路径，2026.10.12）
+from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView
+from widgets.FlowPages import FlowPageManager
+from ui.LineParamsDialog import LineParamsDialog
+from ui.CircleParamsDialog import CircleParamsDialog
+from ui.GrayParamsDialog import GrayParamsDialog
+from ui.GenericProcessDialog import GenericProcessDialog
+from widgets.ImageGraphicsView import ImageGraphicsView
+from widgets.ImageGalleryWidget import ImageGalleryWidget
+from core.NodeRegistry import (KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec,
                           node_level_param_keys, result_bbox)
 # 参数校验（批次4 目标4）：规则表写在各算子里，这里只负责"跑一遍 + 拿结果"
-from ParamRules import run_validation
-from OutputOps import (SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO,
+from core.ParamRules import run_validation
+from ops.sink.OutputOps import (SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO,
                        close_all_recordings, close_recording, set_input_name_provider,
                        set_overlay_frame_provider, set_round_info_provider)
 
@@ -140,7 +140,7 @@ class MainWindow:
         self._camera_device_id = None
         # 方案 A（用户 2026.10.7 拍板）：相机源节点**复用主窗口相机** —— 主窗口注入一个
         # "取最新一帧"的取帧器，节点自己不碰设备（局部导入，避免与"注册表 ← 分类模块"的顺序纠缠）。
-        from SourceOps import set_camera_frame_provider
+        from ops.source.CameraSourceOps import set_camera_frame_provider
         set_camera_frame_provider(self._latest_camera_frame)
         # 输出类节点（M5「输出图像」）的"文件名默认值"要跟着"输入图片的文件名"走：
         # 节点自己拿不到图片路径（run() 只收到图像数组），所以由主窗口在每一轮执行前准备好，
@@ -1900,7 +1900,7 @@ class MainWindow:
         name = getattr(origin, "name", "") if origin is not None else ""
         if name == "视频源":
             try:
-                from SourceOps import video_info
+                from ops.source.VideoSourceOps import video_info
                 _count, fps = video_info(origin.params.get("video_path") or "")
                 return float(fps or 0)
             except Exception:
@@ -2223,9 +2223,9 @@ class MainWindow:
           GenericProcessDialog，界面按参数表自动生成 ⇒ **新增算子不用改这里**。
         """
         spec = get_spec(node.name)
-        if node.name == "直线":
+        if node.name == "直线识别":
             self._open_node_dialog(node, LineParamsDialog)
-        elif node.name == "圆":
+        elif node.name == "圆识别":
             self._open_node_dialog(node, CircleParamsDialog)
         elif node.name == "灰度":
             self._open_node_dialog(node, GrayParamsDialog)
@@ -2998,7 +2998,7 @@ class MainWindow:
             self._video_timer = QTimer(self.main_window)
             self._video_timer.setSingleShot(False)
         self._maybe_load_video_params()           # 换了视频就先把"视频槽"那份参数载回来（只载一次）
-        from SourceOps import video_info          # 局部导入，避免与"注册表 ← 分类模块"的顺序纠缠
+        from ops.source.VideoSourceOps import video_info     # 局部导入，避免与"注册表 ← 分类模块"的顺序纠缠
         video = self._video_source_node()
         _count, fps = video_info(video.params.get("video_path") or "" if video else "")
         interval = int(1000.0 / (fps if fps and fps > 0 else 25.0))
@@ -3073,7 +3073,7 @@ class MainWindow:
         if self._camera_playing:
             self._camera_tick(node, mode)
             return
-        from SourceOps import video_info
+        from ops.source.VideoSourceOps import video_info
         video = self._video_source_node()
         if video is None:
             self._stop_video_playback("视频源节点已不存在")

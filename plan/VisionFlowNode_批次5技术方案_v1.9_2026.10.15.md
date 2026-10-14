@@ -1,0 +1,561 @@
+# VisionFlowNode 批次5 技术方案（重构）
+
+
+## 修改代码 / 文件的规矩（沿用批次4 口径；用户 2026.10.13 起，**必须遵守**）
+
+1. **改代码前先备份代码** —— 把要改的代码文件复制到 `E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_<说明>\`；改完再存一份 `_at_<yyyyMMdd_HHmm>` 快照（快照含 `plan\`、`tests\` 各一份）。
+2. **改技术文档前先备份该技术文档** —— 同样先把这份文档复制到 `E:\opencv_python_3_8\backups\`；改完再把新版存一份带版本号的快照（本方案每改一版都换版本号、旧版留档）。
+3. **改完写开发日志** —— 写进 `plan\pyside6_开发日志.md`（markdown 版；`pyside6.txt` 已冻结、不再改动）。格式 = 标题（`## 日期 批次N目标M-MZ 时间`）+「存在问题 / 原因分析 / 修改 / 验证 / 遗留」；**标题命名规则写在日志最开头**，写之前先看那几行。
+4. **三份文档继续冻结**：《VisionFlowNode 代码说明书》《VisionFlowNode 项目技术文档》《VisionFlowNode 用户手册》 —— **只有用户明确要求时才修改**，而且**版本号不动**（批次5 打包、批次6 开工之后才改版号）。用户说"**更新技术文档**"时，**批次5 期间默认只更新本方案这一份**。
+5. **做批次5 时以本方案为主**：《批次4 技术方案》（v1.53）**已冻结**（2026.10.13，批次4 全部收口），只作历史参考；《项目技术文档》只作参考。
+6. ★ **重构类的硬判据（本批次每一小步都要过）**：**行为零变化 + 门禁全部通过 + 界面零变化**；改完要用**改前快照**跑同一套用例做对照，失败项要逐条分类（是"老用例在描述旧行为"还是真回归）。
+7. **门禁与备份的位置**：门禁用例在**工程内 `temp\`**（一键跑 `temp\dsh_run_all_checks.py`，当前 **37 套 861 项**；目标1 之后变成 `tests\run_all_checks.py`）；备份与截图在**工程外** `E:\opencv_python_3_8\backups`（**不上传 GitHub**）；**git 一律不碰** —— 提交节奏由用户掌握。
+
+---
+
+| 项 | 内容 |
+|---|---|
+| 文档版本 | **v1.9**（v1.0 新建；v1.1 于 2026.10.14：节点错误态图标移出批次5、并入批次6，新增 §十二《想法（未开发）》；v1.2 于 2026.10.14：修净标题/正文里漏改的 M 编号；v1.3 于 2026.10.14：把 M1~M4 直接改成"目标1~目标4"；v1.4 于 2026.10.14：批次4 已提交 GitHub、写入仓库地址、收录参考项目目录分类；v1.5 于 2026.10.14：批次5 目标1（目录重构）落地 ✅；v1.6 于 2026.10.14：目标1 补做 —— 直线 / 圆各成一个节点文件；v1.7 于 2026.10.14：目标1 第二轮 —— `ops/` 按"树分组"重排、直线/圆 改名、`main.ui` 树新增「颜色处理」组、PyCharm 红线解法入档；v1.8 于 2026.10.14：目标1 第三轮 —— `ops/source/` 拆成 3 个节点文件、`main.ui` 把"检测"+"识别"合并成「检测识别」；**v1.9 于 2026.10.15：目标1 收口 —— §11.3 门禁口径改 `tests\`、新增 §4.5（落地后的目录现状速查）与 §4.6（节点文件为什么用函数而不是类）、《项目技术文档》事实同步**；历次修订见文末"变更说明"） |
+| 撰写日期 | 2026.10.14 起（历次修订见文末"变更说明"） |
+| 适用工程 | `E:\opencv_python_3_8\PySide\VisionFlowNoed`（目录名少个 d，也是 git 根）；**GitHub 仓库 = https://github.com/OvO641651/VisionFlow_Node** |
+| 代码基线 | 批次4 全部收口后的工程（回退点 = `_backup_VisionFlowNoed_at_20261013_1216`）；**批次4 目标5-M3 / M4 已完成并已提交到 GitHub** —— 仓库地址见 §11.4 |
+| 门禁基线 | **37 套 861 项断言全过**（从 `temp\dsh_run_all_checks.py` 跑；详细清单见 §11.3） |
+| 当前状态 | **批次5 进行中**：本方案 **v1.8**；**目标1 目录重构 ✅ 已完成**（2026.10.14 三轮：目录重构 + 补做 + 按树分组重排 + 拆源类/合并树干，见 §4.4；门禁 37 套 861 项全绿 + 界面零变化）；批次5 = **目标1 ✅ · 目标2 拆 `MainWindow` · 目标3 执行线程化 · 目标4 缓存上限 + 撤销 / 重做**（后三个还没动代码）；**批次6 = UI 界面大改**（目标1 节点修改 / 目标2 流程图预览控件 / 目标3 帮助页 / 目标4 其它）想法已入档 §十二、未排期；批次4 方案已冻结、三份文档继续冻结 |
+| 说明 | ★ 本方案是**批次5 的口径真源**，目录 / 术语 / 判据一律以本文为准。**归档约定**：本文件只放工程 `plan\`；每改一版先在 `E:\opencv_python_3_8\backups` 存一份带版本号的快照。 |
+
+---
+
+
+## 一、为什么做批次5：现状体检（数据都是实测）
+
+| 项 | 现状（2026.10.13 实测） | 为什么要动 |
+|---|---|---|
+| 文件布局 | **21 个文件全平铺在工程根**（18 个 `.py` + 3 个 `.ui`） | "一个节点一个文件"之后文件只会更多；从目录看不出"哪块管什么" |
+| `main.py` | **3327 行 / 117 个方法 / 54 个状态字段**（另 4 个模块级函数） | 主窗口 + 数据流引擎 + 方案持久化 + 参数归档 + 相机 / 视频 / 图库全挤在一个类里 |
+| 工程内 `import` | **38 条**（都是平铺导入） | 挪文件要一起改，是**目标1**的主要工作量 |
+| `QUiLoader` 相对路径 | **3 处**：`main.py` → `main.ui` / `SetCameraID.ui`，`LineParamsDialog.py` → `LineParamsDialog.ui` | 它按**当前工作目录**解析 ⇒ `.ui` 一挪目录就必须改成显式路径，否则启动即崩 |
+| 用例对 `main.py` 的直连 | **29 个方法被 40 套门禁用例直接以 `w.方法名(...)` 调用**（`add_flow_node` / `_execute_node` / `_run_flow_pipeline` / `_show_static_image` / `save_project` / `_video_tick` …） | 决定了"拆 `MainWindow` 必须先走 Mixin"（见 §五） |
+| 执行模型 | 在**界面线程里同步跑**（点「停止」只能急停） | 大批量跑图会"卡"到跑完；没有进度、不能取消 |
+| 结果缓存 | **没有容量上限** | 长时间大量跑图会占内存 |
+| 编辑能力 | **没有撤销 / 重做**，没有快捷键 | 改流程只能删了重来 |
+| 节点状态 | 只有**执行日志那一行红字**，节点本身没有状态显示 | 用户要 VM 式"节点左边图标，出错变红"—— **已移到批次6 与 UI 大改一起做**（见 §十二《想法（未开发）》） |
+
+> 这些都是《批次4 技术方案》§9.2 里列的**架构债**；批次4 全部收口、备份链完整，才有条件动它们（用户口径："重构类，等前面稳定、且有备份 / 版本控制之后再做"）。
+
+---
+
+
+## 二、总目标与验收方式
+
+**总目标**：在**不改变任何用户可见行为**的前提下，把工程从"单文件大杂烩"整理成"分层 + 分类清晰"的骨架，并补上三项长期缺的能力（**执行线程化 / 缓存上限 / 撤销重做**）。
+
+**四条铁律（每一小步都要过）**：
+
+1. **行为零变化**（重构步）：门禁 **37 套 861 项全绿**（之后只增不减）；
+2. **界面零变化**：改完 `grab()` 抓图与改前对照（对照集 = `backups\_ui_preview\截图索引.md` 里已登记的 73 张）；
+3. **先备份、改完写日志**（见开头规矩）；
+4. **目标3 / 目标4 属于"新增能力"，不算零变化**（**目标1 / 目标2 是纯重构，必须零变化**）—— 按各自判据验收，并且**先出最小可用第一版**，后续再分批扩展（用户一贯的工作方式）。
+
+**分批验收**（沿用用户 2026.10.7 给的方式表）：批次5 = 重构类 ⇒ 每个子里程碑做完**单独给验收点**，用户逐个过；**整体总结只在用户要求（验收）时才写**。
+
+---
+
+
+## 三、批次5 的目标划分（用户 2026.10.13 已拍板；2026.10.14 编号改为"目标"）
+
+> **结构（沿用批次4 的编号习惯）**：**批次5 → 目标1 ~ 目标4**（本批次**不再分 M 层** —— 一个目标就是一件事）；日志条目标题按 **`## 日期 批次5目标1 时间`** 这样写（批次4 是 `批次4目标5-M3` 那种形式，**只有"目标下面再分 M"时才带 `-MZ`**）。**批次6 也照此办**（`批次6 目标1~目标4`，见 §十二）。
+
+| 目标 | 内容 | 硬判据 | 主要影响面 |
+|---|---|---|---|
+| **目标1** ✅ | **目录重构** + **37 套门禁用例从 `temp\` 迁到 `tests\`**（2026.10.14 完成，见 §4.4） | **37 套 861 项全绿 + 界面零变化** ✅ | 41 处代码 import + 用例/工具 import / 1 处 `.ui` 路径 / 用例路径 / 文档路径 |
+| **目标2** | **拆 `MainWindow`**（**先用 Mixin**） | 行为零变化 + 用例全绿 + 界面零变化 | 新增 6 个文件；`main.py` 只留"入口 + 界面装配" |
+| **目标3** | **执行线程化**（大批量跑图不卡界面 + 进度 / 取消） | 大批量跑图**界面不卡** + 可取消 + 结果与串行**逐像素一致** | 引擎执行入口 + 跨线程信号（日志 / 进度） |
+| **目标4** | **结果缓存上限（LRU）+ 撤销 / 重做（命令模式）** | 内存上限断言 + 撤销 / 重做往返断言 | 缓存结构 + 改动入口收敛（节点增删 / 连线 / 参数） |
+
+**顺序理由**：**目标1** 必须最先（后面每一项都要动 import / 路径）；**目标2（拆 `MainWindow`）最大、必须在目标1 之后**；**目标3 / 目标4 都依赖目标2 拆出来的引擎接口**。
+
+> ★ **2026.10.14 调整**：原先排在批次5 的 **"节点错误态图标"已移出** —— 用户决定把 **UI 界面大改**（**节点的修改 / 流程图预览控件 / 帮助页面** 等）**集中到批次6** 做（原话："我打算在后续的批次6再把 ui 界面进行大改，包括节点的修改，添加流程图预览控件，帮助页面等内容，由于修改的内容比较多，所以设置一个批次6来实现"）⇒ 详见 **§十二《想法（未开发）》**。
+
+---
+
+
+## 四、批次5 目标1：目录重构（已拍板，2026.10.13）
+
+### 4.1 目标目录（**2026.10.14 第二轮按"树分组"重排后的拍板版**）
+
+```
+ops/                                 算子（**一个节点一个文件**）
+├── source/   采集 3 个节点，**各一个文件**：
+│             ImageSourceOps.py（图片源）· VideoSourceOps.py（视频源）· CameraSourceOps.py（相机源）
+├── sink/     输出：OutputOps.py（输出图像）                     ← 输出类不动
+├── process/  处理 6 个节点，**各一个文件**：
+│             GrayOps.py（灰度）· InvertOps.py（取反）· BlurOps.py（滤波）·
+│             ThresholdOps.py（二值化）· MorphologyOps.py（形态学）· EdgeExtractOps.py（边缘提取）
+├── detect/   检测 3 个节点：LineDetectOps.py（**直线识别**）· CircleDetectOps.py（**圆识别**）·
+│             FaceDetectOps.py（人脸识别）
+└── color/    **新建的"颜色处理"这一类**：ColorExtractOps.py（颜色提取）
+              （2026.10.14 用户：这个文件夹后续放颜色分割 / 颜色转换等"颜色处理"的内容）
+
+core/                                零 GUI 依赖的纯逻辑
+├── NodeRegistry.py                  登记 + 查询 + result_bbox（各节点的声明由 ops/* 下的文件导出）
+├── ParamRules.py · ImageIO.py       参数校验零件 · 图片读写（中文路径）
+├── ImageOps.py                      **处理类公共零件**：to_bgr / apply_to_roi / odd_kernel
+└── Detector.py                      **兼容门面**：DetectorShape 转发 + make_test_image
+
+ui/     参数窗口与对话框（含同目录的 LineParamsDialog.ui）      widgets/  画布 / 页签 / 显示 / 图库
+tests/  37 套门禁用例 + dsh_run_all_checks.py（进 git）        temp/     本机工具（不进 git）
+```
+
+> **图例**：★ = 批次5 要新建 / 迁移的；**规划中的文件刻意不写 `.py` 后缀**（免与现有文件混淆）；**上面这版已经落地**（见 §4.4），落地后的真实文件名就是树里写的那些。
+> **文件名保持现状** —— 不改名、不改大小写风格（老文件仍 `CamelCase`，目标2 新建的拆出文件用 `snake_case`）、只挪目录。
+>
+> **★ 2026.10.14 第二轮（用户拍板）**：`ops/` 改成**按"树分组"分** —— `source/`（采集 3）· `sink/`（输出 1，两个都不动）· `process/`（处理 6，**一个节点一个文件**）· `detect/`（检测 3）· **`color/`（"颜色处理"这一类，新建）**；**暂不分二级目录**（用户："后续节点多了我再修改整理，现在还不需要分二级目录"）；**直线 / 圆 改名「直线识别」/「圆识别」**，`main.ui` 树控件同步（新增顶层组「颜色处理」→「颜色提取」）。注意：**kind（source / process / detect / sink）与文件夹无关** —— 它一直是 `_register_category(XXX_SPECS, KIND_?)` 注册时显式传入的，所以换目录不用动它（`ops/color/` 里放的就是 kind=process 的颜色提取）。
+
+### 4.2 为什么 `main.ui` 不进 `ui/`
+
+`QUiLoader().load('main.ui')` 用的是**当前工作目录**的相对路径，而 `main.py` 作为入口**必须留在工程根**（`python main.py` 的习惯 + 工作目录 = 工程根）⇒ **`main.ui` 跟着它留根**，`main.py` 里那两处 `load()` 一行都不用改。
+只有 `LineParamsDialog.ui` 跟着窗口进 `ui\`，**改 1 处** `load()` 为显式路径（`os.path.join(BASE, 'ui', 'LineParamsDialog.ui')`）。
+
+### 4.3 连带改动清单（一次做干净）
+
+| # | 连带项 | 现状 | 处理 |
+|---|---|---|---|
+| 1 | 工程内 `import` | **38 条**平铺导入 | 按新路径改；不要靠到处 `sys.path` 兜底 |
+| 2 | `QUiLoader().load(...)` | **3 处**、按工作目录解析 | `main.ui` / `SetCameraID.ui` 那 2 处不动；`LineParamsDialog.ui` 那 1 处改成显式路径 |
+| 3 | 门禁用例路径 / `sys.path` | 用例在 `temp\`，内部写死工程根 | 37 套迁 `tests\`，用例里的路径与 `sys.path` 同步；**判据 = 用例数 / 断言数一个不少** |
+| 4 | 备份脚本与快照口径 | 快照含 `plan\` + `temp\` | 改成含 `plan\` + `tests\` |
+| 5 | 文档路径 | 本方案 §十一、《项目技术文档》§8、《代码说明书》文件总览 | 本方案先定新路径；**那三份文档冻结** ⇒ 等用户要求时再同步 |
+
+### 4.4 落地结果（**2026.10.14 三轮全部完成 ✅**；现状目录见 §4.5，节点写法见 §4.6）
+
+| 项 | 实际做了什么 |
+|---|---|
+| 目录 | 新建 `core/ ops/{source,process,detect,sink} ui/ widgets/ tests/`（各带 `__init__.py`）；**18 个文件按 §4.1 挪到位**（含 `LineParamsDialog.ui` 跟窗口一起进 `ui/`） |
+| 工程根只剩 | `main.py` · `main.ui` · `SetCameraID.ui` · `pyside6.txt` · `.gitignore` · `haarcascade_frontalface_alt.xml`（用户放的级联文件） |
+| 代码 import | **41 处**改成包路径（如 `from ParamRules import …` → `from core.ParamRules import …`、`import FlowPages` → `import widgets.FlowPages as FlowPages`）；`main.py` 17 处、17 个挪走的模块 24 处 |
+| `.ui` 路径 | 只改了 1 处：`ui/LineParamsDialog.py` 的 `load('LineParamsDialog.ui')` → **显式路径**（`os.path.dirname(os.path.abspath(__file__))`）；`main.ui` / `SetCameraID.ui` 那两处**不动**（窗口留根） |
+| 用例 | **37 套用例 + `dsh_run_all_checks.py` 进 `tests\`**（进 git）；**8 套历史留档进 `temp\legacy\`**（不进 git）；**149 个工具脚本留 `temp\`**；用例与工具里的工程内 import **一起改成包路径**（共 60 个文件） |
+| **补做（用户 2026.10.14 提）** | **直线 / 圆各成一个节点文件**：新建 `ops/detect/LineDetectOps.py`（`LineDetector` + `LINE_SPECS`）与 `ops/detect/CircleDetectOps.py`（`CircleDetector` + `CIRCLE_SPECS`），算法 + 引擎入口 + 显示绘制 + 日志文案 + 参数校验 + 声明表**都在同一个文件里**；`core/Detector.py` 只剩**门面** `DetectorShape`（转发、方法签名不变）+ `make_test_image`（**74 行**）；`core/NodeRegistry.py` 里手写的 158 行（`_run_line` / `_run_circle` / `_draw_*` / `_format_*` / `validate_*` / 两条登记）移走 ⇒ **387 → 244 行**，直线 / 圆改由两个新文件登记（`_register_category(LINE_SPECS / CIRCLE_SPECS, KIND_DETECT)`） |
+| **第二轮（用户 2026.10.14）** | ① **`ops/` 按"树分组"重排**：`process/` 拆成 6 个节点文件（原 `ProcessOps.py` 388 行删除）、新建 **`ops/color/`**（"颜色处理"这一类）并把 `ColorExtractOps.py` 挪进去、`source/` 与 `sink/` 不动；② **节点改名**：直线 → **直线识别**、圆 → **圆识别**（注册表 / 引擎路由 / 专用窗口 / 用例 / 树全部同步）；③ **公共零件提到 `core/ImageOps.py`**（`to_bgr` / `apply_to_roi` / `odd_kernel`）；④ **`main.ui` 树控件**：检测组里改名，识别组只剩人脸识别，**新增顶层组「颜色处理」→「颜色提取」**；⑤ 两份冻结文档（《项目技术文档》《代码说明书》）做了**被逼出来的最小同步**（旧文件/旧符号/旧节点名，**版本号不动**） |
+| **第三轮（用户 2026.10.14）** | ① **`ops/source/` 拆成 3 个节点文件**（`ImageSourceOps.py` / `VideoSourceOps.py` / `CameraSourceOps.py`，原 `SourceOps.py` 322 行删除；`set_camera_frame_provider` 随相机源、`video_info` 随视频源）；② **`main.ui` 树干合并**：把"检测"与"识别"合成 **「检测识别」**，3 个节点（直线识别 / 圆识别 / 人脸识别）都在里面，「颜色处理」组不动；③ 连带改 `core/NodeRegistry.py`（3 条登记）、`main.py`（4 处导入）、4 套用例、1 个工具脚本；④ 两份冻结文档再次做**被逼出来的最小同步**（《项目技术文档》9 处、《代码说明书》4 处，**版本号不动**） |
+| 守卫 | 7 套"改前/改后对照"用例加了守卫：**`before` 模式在重构后不再可用**（备份快照是旧的扁平布局），显式提示后跳过（默认跑 `after`，门禁不受影响） |
+| 门禁用例的两处适配 | `dsh_doc_consistency_check.py` ① 改成**全树扫描** `PY_FILES`（文档提到 `NodeRegistry.py` 现在在 `core/`）；`dsh_m3_index_check.py` 的 `SUITE_DIRS` 加上 **`temp/` 与 `temp/legacy/`**（验点清单里引用了两套历史留档用例） |
+
+**验收（全部实跑）**：
+- **第三轮（拆源类 + 合并树干）实测**：树分组 = 采集(4) / 处理(6) / **检测识别(直线识别·圆识别·人脸识别)** / 颜色处理(颜色提取) / 新建项目；算子总数仍 **14**；三个源节点 `kind=source` 且各跑一次都正常（图片源/视频源/相机源，拿不到素材时按老口径"透传 + 结果里写说明"）；抓图 `backups\_ui_preview\m1c_after_merge_groups.png`（已登记《截图索引》）；**全量门禁 37 套 861 项全绿**（把 `dsh_m2_check` 里「识别分组」那条换成了更硬的「识别树干必须已并入」）。
+- **`tests\dsh_run_all_checks.py` ⇒ 37 套 861 项断言"失败项：无"** ✅（37 套一套不少、断言数一项不少）；
+- **界面零变化** ✅：抓图 `backups\_ui_preview\m1_after_dir_refactor_mainwindow.png`（1280×800，顶部 8 按钮 / 项目树 5 组 / Flow 页签 / 显示区 / 图库工具栏 8 控件 / "当前结果" 5 列 / 底部提示条，与重构前一致）—— 已登记进《截图索引》；
+- `py_compile` 全部源文件通过 + `MainWindow` 能正常构造（节点树 5 个顶层项）+ 模块来源抽查（`main.py` / `core\NodeRegistry.py` / `widgets\FlowChart.py`）；
+- **判据达成**：行为零变化（门禁全绿）+ 界面零变化（抓图）；
+- **第二轮（按树分组 + 改名 + 拆 6 个处理节点）实测**：树分组 = 采集（4 叶子）· 处理（6）· 检测（直线识别 / 圆识别）· 识别（人脸识别）· **颜色处理（颜色提取）**· 新建项目；算子总数仍 **14**；`直线识别` / `圆识别` / `颜色提取` 都能 `get_spec` 到；抓图 `backups\_ui_preview\m1b_after_tree_groups.png`（已登记《截图索引》）；**全量门禁 37 套 861 项全绿**。
+- **直线 / 圆拆分后的实测**：算子总数仍 **14**；`直线` / `圆` 的 `kind=detect`、`draw` 与 `validate` 都在；两个算子各跑一次 lena ⇒ **数据层图像未被改**（`out is img` 为真）+ 检出结果正常（直线 64 条 / 圆 7 个）；`DetectorShape().line_detector(...)` 门面仍可调用。
+
+---
+
+
+### 4.5 目标1 落地后的目录（现状速查，2026.10.14 三轮全部完成 ✅）
+
+```
+VisionFlowNoed/                      ← 工程根（= git 根；`QUiLoader` 按工作目录读 `.ui`，所以工作目录必须是这里）
+├── main.py                          入口 + 界面装配 + 数据流引擎（目标2 会继续把它拆瘦）
+├── main.ui · SetCameraID.ui         主界面 / 相机编号对话框的布局（★ 按用户 2026.10.14 拍板**留在根**，跟 main.py 一起）
+├── pyside6.txt · .gitignore · haarcascade_frontalface_alt.xml
+├── core/                            零 GUI 依赖的纯逻辑
+│   ├── NodeRegistry.py              登记 + 查询 + result_bbox（NodeSpec 契约就定义在这里）
+│   ├── ParamRules.py                参数校验零件（clamp_* / read_* / force_odd / run_validation）
+│   ├── ImageIO.py                   图片读写（中文路径：np.fromfile + imdecode / imencode + tofile）
+│   ├── ImageOps.py                  处理类公共零件（to_bgr / apply_to_roi / odd_kernel）
+│   └── Detector.py                  兼容门面 DetectorShape（转发给 ops/detect/ 两个算法类）+ make_test_image()
+├── ops/                             算子：**一个节点一个文件，共 14 个**
+│   ├── source/  ImageSourceOps.py · VideoSourceOps.py · CameraSourceOps.py     （采集 3）
+│   ├── sink/    OutputOps.py                                                   （输出 1）
+│   ├── process/ GrayOps.py · InvertOps.py · BlurOps.py · ThresholdOps.py ·
+│   │            MorphologyOps.py · EdgeExtractOps.py                           （处理 6）
+│   ├── detect/  LineDetectOps.py · CircleDetectOps.py · FaceDetectOps.py       （检测识别 3）
+│   └── color/   ColorExtractOps.py                                            （颜色处理 1）
+├── ui/                             参数窗口 + 同名 `.ui`（LineParamsDialog.py/.ui · CircleParamsDialog.py · GrayParamsDialog.py · GenericProcessDialog.py）
+├── widgets/                        画布 / 多页签 / 显示区 / 图库（FlowChart · FlowPages · ImageGraphicsView · ImageGalleryWidget）
+├── tests/                          ★ 门禁：37 套 `*_check.py` + `dsh_run_all_checks.py`（**进 git**）
+├── temp/                           本机工具（探针 / 截图 / 一次性脚本，**不进 git**；`legacy/` = 8 套历史留档用例）
+├── plan/ · image/                  文档 6 份 · 测试图像
+└── services/                       ★ **目标2 才建**（camera_service / video_service / gallery_service 从 main.py 拆出来时）
+```
+
+**与 `main.ui` 树干的对应关系**（树干 = 用户心智，文件夹 = 代码组织）：
+
+| `main.ui` 树干 | 对应文件夹 | 叶子 |
+|---|---|---|
+| 采集 | `ops/source/` + `ops/sink/` | 图片源 · 视频源 · 相机源 · 输出图像 |
+| 处理 | `ops/process/` | 灰度 · 取反 · 滤波 · 二值化 · 形态学 · 边缘提取 |
+| **检测识别** | `ops/detect/` | 直线识别 · 圆识别 · 人脸识别 |
+| **颜色处理** | `ops/color/` | 颜色提取 |
+
+> ★ **kind 与文件夹无关**：`source / process / detect / sink` 是**逐节点**的引擎语义契约，由注册表 `_register_category(XXX_SPECS, KIND_?)` **注册时显式传入** ⇒ 换目录、改树干名都不用动它。
+> ★ **加一个算子仍然只动三处**：① 新增一个节点文件（算法 + `_run_*` + `format_*` + `validate_*` + `*_SPECS`）；② `core/NodeRegistry.py` 末尾一行 `_register_category(…, KIND_?)`；③ `main.ui` 树里加一项。
+
+### 4.6 节点文件为什么写成"函数 + 声明表"、而不是类（2026.10.14 定稿，用户提问后补写）
+
+**现状一句话**：**契约用类、行为用函数、登记用数据**。
+
+| 位置 | 形态 | 例子 |
+|---|---|---|
+| **节点契约**（一个算子是什么） | **类**（数据契约） | `core/NodeRegistry.py::NodeSpec`：`name` / `kind` / `run` / `draw` / `format_result` / `whole_image_param` / `param_specs` / `validate`，外加 `modifies_image`、`is_flow_level` 两个派生属性 |
+| **节点声明**（登记哪几个节点、参数长什么样） | **纯数据**（dict 列表） | `GRAY_SPECS` · `LINE_SPECS` · `IMAGE_SOURCE_SPECS` … |
+| **节点行为** | **函数** | `gray(img, roi, params)` · `_run_gray(detector, img, roi, params)` · `validate_blur(params)` · `format_camera(results)` |
+| **算法族**（有状态 / 多方法） | **类** | `LineDetector` · `CircleDetector`（`ops/detect/` 里）· `DetectorShape`（门面） |
+| **Qt 控件** | **类**（必须继承） | `FlowchartView` · `ImageGalleryWidget` · `FlowPages` |
+
+**七条理由**（每条都对着本工程的实情）：
+
+1. **节点是纯变换、没有状态**。引擎契约只有一个签名 `run(detector, img, roi, params) -> (out_img, results)`，输入输出**全在参数里**；节点自己不持有任何跨调用状态（状态都在 `FlowNode.params` 上、由引擎管）。给无状态的东西套类只有两种下场：全是 `@staticmethod`（早期 `class ProcessOps` 就是这样 —— **类只是个命名空间、没有语义**），或者要额外管实例生命周期（谁 new、何时 new、跨图 / 跨页要不要复用）——而引擎**根本不需要"实例"这个概念**，它要的是 `get_spec("灰度").run(...)`。
+2. **注册表要的是"查表"，不是"多态"**。引擎全程只做 `NODE_SPECS[name] → NodeSpec → spec.run(...)`；面向对象在节点层的三个收益 —— 继承、覆写、`isinstance` 分支 —— **一个都用不上**：本项目**没有"子类节点"**（形态学 7 档是**参数差异**、不是类差异，正是"参数同构就合并进同一个节点"这条口径）。用类反而会诱导出"直线节点继承检测节点基类"这种**继承树**，那正是评估参考项目时明确避开的（不照搬插件化 / DI / 事件总线）。
+3. **声明表天然就该是数据**。`param_specs` 是"键 / 标签 / 控件类型 / 选项"的表格，`GenericProcessDialog` 是**照着表生成界面**的；写成类就要多回答一堆没意义的问题（参数表放类属性还是方法返回？能不能被继承覆盖？）——而 dict 列表是最省事的数据：**加一个参数就是加一行**。
+4. **一个节点一个文件 + 函数 ⇒ diff 最小、连锁最少**。改一个算子的算法 = 改那一个函数体，不碰类结构、不碰基类，不会出现"改基类、14 个节点一起受影响"。
+5. **契约一眼看全**。函数签名就是契约（而且刻意把 `detector` 也传进来，让"公共零件只有一份实现" —— `ImageOps` 的 `to_bgr` / `apply_to_roi`）。写成类的话，契约会散在 `__init__`、方法、类属性三处。
+6. **测试与门禁好写**。用例直接 `get_spec(name).run(w.detector, img, roi, params)`，或 `from ops.process.GrayOps import to_gray` 直接调算法函数 —— 不用构造实例、不用打桩（**861 项断言**全靠这个）。
+7. ★ **依赖方向干净（硬理由）**：节点文件只 import `core.ParamRules` / `core.ImageOps`，**绝不 import `core.NodeRegistry`**；注册表在**文件末尾**才 import 各 `*_SPECS` ⇒ **不循环导入**。若让节点自己 `new NodeSpec(...)`，节点就必须 import 注册表 ⇒ **互相 import ⇒ 循环**。用"纯数据声明表"就没有这个问题：**谁都能读它、它不依赖谁**。
+
+**一句话判据**：**数据 / 契约 ⇒ 类；无状态的行为 ⇒ 函数；有内部状态或一族相关方法 ⇒ 类；Qt 控件 ⇒ 类（继承是唯一的复用手段）。**
+
+**如果真改成"每个节点一个类"**（例如 `class GrayNode(NodeBase)`）：① 得先造 `NodeBase` 基类（把 `kind` / `param_specs` / `validate` 定义成钩子）⇒ 框架复杂度上一档；② 依赖方向翻转（节点 → 框架，现在是 注册表 → 节点声明）⇒ 循环导入要重新设计；③ 引擎得决定"实例从哪来、跨图 / 跨页是否复用"⇒ **多一层可变状态**（本项目在"参数按图归档"上已经踩过三次坑，再多一层实例状态只会更难查）；④ 40 套用例里 29 个 `w.方法名()` 直连调用 + 大量 `get_spec(x).run(...)` 都要跟着改；⑤ 换来的收益是 **0**（没有继承需求、没有多态分支、没有实例状态）。
+
+**什么时候该用类**：等真的出现"一族节点共享复杂内部状态"（例如以后接 ONNX 节点，要持模型句柄 / 会话缓存）⇒ **那一个文件**用类（就像现在的 `LineDetector` / `CircleDetector`），其余节点照旧用函数 —— 这就是现在 `ops/detect/` 里两种形态并存的原因。
+
+## 五、批次5 目标2：拆 `MainWindow`（已定方案）
+
+### 5.1 拆分边界（= 《代码说明书》里 `main.py` 那 10 章）
+
+| 拆出的文件 | 装原 `main.py` 的哪些内容 | 落点 | 碰 Qt？ |
+|---|---|---|---|
+| `core/flow_engine` | 五 执行入口与数据流引擎 + 六 渲染显示 + 七 显示键 | `core/` | 否（numpy / cv2 为主） |
+| `core/project_store` | 二 方案持久化（收集 / 指纹 / 读写 / 追加去重） | `core/` | 否（**弹对话框那两处留在 `main.py`**） |
+| `core/param_store` | 四 参数归档（按图片 / 流程级 / `per_node`） | `core/` | 否 |
+| `services/camera_service` | 八 相机（开关设备 / 取帧 / 执行时自动打开 / 老预览分支） | `services/` | 是（`QTimer` + 相机） |
+| `services/video_service` | 九 视频（帧游标 / 播放定时器 / 录制收尾） | `services/` | 是 |
+| `services/gallery_service` | 十 图库（导入 / 删除 / 切换 / 运行范围） | `services/` | 是（要操作图库控件） |
+| `main.py`（剩下） | 一 启动与界面接线 + 三 建图与改动（信号接线 / 双击路由 / 脏标记 / `findChild` 收编） | **工程根** | 是 |
+
+### 5.2 先 Mixin、后组合
+
+| 拆法 | 做法 | 门禁用例 | 建议 |
+|---|---|---|---|
+| **A. Mixin 拆分（目标2 就做这个）** | 每个新文件一个 `XxxMixin`，`class MainWindow(StartupMixin, ProjectStoreMixin, ParamStoreMixin, FlowEngineMixin, CameraMixin, VideoMixin, GalleryMixin, QMainWindow)`；方法之间照旧 `self.xxx` 互调 | **0 改动** | ★ 风险最低、行为零变化 |
+| **B. 组合 / 委托（以后真需要再上）** | 抽成 `FlowEngine(self)` / `ProjectStore(self)` / `CameraService(self)`…，主窗口持引用并转调 | 调用点要改成 `w.engine._execute_node(...)` ⇒ **29 个方法 × 40 套用例都要改** | 收益不够抵成本 |
+
+**关键约束（实测）**：**29 个方法被 40 套门禁用例直接以 `w.方法名(...)` 调用** ⇒ 这正是"先 Mixin"的理由（`self` 仍是主窗口，调用点一个都不用改）。
+
+**三条硬点**：
+1. **54 个状态字段**散布在各方法里 ⇒ Mixin 直接共享 `self` 最省事（组合式则要先想清"哪些状态归哪个服务"）；
+2. **信号接线 + "当前页"状态**（`_bind_current_flow_page()` / `flow_nodes` / `selected_node`）建议**仍留主窗口**，或收敛成一个 `FlowContext` 对象传下去；
+3. **`QUiLoader` 加载 `main.ui` + `findChild` 收编控件**必须留主窗口。
+
+### 5.3 判据
+**行为零变化 + 37 套 861 项全绿 + 界面零变化**；每拆一块就复跑一次门禁（别等全拆完）。
+
+---
+
+
+## 六、批次5 目标3：执行线程化（初步设计，细节开工前再定）
+
+**目标**：大批量跑图（运行全部 / 长视频 / 相机流）时**界面不卡**，并且能**看进度、能取消**。
+
+**方向**：把"执行一批"放进工作线程（`QThread` + worker 对象，或 `QThreadPool` + `QRunnable`），**引擎只算不碰界面**，通过**信号**把"每张图的结果 / 进度 / 日志行"回传主线程渲染。
+
+**要遵守的既有语义**（不许改）：
+- 连续执行 = **选中节点 + 它的全部上游**；单步 = 只跑选中那一个；范围由下拉框决定；
+- 结果缓存键 = **图片 × 页面 × 执行方式**（跨线程读写要有锁或"只主线程写"的约定）；
+- **相机帧不进缓存**；
+- 执行 / 渲染路径**绝不弹 `QMessageBox`**（提醒只写日志）；
+- 取消 = 干净的急停（半张图的结果不能进缓存 / 不能算成功）。
+
+**风险与前置**：线程化会碰到"Qt 对象只能在主线程碰"这条规矩 ⇒ **引擎侧要先把"纯计算"和"碰控件"彻底分开**（目标2 拆出来的 `core/flow_engine` 正是为此铺垫）。**验收**：同一批图，串行与线程化的**输出逐像素一致**、日志行数一致（顺序允许不同）、取消后程序状态可继续操作。
+
+---
+
+
+## 七、批次5 目标4：结果缓存上限（LRU）+ 撤销 / 重做（初步设计）
+
+**8.1 缓存上限**
+- 现状：结果缓存没有容量上限（长时间跑图占内存）；
+- 做法：给缓存加一个**上限 + LRU 淘汰**（上限值待用户定，如"最多 N 张图 × 每页"）；**淘汰不能影响正确性**（下次要用到就重算，只是慢一点）；
+- 判据：**内存上限断言**（跑超量图后缓存条目数 ≤ 上限）+ 淘汰后重算结果与未淘汰时一致；**相机帧仍然不缓存**。
+
+**8.2 撤销 / 重做**
+- 现状：没有撤销 / 重做，改流程只能删了重来；
+- 做法：**命令模式** —— 把"会改流程图"的动作收敛成命令（节点增删 / 连线增删 / 参数修改 / 页面新建与切换），每个命令实现 `do()` / `undo()`；栈上限 + 清栈时机（换页 / 载入方案）要定清楚；
+- **参考**：开源参考项目 VisionFlow 的 `core/commands.py`（"纯元组坐标、无 Qt 依赖"）就是这个思路；
+- 判据：**往返断言**（做 N 步 → 撤销 N 步 = 回到初始状态；再重做 N 步 = 回到末态），含参数修改与连线。
+- **待用户拍板**：撤销范围（是否含图库导入 / 输出参数 / 相机开关）、快捷键（Ctrl+Z / Ctrl+Y）、栈上限。
+
+---
+
+
+## 八、新文件往哪放（落点规则，已拍板 2026.10.13）
+
+| 你要加的东西 | 放哪 | 例子 |
+|---|---|---|
+| **新的算子**（一个节点一个文件） | `ops/<kind>/` | `ops/detect/FaceDetectOps.py` |
+| **参数窗口 / 对话框**（独立弹出、有"确定/取消"） | `ui/`（同名 `.ui` 跟它同目录） | `ui/CircleParamsDialog.py` |
+| **嵌进主界面的控件 / 面板** | `widgets/` | 流程图小地图 `widgets/flow_minimap`、帮助页 `widgets/help_panel` |
+| **画布相关的类**（场景 / 节点项 / 连线项 / 视图） | `widgets/`；再大就开 `widgets/flow/` 子目录 | 照参考项目 `gui/node_editor/` 的 scene / node_item / edge_item / view 拆法 |
+| **引擎、纯逻辑** | `core/` | `core/flow_engine`、`core/project_store` |
+| **碰 Qt / 硬件的服务** | `services/` | `services/camera_service` |
+| **节点自己的说明文本**（帮助页要显示的内容） | **跟着节点文件走** —— 算子声明的一部分（`NodeSpec` 加 `help_text` 字段），不集中到一个文件 | 写在 `ops/detect/FaceDetectOps.py` 里 |
+| **门禁用例** | `tests/`（目标1 从 `temp\` 迁入后） | `tests/dsh_m5_output_check.py` |
+
+**两个已确定的具体落点**：
+
+1. **流程图右下角的"小地图 / 全图预览 + 快速移动视口"** ⇒ 新建 **`widgets/flow_minimap`**（`QGraphicsView` 子类：画 `FlowChart` 场景缩略图 + 视口矩形，拖动即移动主视口）；由 `main.py` 装配、跟随页签切换换绑 `scene`；**不需要改 `main.ui`**。
+2. **日志位置新增"帮助"页**（解释当前选中节点的功能与参数含义、**逐节点不同文本**）⇒ ① 界面：新建 **`widgets/help_panel`**（`QTextBrowser`，挂进日志那个 `QTabWidget`）；② 文本：**写在各算子自己的文件里**（`NodeSpec` 加 `help_text`），继续守住"加一个算子 = 一个文件 + 一行注册"；③ 接线：`main.py` 把"选中节点变化"的信号连到 `help_panel.show_help(get_spec(name).help_text)`；④ 没写说明的显示"该节点暂无说明"。
+
+⚠️ **两条硬点**：① 新建 `.ui` 时注意 `QUiLoader` 用的是**工作目录相对路径**（要么放根、要么写显式路径）；② "选中了哪个节点"这类状态仍由主窗口持有（`selected_node`），新控件通过**信号 / 回调**拿，不要自己去解析画布。
+
+---
+
+
+## 九、与开源参考项目（VisionFlow）的取舍（2026.10.13 定）
+
+### 9.1 参考项目 VisionFlow 的目录分类（**原样收录**，方便直接查看）
+
+> 来源：用户桌面上的说明文件（`C:\Users\Administrator\Desktop\文件说明 - 副本.md`，在仓库外）。它参考了 GitHub 上的开源项目，
+> 是一个 **PyQt5 + 100+ 节点**的同类软件；下面是它的完整目录分类（**未做删减**，对照我们自己的分批计划看）。
+
+```text
+VisionFlow/
+├── main.py                    # 应用入口 — 显式引导：AppContext → 发现节点 → 启动 GUI
+├── requirements.txt           # Python 依赖 (PyQt5, opencv-python, numpy)
+│
+├── core/                      # 核心领域层 — 零 GUI 依赖，纯逻辑
+│   ├── interfaces.py          # ABC 接口 — 层间契约 (INodeData, IVisionNodeData, ISrcFilesNodeData...)
+│   ├── events.py              # 事件总线 — EventSystem pub/sub (EventType 枚举，handler(sender, **kwargs))
+│   ├── ioc.py                 # DI 容器 — ServiceCollection / ServiceProvider (构造器注入)
+│   ├── node_base.py           # 节点基类体系 (NodeBase → VisionNodeData → ROINodeData → SrcFilesVisionNodeData)
+│   ├── workflow.py            # 工作流引擎 (拓扑排序 + 串行/并行执行 + 历史消息回调)
+│   ├── project.py             # 项目模型 (ProjectItem + DiagramData + JSON 序列化)
+│   ├── commands.py            # 命令模式 (撤销/重做) — 纯元组坐标，无 Qt 依赖
+│   ├── registry.py            # 节点注册表 (type_name → type 映射)
+│   ├── node_group.py          # 节点分组 (NodeGroup, NodeDataGroupBase — 工具箱分类)
+│   ├── data_packet.py         # 数据包 (FlowableResult, FlowableInvokeMode, FlowableState)
+│   ├── result_presenter.py    # 结果呈现 (ResultItem, VisionMessage, NodeResult, 几何/图像/表格结果)
+│   ├── constants.py           # 共享常量 (GROUP_META 颜色/图标 — 单一数据源)
+│   └── plugin_manager.py      # 旧版插件管理 (逐步迁移到 services/)
+│
+├── services/                  # 应用服务层 — 桥接 core ↔ gui
+│   ├── app_context.py         # 中央 DI 容器 — 替代所有全局单例
+│   ├── node_service.py        # 节点服务 — 封装 registry + groups 暴露给 GUI
+│   └── workflow_runner.py     # 流程运行器 — 后台线程执行 + 生命周期管理
+│
+├── gui/                       # 用户界面 — 依赖 core 接口，不直接依赖具体类型
+│   ├── main_window.py         # 主窗口 (接受 ctx 参数注入)
+│   ├── theme.py · font_icons.py · presenters.py        # 主题系统 / FontIcon 系统 / Presenter 模板体系
+│   ├── toolbox_panel.py · property_panel.py            # 左侧工具箱 / 属性编辑面板(动态反射)
+│   ├── flow_resource_panel.py · image_viewer.py        # 图像源缩略图 / 图像查看器
+│   ├── result_panel.py · log_panel.py · help_panel.py  # 结果面板 / 日志面板 / 帮助面板
+│   ├── roi_editor.py · color_picker.py · crop_dialog.py · condition_editor.py
+│   ├── start_page.py · template_dialog.py · dock_manager.py
+│   ├── filter_box.py · message_center.py · guide_overlay.py
+│   ├── widgets/               # 自定义控件 (grid_splitter_box.py · node_list_view.py)
+│   └── node_editor/           # 流程图编辑器
+│       ├── scene.py · node_item.py · socket_item.py · edge_item.py
+│       └── link_drawer.py · editor_widget.py
+│
+├── nodes/                     # 视觉处理节点 (100+ 个，按领域分目录)
+│   ├── sources/               # 数据源 (图像文件/摄像头/视频/Zoo测试集 14 个)
+│   ├── preprocessings/        # 预处理 (灰度/翻转/旋转/缩放/阈值/通道分离/算术... 10 个)
+│   ├── blurs/                 # 滤波 (高斯/铅笔素描/细节增强)
+│   ├── takeoffs/              # 分割提取 (HSV范围/无缝融合/替换背景)
+│   ├── morphology/            # 形态学 (腐蚀/膨胀/开/闭/梯度/顶帽/黑帽)
+│   ├── conditions/            # 条件分支 (相等/大于/小于/范围内)
+│   ├── template_matchings/    # 模板匹配 (Base64/SIFT/SURF)
+│   ├── detectors/             # 检测 (Blob/Canny/Hough/QR/轮廓)
+│   ├── features/              # 特征提取 (AKaze/Brisk/Fast/Freak/Kaze/MSER/Star)
+│   ├── others/                # 其他 (拼接/透视变换/Haar/LBP/SVM/HOG/YOLOv3)
+│   ├── video/                 # 视频 (MOG背景减除/视频写入)
+│   ├── outputs/               # 输出 (OK/NG/通知消息)
+│   ├── onnx/                  # ONNX 深度学习 (YOLOv5/年龄/性别/语义分割)
+│   └── network/               # 网络通讯 (Modbus)
+│
+├── assets/                    # 资源文件
+│   ├── projects/ · models/ (5 个 .onnx + 标签) · images/ (33 张) · icons/ · videos/
+│
+├── tests/                     # 测试
+│   ├── test_execution_flow.py · test_history_results.py
+│
+└── WPF-VisionMaster/          # 原始 C# 源码 (参考用，不参与构建)
+```
+
+**与我们目录的对照**（详情见本节下面的"取舍"表）：它的 `core/` ↔ 我们的 `core/`；它的 `services/` ↔ 我们的 `services/`；
+它的 `gui/` ↔ 我们的 **`ui/`（参数窗口）+ `widgets/`（画布 / 显示 / 图库 / 面板）**；它的 `nodes/` ↔ 我们的 `ops/`；
+它的 `assets/` `tests/` ↔ 我们的 `image/` `tests/`；它的 `WPF-VisionMaster/` 我们不收（放在工程外）。
+
+
+**它是什么**：一个 PyQt5 写的同类软件（100+ 节点、ONNX、Modbus），骨架 = `core/`（零 GUI 依赖：接口 ABC + 事件总线 + DI 容器 + 命令模式 + 注册表）+ `services/`（桥接层：AppContext / 节点服务 / 后台线程运行器）+ `gui/`（整个界面层，20+ 面板 + `node_editor/` 画布子包 + 主题与图标）+ `nodes/`（**按领域分 14 个子目录**）+ `assets/` + `tests/`。
+
+| 结论 | 内容 |
+|---|---|
+| ✅ **借鉴** | ① `core/` + `services/` + `ui/` + `widgets/` 的分层（我们已有契约 / 零件 / 算法 / 界面这几类）；② `ops/` 按 kind 分的思路（**不学它的 14 个领域目录** —— 我们只有 14 个算子）；③ `services/` 这一层放"碰 Qt 与设备"的服务；④ **门禁用例进仓库**（**目标1** 落地：`temp\` → `tests\`）；⑤ 它的 `workflow_runner`（后台线程）与 `commands`（命令模式撤销 / 重做）**正是我们目标3 / 目标4 要的**；⑥ 画布类多了开 `widgets/flow/` 子目录的拆法 |
+| ❌ **不照搬** | `interfaces.py`（接口 ABC）+ `ioc.py`（DI 容器）+ `events.py`（事件总线）+ `plugin_manager.py` + 主题系统 + FontIcon —— 那是为"100+ 节点 + 插件化 + 多人协作"设计的重架构；照搬要把 `main.py`（3327 行）彻底拆开、把显式引用全换成"注入 + 事件订阅"，并**打破"加一个算子 = 一个文件 + 一行注册"**，功能收益为零 |
+| ❌ **不改命名风格** | 它用 `snake_case`，我们用 `CamelCase`（改名要动 38 条 import + 文档里几百处引用） |
+| ❌ **不学"全代码搭界面"** | 它不用 `.ui`（界面全代码构造 + 主题系统）；我们用 `.ui` + `QUiLoader`，改成全代码要重写整个界面层 |
+
+---
+
+
+## 十、待用户拍板 / 未定项
+
+| # | 事项 | 需要用户定的点 | 什么时候要 |
+|---|---|---|---|
+| 1 | **目标3** 的**线程方案** | `QThread` + worker / `QThreadPool` + `QRunnable`；进度粒度（每张图 / 每节点） | 目标3 开工前 |
+| 2 | **目标4** 的**缓存上限数值** | 例如"最多 50 张图"或"按内存估算" | 目标4 开工前 |
+| 3 | **目标4** 的**撤销范围 / 快捷键 / 栈上限** | 是否含图库导入、输出参数、相机开关；Ctrl+Z / Ctrl+Y；栈上限 | 目标4 开工前 |
+| 4 | **批次6 何时开工 / 范围要不要调整** | 批次6 = **UI 界面大改**（节点的修改 / 流程图预览控件 / 帮助页面 …），想法已入档 **§十二**；开工时机与范围由用户定 | 用户说开工时 |
+
+---
+
+
+## 十一、路径与资源索引
+
+### 11.1 仓库内（= 工程根，也是 git 根）
+| 路径 | 是什么 |
+|---|---|
+| `main.py`（+ `main.ui` · `SetCameraID.ui`） | **入口与主界面布局，留在工程根**（`QUiLoader` 按工作目录读） |
+| `core\` | 契约与零件：`NodeRegistry.py` · `ParamRules.py` · `ImageIO.py` · `Detector.py` |
+| `ops\source\` · `ops\process\` · `ops\detect\` · `ops\sink\` | 算子（一个节点一个文件，按 kind 分） |
+| `ui\` | 参数窗口与对话框（`LineParamsDialog.py` + **同目录的 `LineParamsDialog.ui`** 等） |
+| `widgets\` | 画布 / 多页签 / 显示区 / 图库（`FlowChart.py` · `FlowPages.py` · `ImageGraphicsView.py` · `ImageGalleryWidget.py`） |
+| `tests\` | **37 套门禁用例 + `dsh_run_all_checks.py`**（2026.10.14 起在工程内、**进 git**） |
+| `plan\VisionFlowNode_批次5技术方案_v1.4_2026.10.14.md` | **本文件**（批次5 口径真源） |
+| `plan\VisionFlowNode_批次4技术方案_v1.53_2026.10.13.md` | 批次4 方案（**已冻结**，历史参考） |
+| `plan\pyside6_开发日志.md` | 开发日志（markdown，LF；最开头是命名规则、末尾是《全项目里程碑索引》） |
+| `plan\批次4_验收点清单_v1.md` | 批次4 验收点清单（照着点就能验收） |
+| `plan\VisionFlowNode_用户手册_v1.0_2026.10.7.md` · `…代码说明书_v1.0…` · `…项目技术文档_v1.2…` | 三份冻结文档（**版本号不动**） |
+| `image\` | 测试图像（如 `lena.png`） |
+| `temp\` | 本地临时工具（截图 / 探针 / 一次性脚本，149 个）**被 `.gitignore` 忽略**；`temp\legacy\` 放 8 套历史留档用例 |
+| `.dsh-meow\memory.db` | 跨会话记忆库 |
+| `.gitignore` | 忽略 `temp/`、`__pycache__/`、`*.pyc` |
+
+### 11.2 仓库外（**不上传 GitHub**）
+| 路径 | 是什么 |
+|---|---|
+| `E:\opencv_python_3_8\backups` | 所有 `_backup_VisionFlowNoed_before_*` / `_at_*` 快照 + `_ui_preview` 截图**与《截图索引.md》**（73 张台账） |
+| `E:\opencv_python_3_8\.venv` | Python 解释器（`…\.venv\Scripts\python.exe`） |
+| `E:\opencv_python_3_8\save_test` | 用户的测试方案 |
+
+### 11.3 门禁（**2026.10.14 起在工程内 `tests\`，进 git**）
+- 一键跑：**`tests\dsh_run_all_checks.py`** ⇒ **37 套 861 项断言全过**（每个用例一个子进程，互不干扰）；
+- 关键几套：`dsh_dlg_width_check`（参数窗口宽度护栏 31 项）· `dsh_imgio_check`（中文路径 16 项）· `dsh_m3_index_check`（收口产物自洽 13 项）· `dsh_doc_consistency_check`（文档 ↔ 代码一致性 14 项）；
+- ★ **新用例必须放 `tests\` 且名字叫 `*_check.py`** 才会被收集；`temp\` 只放**本机工具**（探针 / 截图 / 一次性脚本，**不进 git**），`temp\legacy\` 是 8 套历史留档用例；
+- 门禁是"**批次5 目标1 的判据**"：三轮重构全程保持 **37 套 861 项全绿**（套数 / 断言数一个不少）。
+
+---
+
+
+### 11.4 GitHub 仓库
+
+- **仓库地址：https://github.com/OvO641651/VisionFlow_Node**
+- **批次4 目标5-M3 / M4 已提交**（提交标题 `批次4目标5-M3+M4修改，参考日志2026.10.12 23:45-2026.10.13 12:15`）。
+- ★ **规矩不变**：**我不碰 git** —— 提交 / 打标签由用户操作；我做完了把该提交的东西备份到 `E:\opencv_python_3_8\backups` 并写日志。
+- 仓库里有什么：`*.py` / `*.ui` / `image\` / `plan\`（方案 + 日志 + 验收点清单 + 三份冻结文档）+ `.gitignore`；
+  **不在仓库里**：`temp\`（本机工具，`.gitignore` 忽略）、`backups\`、`.venv\`、`save_test\`。
+
+### 11.5 IDE 里 import 出现"红线"的解法（PyCharm；用户 2026.10.14 定）
+
+**现象**：代码能跑、门禁也全绿，但 PyCharm 里 `from core.ParamRules import clamp_int` 这类语句被标红、"未解析的引用"。
+
+**原因**：`core` / `ops` / `ui` / `widgets` 是**顶层包**，运行时靠"工程根在 `sys.path` 上"解析（`main.py` 在根目录）；
+而 PyCharm 的**静态索引**需要你明确告诉它"工程根就是导入的搜索起点"。
+
+**解法（一句话）**：
+
+> **选择项目文件夹（VisionFlowNoed）→ 右键 → 最下面"将目录标为" → 选择"源代码根目录"，即可解决导入出现红线的问题。**
+
+（英文界面：**Mark Directory as → Sources Root**；成功后该文件夹图标变蓝。）
+
+**配套几步**（若标完还红，按顺序试）：① 确认 PyCharm 打开的是**工程根**（Project 面板顶层应是 `VisionFlowNoed`，不是 `ops`/`core`，
+也不是"只打开一个文件"的模式）；② 顺手 `File → Invalidate Caches… → Invalidate and Restart` 重建索引；
+③ 确认解释器是 `E:\opencv_python_3_8\.venv\Scripts\python.exe`；
+④ **判定标准**：在 `ops/detect/LineDetectOps.py` 里 **Ctrl + 左键点击 `clamp_int` 能跳到 `core/ParamRules.py`** ⇒ 索引真的解析成功了。
+
+## 十二、想法（未开发）—— 以后要补充开发时从这里挑
+
+> **规矩（沿用《批次4 技术方案》第九篇章的做法）**：**没进当前批次排期的想法都记在这里**，每条写清"**是什么 / 为什么要做 / 前置条件**"；用户要补充开发时**从这里挑**，挑中的再排进某个批次的子里程碑。**《批次4 技术方案》§九 里的旧想法（9.8~9.11：输出目录自动建、参数联动置灰、圆最大半径控件、相机 id 预检、提示实时刷新、颜色提取多段阈值 / 其它颜色模型 / 阈值命中预览）继续留在那份文档里**，这里只记**批次5 之后**的新想法。
+
+### 12.1 ★ 批次6：UI 界面大改（**未排期**；用户 2026.10.14 定；**原批次5 的「节点错误态图标」已并入这里** —— 当时它是批次5 的第二个条目）
+
+**用户原话**："我打算在后续的批次6再把 ui 界面进行大改，包括节点的修改，添加流程图预览控件，帮助页面等内容，由于修改的内容比较多，所以设置一个批次6来实现。"
+
+> 批次6 也按同一套编号：**批次6 → 目标1 ~ 目标4**（下面的四行依次对应，**都还没排期**）。
+
+| 目标 | 是什么 | 为什么要做 | 前置条件 / 落点 |
+|---|---|---|---|
+| **目标1** | **节点的修改 / 视觉改版** | 节点项改成 VM 式：**左边状态图标（正常绿、出错变红）、右边节点名字**；可能连带调整节点类的绘制与命中区 | 用户 2026.10.12 原话："参考海康的 vision master，节点左边使用绿色显示图标，右边显示节点名字，如果该节点出错，绿色会变成红色……**现在不用实现**，因为**需要对节点类进行大改**，可能需要等到批次5之后再进行。" ⇒ 状态来源复用**通用错误通道**（`results` 里 `"__error__": True`）；**要动节点类 / 画布控件** ⇒ 排在批次5 的目录重构与拆 `MainWindow` 之后 |
+| **目标2** | **流程图预览控件（小地图）** | 流程图右下角显示**全图缩略图 + 视口矩形**，拖动 / 点击即快速移动主视口 | 新建 `widgets/flow_minimap`（`QGraphicsView` 子类，画 `FlowChart` 场景缩略图）；由 `main.py` 装配、跟随页签换绑 `scene`；**不需要改 `main.ui`** |
+| **目标3** | **帮助页面** | 在日志那个 `QTabWidget` 里加一页：解释**当前选中节点**的功能与参数含义，**逐节点不同文本** | 用户 2026.10.14 原话："我需要在日志的位置新添加一个帮助的页面，用于给用户解释当前选择的节点的的功能和一些参数含义，这可能需要对每个节点都需要添加不同的解释文本。" ⇒ 新建 `widgets/help_panel`（`QTextBrowser`）+ **`NodeSpec` 加 `help_text`**（文本写在各算子文件里 ⇒ 守住"加一个算子 = 一个文件 + 一行注册"）+ `main.py` 把"选中节点变化"信号连过去；没写说明的显示"该节点暂无说明" |
+| **目标4** | **其它 UI 改动** | 用户在批次6 开工时可能再补：节点样式 / 主题 / 面板与停靠布局 / 快捷键 … | 到时候按用户指令补进本表 |
+
+> **为什么整批放到批次6**：这几项**都要动 UI 层且互相牵连**（节点类 / 画布控件 / 主窗口面板），改动量大、回归面广 ⇒ 集中一个批次做，批次5 只承担**结构性重构**（目录 / 拆 `MainWindow` / 线程化 / 缓存与撤销）。
+
+### 12.2 `NodeSpec.dialog_class` 声明式窗口路由（为"每节点一个窗口"铺垫）
+
+现在 `main.py::on_node_double_clicked()` 是**硬编码 elif**（直线 / 圆 / 灰度三个专用窗口 + 通用窗口兜底）⇒ 改成"**专用窗口在算子文件里声明 `dialog_class`**、`main.py` 不再动"，这样"加一个算子 = 一个文件 + 一行注册"在"需要专用窗口"时也成立。**前置**：等用户真要做"每节点一个窗口"时一起做（用户 2026.10.13 已定："**每节点一个窗口暂时不做**"）。
+
+### 12.3 其它可能的小想法（待补充）
+
+- 流程图控件如果再大改（节点 / 连线 / 交互），需要拆文件时按 §八 的落点规则开 `widgets/flow/` 子目录（照参考项目 `gui/node_editor/` 的 scene / node_item / edge_item / view 拆法）；
+- 《批次4 技术方案》§九 那些没排期的想法（**9.8 参数校验范围外 / 9.9 目录规划 / 9.10 节点错误态图标 / 9.11 颜色提取增强**）仍然有效，挑的时候一并看。
+
+## 十三、变更说明
+
+1. **v1.0（2026.10.14，新建）**：按用户要求"开始批次5、先完成批次5 的技术文档"建立本方案。① **规矩照搬《批次4 技术方案》开头**（改前备份 / 改完写日志 / 三份文档冻结 / 以本方案为主），并补两条批次5 特有的：**重构类硬判据（行为零变化 + 门禁全过 + 界面零变化）**、**门禁与备份位置**；② 收录**现状体检**（21 个文件平铺、`main.py` 3327 行 / 117 方法 / 54 状态字段、38 条 import、3 处 `QUiLoader`、29 个方法被 40 套用例直连）；③ 收录**已拍板的四条**（目录方案 / `ui` 且 `main.ui` 留根 / 每节点一个窗口暂不做 + `temp\` 不进 git / 新文件落点规则）与**五条子里程碑**（M1 目录重构 → M2 节点错误态图标 → M3 拆 `MainWindow` → M4 线程化 → M5 缓存上限 + 撤销重做）；④ 收录**拆 `MainWindow` 的落地方法**（边界表 + 先 Mixin + 三条硬点 + 判据）；⑤ 收录 **M2 / M4 / M5 的初步设计**与**七条待拍板项**；⑥ 收录**与开源参考项目（VisionFlow）的取舍**、**新文件落点规则**、**路径与资源索引**。
+
+2. **v1.1（2026.10.14，只改文档）**：按用户要求"**把 M2 去除**，我打算在后续的批次6再把 ui 界面进行大改，包括节点的修改，添加流程图预览控件，帮助页面等内容，由于修改的内容比较多，所以设置一个批次6来实现。这一点写到"想法（未开发）—— 以后要补充开发时从这里挑"里面，参考批次4的第九篇章" ⇒ ① **§3 去掉 M2（节点错误态图标）**，批次5 重排为 **M1 目录重构 → M2 拆 `MainWindow` → M3 执行线程化 → M4 缓存上限 + 撤销 / 重做**，并加一行说明它移到了哪儿；② **删掉原 §五（M2）整节**，其后各节中文序号前移一位（六→五 … 十一→十；子节 `6.x→5.x`、`12.x→11.x`），文内交叉引用（`§12.3`、`本方案 §12`、`见 §6`）同步；③ **新增 §十二《想法（未开发）—— 以后要补充开发时从这里挑》**（照《批次4 技术方案》第九篇章的做法）：**12.1 批次6：UI 界面大改**（① 节点的修改 / 视觉改版（VM 式状态图标、出错绿变红）；② 流程图预览控件（小地图）；③ 帮助页面；④ 其它 UI 改动 —— 每条写清"是什么 / 为什么要做 / 前置条件"并保留用户原话）、**12.2 `NodeSpec.dialog_class` 声明式窗口路由**（为"每节点一个窗口"铺垫）、**12.3 其它待补充想法**（含指向《批次4 技术方案》§九 9.8~9.11 的旧想法）；④ **§十（待拍板）去掉两条 M2 项与"三个顺带能力"那条**，变成 **M3 线程方案 / M4 缓存上限值 / 撤销范围·快捷键·栈上限 / 批次4 何时提交 / 批次6 何时开工** 共 5 项；⑤ 头部"版本 / 当前状态"同步。**（注：这一版当时的编号是 M1 目录重构 / M2 节点错误态图标 / M3 拆 `MainWindow` / M4 执行线程化 / M5 缓存 + 撤销；v1.1 起已重排，见下条。）**
+
+3. **v1.2（2026.10.14，只改文档）**：用户指出两处 ——"① **技术文档内没有修改完全**，比如 M3 还是拆 `MainWindow`，这一步应该是 M2；② **批次5 采用参考批次4 使用批次-目标-M 的形式**，如果批次下面是目标再到 M 的子里程碑，现在把标题按照这个修改"。根因：v1.1 只把**章节的中文序号**前移了（六→五…），**标题里的 `M3`/`M4`/`M5` 编号没跟着改**，正文里还有 5 处（目录树两处、`snake_case` 那句、Mixin 表、"M3 拆出来的引擎"）。修改：
+   ① **修净 M 编号**：`## 五、M3：拆 MainWindow` → **`## 五、批次5 目标1-M2：拆 MainWindow`**；`## 六、M4：执行线程化` → **`## 六、批次5 目标1-M3：执行线程化`**；`## 七、M5：结果缓存上限（LRU）+ 撤销 / 重做` → **`## 七、批次5 目标1-M4：…`**；正文 5 处 `M3`（拆 `MainWindow` 的）改成 `M2`；
+   ② **采用"批次-目标-M"形式**：**批次5 → 目标1「重构」→ M1~M4**；§3 标题改成"批次5 目标1「重构」的子里程碑划分"、表里加上一段结构说明（并写明**日志条目标题按 `## 日期 批次5目标1-M1 时间` 这样写**）、表内 4 行改成 `目标1-M1~M4`；四个子节标题也都带上 `批次5 目标1-Mx`；
+   ③ **批次6 照此办**：§12.1 标题改成"**批次6 目标1「UI 界面大改」（未排期）**"，表内四行改成 `目标1-M1~M4`；
+   ④ 头部"版本 / 当前状态"同步；给 v1.0 那条补了"当时的编号"注（免得跟现在的编号混淆）。
+
+4. **v1.3（2026.10.14，只改文档）**：用户纠正 ——"**我不是叫你在前面添加目标1，而是把 M1-4 直接改成目标1-4，M1 改成目标1，M2 改成目标2。重新重构技术文档**"。即批次5 这一层**不要 M 层**，直接就是 **目标1 ~ 目标4**（照批次4 的编号习惯）。修改：① 四个章节标题改成 `## 四、批次5 目标1：目录重构` / `## 五、批次5 目标2：拆 `MainWindow`` / `## 六、批次5 目标3：执行线程化` / `## 七、批次5 目标4：结果缓存上限 + 撤销 / 重做`；② §3 标题改成"**批次5 的目标划分**"、表头改成"目标"、表内四行改成 `目标1~目标4`，结构说明改成"**批次5 → 目标1~目标4（不分 M 层）**；日志标题按 `## 日期 批次5目标1 时间`"；③ **正文里所有 M 引用全部换成"目标N"**（顺序理由、铁律、现状体检、目录树、Mixin 表、线程化前置、落点规则、待拍板三项、路径索引、§11.3 标题）；④ §12 批次6 同样改成 `批次6 目标1~目标4`（不再写 `目标1-Mx`）；⑤ 头部"版本 / 当前状态"同步。**复核口径**：正文里**不允许再出现任何裸 `M1`~`M5` 编号**（脚本逐行查，见验证）。
+
+5. **v1.4（2026.10.14，只改文档）**：按用户四条要求 ——"① 批次4 目标5-M3 / M4 的内容已经完成，并且已经上传到了 GitHub 上，把批次5技术文档中的'批次4 目标5-M3 / M4 这一段尚未提交'这一段话去除；② 把我这个项目的 GitHub 链接 https://github.com/OvO641651/VisionFlow_Node 也放到技术文档中；③ 把参考项目 `文件说明 - 副本.md` 里面的目录分类也写到技术文档里面，方便直接查看。"修改：
+   ① **头部"代码基线"去掉"尚未提交"**，改成"**批次4 目标5-M3 / M4 已完成并已提交到 GitHub**"；② **头部"适用工程"补上 GitHub 仓库地址**，并新增 **§11.4 GitHub 仓库**（地址 + 本批提交标题 + "我不碰 git、提交由用户做" + 仓库里有什么 / 不在仓库里有什么）；
+   ③ **新增 §9.1"参考项目 VisionFlow 的目录分类（原样收录）"** —— 把用户桌面说明文件里的**完整目录树**（`core/` / `services/` / `gui/`（含 `widgets/` 与 `node_editor/`）/ `nodes/`（14 个领域目录）/ `assets/` / `tests/` / `WPF-VisionMaster/`）原样抄进方案，并补一段"与我们目录的对照"；④ **§十 待拍板去掉"批次4 何时提交"那条**（已办）并把最后一条重编号为 4；⑤ 头部"版本 / 当前状态"同步。
+
+6. **v1.5（2026.10.14，代码 + 文档）**：**批次5 目标1「目录重构」落地 ✅** —— 用户口径"开始批次5目标1的修改。由于这次修改太大，所以记得备份。对于拍板：1、SetCameraID.ui 留工程根。2、不用清除（`__pycache__`），留下来即可。"。① 改前**整份备份** `_backup_VisionFlowNoed_before_b5_m1_dirrefactor`（27 个顶层文件 + `plan/` + `temp/` + `image/`）；② 新建 `core/ ops/{source,process,detect,sink} ui/ widgets/ tests/`（各带 `__init__.py`），**18 个文件挪到位**、工程根只剩 `main.py` + `main.ui` + `SetCameraID.ui` + `pyside6.txt` + `.gitignore` + 级联 xml；③ **41 处代码 import + 60 个用例/工具文件的 import** 改成包路径；`ui/LineParamsDialog.py` 的 `.ui` 改成显式路径（1 处）；④ **37 套用例 + `dsh_run_all_checks.py` 进 `tests\`**（进 git）、8 套历史留档进 `temp\legacy\`、149 个工具留 `temp\`；⑤ 7 套"改前/改后"用例加 `before` 模式守卫（旧扁平备份与新包路径不兼容）；⑥ 两处用例适配：`dsh_doc_consistency_check` 改全树扫描、`dsh_m3_index_check` 的搜索路径加 `temp/` 与 `temp/legacy/`；⑦ **验收：`tests\dsh_run_all_checks.py` 37 套 861 项全绿 + 抓图证明界面零变化**（图已登记《截图索引》）；⑧ §4.4 换成"落地结果"表、§11.1 路径索引换成新布局、头部状态同步。
+
+7. **v1.6（2026.10.14，代码 + 文档）**：**批次5 目标1 补做 —— 直线 / 圆各拆成一个节点文件**。起因 = 用户四条反馈里的第 2、3 条："直线检测和圆检测不是两个节点吗，为什么这两个节点的 `Detector.py` 不放在 `ops/` 下"、"把 `core\Detector.py` 文件中的圆检测和直线检测拆了，分开使用两个文件类来实现"。实情：原先"直线"被拆在**两处** —— 算法在 `core/Detector.py`（`DetectorShape.line_detector` / `circle_detector`），**节点声明却手写在 `core/NodeRegistry.py` 里**（`_run_line` / `_draw_line` / `_format_line` / `validate_line` + `NODE_SPECS` 两条），所以它两个都不符合"一个节点一个文件"。改法：
+   ① 新建 **`ops/detect/LineDetectOps.py`** = `class LineDetector`（Canny + HoughLinesP）+ `_run_line` + `_draw_line` + `_format_line` + `validate_line` + `LINE_SPECS`；新建 **`ops/detect/CircleDetectOps.py`** = `class CircleDetector`（HoughCircles）+ 同构五件 + `CIRCLE_SPECS`；
+   ② **`core/Detector.py` 变成兼容门面**（74 行）：`DetectorShape` 持有 `LineDetector` / `CircleDetector` 并**原签名转发** （`main.py` 的 `self.detector = DetectorShape()`、用例里的 `w.detector` 与 `dsh_morph_gray_check` 的 `hasattr(DetectorShape, "gray_bgr")` 断言全都照旧），另保留 `make_test_image()`（图片源"测试图"、三个参数窗口与两个用例都在用它）；
+   ③ **`core/NodeRegistry.py` 移走 158 行手写代码**（`_run_line` … `validate_circle` + 两条登记）⇒ **387 → 244 行**，改成 `from ops.detect.LineDetectOps import LINE_SPECS` / `from ops.detect.CircleDetectOps import CIRCLE_SPECS` + `_register_category(…, KIND_DETECT)`（与其余 5 个分类完全同构）；顺手清掉它不再用的 `import cv2` 与 `from core.ParamRules import …`；
+   ④ 改前备份 `_backup_VisionFlowNoed_before_line_circle_split`（6 个源码文件 + `plan/` + `tests/`）。
+**验证**：py_compile 全过；算子总数仍 **14**；`直线` / `圆` 的 kind=detect、draw 与 validate 都在；各跑一次 lena ⇒ **数据层未被改**（`out is img` 真）+ 检出 64 条直线 / 7 个圆；**全量门禁 37 套 861 项全绿**。
+**答复（用户同一轮的另两问）**： IDE 里的"未解析的引用"红线是**静态索引**问题（运行时/门禁全绿 ⇒ 代码没错）：确认用 IDE 打开的是**工程根**、把工程根标为 **Sources Root**（PyCharm）/ 在 VSCode 里配 `python.analysis.extraPaths`，并选对解释器 `E:\opencv_python_3_8\.venv\Scripts\python.exe`，必要时 Invalidate Caches 重建索引；`__init__.py` 的作用 = 把目录标记成 **Python 包**（让 `import core.X` 是"包内模块"、IDE 与打包工具都认），里面没内容是因为**不需要任何初始化副作用**（算子注册仍由 `NodeRegistry.py` 显式 import，不靠包自动注册）。
+
+8. **v1.7（2026.10.14，代码 + 文档）**：**批次5 目标1 第二轮 —— `ops/` 按"树分组"重排 + 节点改名 + 树控件同步**。用户口径："① 将这一点下面的话放到技术文档和修改日志中：选择项目文件夹(VisionFlowNode)→右键→最下面"将目录标为"→选择"源代码根目录"，即可解决导入出现红线的问题。② 先按方案 B 执行，后续节点多了我再修改整理，现在还不需要分二级目录……把"直线""圆"分别改名为"直线识别""圆识别"，把直线识别、圆识别、人脸识别这三个节点放到 detect 文件内；再创建一个树干名为"颜色处理"，里面的树枝为"颜色提取"这一个节点，颜色处理树干也创建一个新的文件夹存放……其他 6 个节点直接放到 process 文件夹中。③ 在修改代码目录的同时也要修改 main.ui 文件中的树控件。④ source 和 sink 文件夹中的内容可以不用动"。
+   ① **`ops/` 按树分组**：`source/`（采集 3，不动）· `sink/`（输出 1，不动）· **`process/` 拆成 6 个节点文件**（`GrayOps.py` / `InvertOps.py` / `BlurOps.py` / `ThresholdOps.py` / `MorphologyOps.py` / `EdgeExtractOps.py`，原 `ProcessOps.py` 388 行删除）· `detect/`（3 个：直线识别 / 圆识别 / 人脸识别）· **新建 `ops/color/`**（"颜色处理"这一类，先放 `ColorExtractOps.py`；将来放颜色分割 / 颜色转换）——**暂不分二级目录**；
+   ② **公共零件**提到 **`core/ImageOps.py`**：`to_bgr()` / `apply_to_roi()` / `odd_kernel()`（原来在 `class ProcessOps` 里）；
+   ③ **节点改名**：直线 → **直线识别**、圆 → **圆识别**（注册表声明 / `main.py::on_node_double_clicked` 路由 / `ui/LineParamsDialog.py`、`ui/CircleParamsDialog.py` 里的名字判断 / 11 个用例 / `main.ui` 树 / `widgets/FlowChart.py` 的示例树）；
+   ④ **`main.ui` 树控件**：「检测」组里两项改名、「识别」组只剩「人脸识别」、**新增顶层组「颜色处理」→「颜色提取」**（排在「新建项目」之前）；
+   ⑤ **两份冻结文档被逼出来的最小同步**（门禁的"文档一致性"用例会校验文档提到的 `.py` / 符号真实存在、以及 §五 算子表 ↔ 注册表）：《项目技术文档》13 处（算子表里的节点名与实现文件名、分层图、目录树、加算子那段的说明）、《代码说明书》23 处（文件总览、分层图、`NodeIdentity` 那章的文件作用、原处理类那一章的标题与 API 表、`Detector.py` 的定位）——**两份文档的版本号都没动**（仍是 v1.2 / v1.0）；
+   ⑥ **PyCharm 红线解法**入档（用户原话那句），见新增的 **§11.4**；
+   ⑦ 改前备份 `_backup_VisionFlowNoed_before_tree_group_dirs`。
+   **验证**：树分组 = 采集(4) / 处理(6) / 检测(直线识别·圆识别) / 识别(人脸识别) / **颜色处理(颜色提取)** / 新建项目；算子总数仍 **14**；改名的三个节点都能 `get_spec` 到；抓图 `m1b_after_tree_groups.png` 已登记《截图索引》；**全量门禁 37 套 861 项全绿**。
+   **过程中修掉 4 个自伤**：① 我在用例的中文字符串里嵌了 ASCII 双引号 ⇒ `dsh_source_check.py` SyntaxError（老教训又踩一次，改用「」）；② 上一轮脚本在 `dsh_source_check` 处中断，`dsh_morph_gray_check.py` 的 `ProcessOps` 导入/检查没改到（补上）；③ `dsh_source_check.py` 里那行 `ProcessOps` 导入其实没人用（删掉）；④ 文档一致性用例抓出《代码说明书》里还有两处旧引用（补干净）。
+
+9. **v1.8（2026.10.14，代码 + 文档）**：**批次5 目标1 第三轮**。用户口径："1、main.ui 文件中把"检测"和"识别"树干合并成"检测识别"，里面的 3 个节点全部放到"检测识别"中。2、把 SourceOps.py 文件也拆了，拆成三个节点，图像源，视频源，相机源。放到 source\ 目录下"。
+   ① **`ops/source/` 拆成 3 个节点文件**：`ImageSourceOps.py`（图片源：`IMAGE_EXTS` / `first_image_in_folder` / `_load_image` / `_cached_test_image` / `run_source` / `IMAGE_SOURCE_SPECS`）· `VideoSourceOps.py`（视频源：`_open_video` / `video_info` / `run_video` / `VIDEO_SOURCE_SPECS`）· `CameraSourceOps.py`（相机源：`CAMERA_FRAME_PROVIDER` / `set_camera_frame_provider` / `run_camera` / `CAMERA_SOURCE_SPECS`）；原 `SourceOps.py`（322 行）删除，三个文件各 163 / 113 / 63 行；
+   ② **`main.ui` 树干合并**：「检测」+「识别」⇒ **「检测识别」**（直线识别 / 圆识别 / 人脸识别 三个叶子都在里面）；「颜色处理」组保持不动；顺手修掉上一轮插入「颜色处理」时"识别"组收尾标签多一个空格的缩进瑕疵；
+   ③ **连线三处**：`core/NodeRegistry.py`（`SOURCE_SPECS` → 3 个 SPECS、3 条 `_register_category(…, KIND_SOURCE)`）、`main.py`（4 处导入：`set_camera_frame_provider` 归相机源文件、`video_info` 归视频源文件）、4 套用例（删 3 处没用到的 `import ops.source.SourceOps`、`SourceOps.video_info` → `video_info`）+ 1 个工具脚本；
+   ④ **两份冻结文档再次最小同步**（《项目技术文档》9 处、《代码说明书》4 处：算子表实现文件列、分层图、目录树、四个入口、原大类文件那一章的标题与说明）—— **版本号仍不动**（v1.2 / v1.0）；
+   ⑤ **门禁断言数**：`dsh_m2_check` 里「识别分组」那条已不适用 ⇒ 换成**更硬的**「识别树干必须已并入检测识别」，所以 **断言总数仍是 861**（如果只是删掉一条会变成 860 —— 判据"套数/断言数一个不少"要守住）；
+   ⑥ 改前备份 `_backup_VisionFlowNoed_before_source_split`；
+   ⑦ 验证：树 = 采集(4) / 处理(6) / **检测识别(3)** / 颜色处理(1) / 新建项目；算子仍 **14**；三个源各跑一次正常；抓图 `m1c_after_merge_groups.png` 已登记《截图索引》；**全量门禁 37 套 861 项全绿**。
+
+10. **v1.9（2026.10.15，只改文档）**：**批次5 目标1 收口 + 补写设计说明**。用户口径："1、test/ 这个文件夹是什么时候创建的，是干什么的。是否需要上传到 GitHub。2、批次5 目标1 的内容是否已经完成，还有什么遗漏的，如果没有，则总结批次5 目标1 的内容，并更新修改日志和技术文档，把节点文件为什么使用函数而不使用类也详细写到技术文档里面。新的文件目录安排也更新到技术文档里面。"。
+   ① **§11.3 门禁口径改过来**（原来还写着"现在在 `temp\`、批次5 目标1 之后进 `tests\`" —— 已经落地了）⇒ 改成 "**2026.10.14 起在工程内 `tests\`，进 git**"，一键跑 = `tests\dsh_run_all_checks.py`，并写明"新用例必须放 `tests\` 且叫 `*_check.py`"、`temp\` 只放本机工具（`legacy\` = 8 套历史留档）；
+   ② **新增 §4.5「目标1 落地后的目录（现状速查）」**：把三轮之后的**真实目录树**逐行写出来（14 个节点文件、`services/` 标注"目标2 才建"），并给出"`main.ui` 树干 ↔ 文件夹"对应表 + "kind 与文件夹无关" + "加一个算子只动三处"；
+   ③ **新增 §4.6「节点文件为什么写成‘函数 + 声明表’、而不是类」**（用户提问后补写）：现状表（契约用类 / 行为用函数 / 登记用数据）+ **七条理由**（节点是纯变换无状态 · 注册表要查表不要多态 · 声明表天然是数据 · 一个节点一个文件 diff 最小 · 契约一眼看全 · 测试好写 · **依赖方向干净：节点文件不 import 注册表 ⇒ 无循环导入**）+ 一句话判据 + "真改成类的五条代价、收益 0" + "什么时候该用类（算法族 / Qt 控件）"；
+   ④ **《项目技术文档》事实同步 6 处**（版本号不动）：无头冒烟脚本的位置 `temp\` → `tests\`、目录树里 `批次5-M3` → `批次5 目标2`（两处）、`tests/` 那行从"★ 批次5-M1 把 temp\ 里 37 套迁进来"改成"已迁入"、`批次5-M1 只挪目录` → `批次5 目标1`、§10.5 标题里的 `批次5-M3` → `目标2`；
+   ⑤ **`.gitignore` 注释更新**（原来写"37 套用例会在批次5-M1 时迁到 tests/ 正式进仓库"⇒ 已完成）；
+   ⑥ 《批次4 技术方案》是**已冻结的历史文档**，里面的 `批次5-M1/M3` 旧编号与 `%TEMP%` 属当时事实 ⇒ **不动**；开发日志里的历史条目同理**不动**。

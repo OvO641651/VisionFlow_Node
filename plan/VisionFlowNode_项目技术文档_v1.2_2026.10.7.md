@@ -74,7 +74,7 @@
                               ── 参数窗口：GenericProcessDialog / LineParamsDialog / Circle / Gray
 引擎层   main.py 内的：拓扑排序 · 图像源绑定 · ROI 继承 · 节点执行 · 渲染层合成 · 参数归档 · 结果缓存
 契约层   NodeRegistry.py：NodeSpec（name/kind/run/draw/format_result/whole_image_param/param_specs）
-算子层   ProcessOps(处理 6) · ColorExtractOps(处理 1) · SourceOps(采集 3) · OutputOps(输出 1) ·
+算子层   GrayOps/InvertOps/BlurOps/ThresholdOps/MorphologyOps/EdgeExtractOps(处理 6) · ColorExtractOps(颜色处理 1) · ImageSourceOps/VideoSourceOps/CameraSourceOps(采集 3) · OutputOps(输出 1) ·
          检测 2（NodeRegistry 内联）· FaceDetectOps(检测 1)   ← **2026.10.12 起"一个节点一个文件"**
 公共层   ParamRules(参数校验规则表) · ImageIO(图片读写：支持中文路径)
 算法层   Detector.py：直线 / 圆（Hough）
@@ -85,7 +85,7 @@
 | kind | 含义 | 改数据层图像？ | 现有算子 |
 |---|---|---|---|
 | `process` | 处理：图像被改写，下游看得见 | ✅ | 灰度、取反、滤波、二值化、形态学、边缘提取、**颜色提取** |
-| `detect` | 检测：图像原样透传，只产出结果数据 | ❌ | 直线、圆、**人脸识别** |
+| `detect` | 检测：图像原样透传，只产出结果数据 | ❌ | 直线识别、圆识别、**人脸识别** |
 | `source` | 流程起点：自己造图 | ✅（是"新图"） | 图片源、视频源、相机源 |
 | `sink` | 输出：图像原样透传，把结果写到外部（磁盘） | ❌ | 输出图像 |
 
@@ -200,7 +200,7 @@
 
 - **相机**：主窗口统一开关（`_open_camera_device` / `_release_camera_device`），相机源节点通过注入的取帧器**复用**；
   **一轮执行只读一次相机**（否则"画面"和"算法算的那张"不是同一帧）；`「停止」= 暂停、`删除` = 关相机`（用户拍板）。
-- **视频**：`SourceOps` 各自缓存 `VideoCapture`（按 `(路径, mtime, 大小)`），与主窗口播放**各读各的、不抢读指针**；
+- **视频**：`VideoSourceOps.py` 各自缓存 `VideoCapture`（按 `(路径, mtime, 大小)`），与主窗口播放**各读各的、不抢读指针**；
   `run_video()` **只读当前帧、不前进**，前进由主窗口 `_advance_video_cursor()` 统一做（同一轮多节点共用同一帧）。
 - **自动出画面**：视频与相机**共用同一个 QTimer**；视频间隔 = `1000/fps`（坏值兜 25，夹到 5~1000ms），相机按 30ms。
 
@@ -251,7 +251,7 @@
   而且 `imread` 是**返回 None（不抛异常）** ⇒ 表现为"静默读不出来"（控制台只有一行 `cv::findDecoder … can't open/read file`）；
 - **修法**：统一走字节流 —— 读 = `np.fromfile` + `cv2.imdecode`；写 = `cv2.imencode` + `buffer.tofile`；
   包成 `ImageIO.read_image / write_image`（**返回值契约与 cv2 一致**：失败返回 None / False，调用方一行不用改）；
-- **四个入口**：`SourceOps.py`（图片源读图）、`main.py`（导入图片进图库）、`ImageGalleryWidget.py`（缩略图）、
+- **四个入口**：`ImageSourceOps.py`（图片源读图）、`main.py`（导入图片进图库）、`ImageGalleryWidget.py`（缩略图）、
   `OutputOps.py`（**保存也一起修**：输出目录 / 文件名带中文时原来会判"保存失败"）；
 - **视频不受影响**（`VideoCapture` / `VideoWriter` 走 FFmpeg，实测中文路径正常）。
 
@@ -259,23 +259,25 @@
 
 | 组 | 节点 | kind | 参数个数 | 参数要点 | 实现文件 |
 |---|---|---|---|---|---|
-| 采集 | 图片源 | source | 2 | 图像来源（图片/文件夹/测试图）、路径 | `SourceOps.py` |
-| 采集 | 视频源 | source | 4 | 视频路径、当前帧号、执行后前进一帧、到末尾回到开头 | `SourceOps.py` |
-| 采集 | 相机源 | source | 4 | 相机类型（预留置灰）、编号、分辨率（只存不生效）、执行时自动打开 | `SourceOps.py` |
+| 采集 | 图片源 | source | 2 | 图像来源（图片/文件夹/测试图）、路径 | `ImageSourceOps.py` |
+| 采集 | 视频源 | source | 4 | 视频路径、当前帧号、执行后前进一帧、到末尾回到开头 | `VideoSourceOps.py` |
+| 采集 | 相机源 | source | 4 | 相机类型（预留置灰）、编号、分辨率（只存不生效）、执行时自动打开 | `CameraSourceOps.py` |
 | 采集 | **输出图像** | **sink** | 8 | 目录、文件名、输出类型、图片格式、视频格式、视频帧率、保存内容、重名策略 | `OutputOps.py` |
-| 处理 | 灰度 | process | 1 | 作用于整图 | `ProcessOps.py` |
-| 处理 | 取反 | process | 0 | —— | `ProcessOps.py` |
-| 处理 | 滤波 | process | 3 | 方式、核大小（奇数）、高斯标准差 | `ProcessOps.py` |
-| 处理 | 二值化 | process | 4 | 阈值方式、阈值、最大值、类型 | `ProcessOps.py` |
-| 处理 | 形态学 | process | 4 | 运算（7 档）、核形状、核大小（奇数）、迭代次数 | `ProcessOps.py` |
-| 处理 | 边缘提取 | process | 4 | 方法（Canny/Sobel/Laplacian）、低/高阈值、核大小 | `ProcessOps.py` |
-| 检测 | 直线 | detect | 5 | Canny 低/高阈值、累加器阈值、最小线段长度、最大线段间隙 | `NodeRegistry.py`（算法在 `Detector.py`） |
-| 检测 | 圆 | detect | 5 | dp、minDist、param1、param2、minRadius（maxRadius 界面未提供 = 0 不限） | 同上 |
+| 处理 | 灰度 | process | 1 | 作用于整图 | `GrayOps.py` |
+| 处理 | 取反 | process | 0 | —— | `InvertOps.py` |
+| 处理 | 滤波 | process | 3 | 方式、核大小（奇数）、高斯标准差 | `BlurOps.py` |
+| 处理 | 二值化 | process | 4 | 阈值方式、阈值、最大值、类型 | `ThresholdOps.py` |
+| 处理 | 形态学 | process | 4 | 运算（7 档）、核形状、核大小（奇数）、迭代次数 | `MorphologyOps.py` |
+| 处理 | 边缘提取 | process | 4 | 方法（Canny/Sobel/Laplacian）、低/高阈值、核大小 | `EdgeExtractOps.py` |
+| 检测 | **直线识别** | detect | 5 | Canny 低/高阈值、累加器阈值、最小线段长度、最大线段间隙 | `LineDetectOps.py` |
+| 检测 | **圆识别** | detect | 5 | dp、minDist、param1、param2、minRadius（maxRadius 界面未提供 = 0 不限） | `CircleDetectOps.py` |
 | 识别 | **人脸识别** | **detect** | 4 | 级联文件（**不设默认值**、`per_node` 节点级参数）、缩放步长、最小邻居数、最小人脸尺寸；图像原样透传 + 绿框只画显示层；级联按 (路径, mtime, 大小) 缓存 | `FaceDetectOps.py` |
 | 识别 | **颜色提取** | **process** | 13 | 颜色模型（HSV / RGB）+ 6 + 6 个阈值（**都是"进度条 + 微调框"**，HSV 的 H 为 0~179）；**阈值内保留原色、阈值外置黑**；只处理 ROI | `ColorExtractOps.py` |
 
 > 每个节点的**参数含义与默认值**见《用户手册》第七节；**实现原理**见《代码说明书》；
-> **"一个节点一个文件"**（2026.10.12 用户定）：新算子各自一个文件，老的三份大类文件（`ProcessOps` / `SourceOps` / `OutputOps`）等批次5 按同一原则拆（见 §十）。
+> **"一个节点一个文件"**（2026.10.12 用户定）：新算子各自一个文件。**批次5 目标1（2026.10.14）已把老的处理类大类文件拆成 6 个节点文件**（`ops/process/` 下），并新建 `ops/color/` 放"颜色处理"这一类；**2026.10.14 第三轮又把图像源大类文件拆成 3 个节点文件**（`ops/source/` 下）；只有 `OutputOps` 仍是一个文件（它确实只有 1 个节点）。**直线 / 圆 两个节点同时改名为「直线识别」/「圆识别」**（树控件也同步）。
+
+> **节点写成"函数 + 声明表"、而不是类**（2026.10.14 定稿；完整论证见《批次5 技术方案》§4.6）：**契约用类**（`NodeSpec`）、**行为用函数**（`run(detector, img, roi, params)` / `validate_*` / `format_*`）、**登记用纯数据**（各节点文件里的 `*_SPECS` dict 列表）。理由：节点是**无状态纯变换**（状态都在 `FlowNode.params` 上、由引擎管）；引擎只做 `NODE_SPECS[name] → NodeSpec → spec.run(...)`，**要查表不要多态**（没有子类节点 —— 形态学 7 档是参数差异）；参数表天然是数据、`GenericProcessDialog` 照表生成界面；一个节点一个文件 + 函数 ⇒ 改动 diff 最小、不会"改基类影响所有节点"；★ 并且**避免循环导入**：节点文件只 import `core.ParamRules` / `core.ImageOps`、**绝不 import `NodeRegistry`**，注册表在文件末尾才 import 各 `*_SPECS`（若节点自己 `new NodeSpec` 就必须互相 import）。**类用在该用的地方**：算法族（`LineDetector` / `CircleDetector`）、门面（`DetectorShape`）、Qt 控件（`FlowchartView` 等）。
 
 ---
 
@@ -344,7 +346,7 @@
 1. `py_compile` 编译通过；
 2. `xml.etree` 解析所有 `.ui`（防止手改 XML 出错）；
 3. `QApplication([])` 后构造 `MainWindow`（导入期错误、控件找不到会立刻暴露）；
-4. 无头冒烟脚本（**工程内 `temp\dsh_*_check.py`**，2026.10.13 从 `%TEMP%` 迁入）：**走真实入口**（点按钮/调槽函数），断言用硬判据。
+4. 无头冒烟脚本（**工程内 `tests\dsh_*_check.py`**，2026.10.14 起；`temp\` 只放本机工具、不进 git）：**走真实入口**（点按钮/调槽函数），断言用硬判据。
 
 **几条硬规矩**（都是踩坑换来的）：
 - 弹窗/文件框**在所有 import 它们的模块里**都换替身（且返回值形状与真实 API 一致）；
@@ -404,9 +406,9 @@ E:\opencv_python_3_8\PySide\VisionFlowNoed\          ← 工程根 = git 仓库�
 ├── NodeRegistry.py            节点契约（NodeSpec）与注册表
 ├── ParamRules.py              参数校验规则表（窗口层 / 引擎层共用）
 ├── ImageIO.py                 图片读写（走字节流 ⇒ 支持中文路径）
-├── ProcessOps.py              处理类算子（灰度/取反/滤波/二值化/形态学/边缘提取）
+├── ops/process/               处理类 6 个节点（GrayOps / InvertOps / BlurOps / ThresholdOps / MorphologyOps / EdgeExtractOps，各一个文件）
 ├── ColorExtractOps.py         处理类算子（颜色提取，一个节点一个文件）
-├── SourceOps.py               图像源类算子（图片源/视频源/相机源）
+├── ops/source/               图像源类 3 个节点（ImageSourceOps / VideoSourceOps / CameraSourceOps，各一个文件）
 ├── OutputOps.py               输出类算子（输出图像）
 ├── FaceDetectOps.py           检测类算子（人脸识别，一个节点一个文件）
 ├── Detector.py                直线 / 圆算法
@@ -493,12 +495,13 @@ VisionFlowNoed/                          ← 工程根（`QUiLoader` 按工作�
 ├── main.ui                              ★ 主界面布局，**留在工程根**（跟 main.py 一起）
 ├── core/                                零 GUI 依赖的纯逻辑
 │   ├── NodeRegistry.py · ParamRules.py · ImageIO.py · Detector.py     （现有）
-│   └── flow_engine · project_store · param_store                      （★ 批次5-M3 从 main.py 拆出）
+│   └── flow_engine · project_store · param_store                      （★ 批次5 目标2 从 main.py 拆出）
 ├── services/                            桥接"引擎 ↔ 界面 / 设备"（碰 Qt 与硬件）
-│   └── camera_service · video_service · gallery_service               （★ 批次5-M3 从 main.py 拆出）
+│   └── camera_service · video_service · gallery_service               （★ 批次5 目标2 从 main.py 拆出）
 ├── ops/                                 算子（**一个节点一个文件**，按 kind 分）
-│   ├── source/   SourceOps.py
-│   ├── process/  ProcessOps.py · ColorExtractOps.py
+│   ├── source/   ImageSourceOps.py · VideoSourceOps.py · CameraSourceOps.py
+│   ├── process/  GrayOps.py · InvertOps.py · BlurOps.py · ThresholdOps.py · MorphologyOps.py · EdgeExtractOps.py
+│   ├── color/    ColorExtractOps.py（"颜色处理"这一类）
 │   ├── detect/   FaceDetectOps.py
 │   └── sink/     OutputOps.py
 ├── ui/                                  参数窗口与对话框（含它们的 `.ui`）
@@ -510,7 +513,7 @@ VisionFlowNoed/                          ← 工程根（`QUiLoader` 按工作�
 │   ├── FlowChart.py · FlowPages.py · ImageGraphicsView.py · ImageGalleryWidget.py
 │   ├── flow_minimap（★ 将来"流程图小地图"放这里）
 │   └── help_panel（★ 将来"帮助页"放这里）
-├── tests/                               回归门禁用例（★ 批次5-M1 把 temp\ 里 37 套迁进来，**进 git**）
+├── tests/                               回归门禁用例（★ 批次5 目标1 已迁入：37 套 + `dsh_run_all_checks.py`，**进 git**）
 ├── temp/                                本地临时工具（**不进 git**，见 `.gitignore`）
 └── plan/ · image/                       文档 6 份 · 测试图像
 ```
@@ -521,7 +524,7 @@ VisionFlowNoed/                          ← 工程根（`QUiLoader` 按工作�
 **验收**：挪完 **37 套 861 项用例全绿、界面零变化**（重构类里程碑的硬判据）。
 
 > **图例**：★ = 批次5 要新建 / 迁移的；**规划中的文件刻意不写 `.py` 后缀**（免与现有文件混淆，也让文档一致性用例能把"现有文件"和"规划文件"分开校验）。
-> **文件名保持现状**（不改名、不改大小写、不改成 snake_case），批次5-M1 **只挪目录**。
+> **文件名保持现状**（不改名、不改大小写、不改成 snake_case），批次5 目标1 **只挪目录**。
 
 ### 10.2 节点错误态图标（用户 2026.10.12 的设想）
 
@@ -547,7 +550,7 @@ VisionFlowNoed/                          ← 工程根（`QUiLoader` 按工作�
 | M4 | **执行线程化** | 大批量跑图不卡 + 可取消 + 结果一致 |
 | M5 | **结果缓存上限 + 撤销/重做** | 内存上限断言 + 撤销/重做往返断言 |
 
-### 10.5 拆 `MainWindow` 的具体方案（批次5-M3）
+### 10.5 拆 `MainWindow` 的具体方案（批次5 目标2）
 
 **现状（2026.10.13 实测）**：`main.py` = **3327 行 / 117 个方法 / 54 个状态字段**。拆分边界 = 《代码说明书》里那 10 章。
 ⚠️ **下表的文件名是"规划中"的（尚未创建）**，所以刻意**不写 `.py` 后缀**，以免与"当前真实存在的文件"混淆。

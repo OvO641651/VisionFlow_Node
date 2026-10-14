@@ -1,0 +1,602 @@
+# -*- coding: utf-8 -*-
+"""
+通用参数窗口：按算子的"参数声明（param_specs）"自动生成"运行参数"页。
+
+为什么要它（批次4 决策 b）：
+    处理类算子会一批批加（取反 / 滤波 / 二值化 / 形态学 / 边缘提取 …）。
+    按老办法"一个算子一份 .ui + 一套读写代码"，加第 6 个算子就得把第 1 个的活儿
+    再干一遍；改成"参数变成声明、界面由声明生成"之后，新增一个算子只需要：
+        写一个算法方法 + 在 各节点文件的 *_SPECS（如 ops/process/GrayOps.py） 里加一张参数表
+        （+ main.ui 树里加一项），**不用再动界面代码**。
+
+它继承 LineParamsDialog，所以"基本参数"页整套行为原样复用：
+图像源、ROI 创建（绘制 / 继承上游）、继承自、外扩、框选、XYWH ——
+那一页装的是**引擎级通用能力**，每个算子都要用，不该各写一遍。
+
+本项目参数窗口的"三页语义"（新加算子时照这个判断该改哪页）：
+    基本参数 —— 共用 LineParamsDialog.ui（引擎级，算子一律不改）
+    运行参数 —— 本窗口按 param_specs 动态生成（算子私有参数）
+    显示结果 —— 按算子类型：处理类没有结构化结果 → 直接 removeTab 去掉
+
+控件类型（和 各节点文件的 *_SPECS（如 ops/process/GrayOps.py） 里的声明一一对应）：
+    int   -> QSpinBox（odd=True 时步长 2、并把偶数纠正成奇数）
+    float -> QDoubleSpinBox
+    combo -> QComboBox
+    bool  -> QCheckBox
+    file  -> QLineEdit + "浏览…" 按钮（options["plain"]=True 时只选文件、**不导入图库**，给级联文件用）
+    text  -> QLineEdit（纯文本，不弹任何对话框）
+    dir   -> QLineEdit + "选择目录…" 按钮
+    slider_int -> **QSlider + QSpinBox 双向联动**（2026.10.12 目标5-M2，用户要求）：
+                  界面上就是"参数名 ──进度条── 数值"；滑块用真范围（拖不出界），
+                  微调框沿用"软范围"（越界值可以先打完、提交时才夹回）。
+控件名字统一是 param_<参数名>，方便 findChild / 排查问题。
+
+行联动（2026.10.12 目标5-M2 加的通用能力）：
+    param_specs 的 options 里可以写 `"visible_when": (另一个参数的键, [允许的值…])`，
+    于是"选 HSV 只显示 HSV 那一套阈值、选 RGB 只显示 RGB 那一套"不用各写一份界面。
+    顺带也把《批次4 技术方案》§6.5 里"参数联动置灰（选 Otsu 灰掉阈值）"那条的地基打好了。
+"""
+
+import os
+
+from PySide2.QtCore import Qt
+from PySide2.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QSlider, QSpinBox, QVBoxLayout, QWidget)
+
+from ui.LineParamsDialog import LineParamsDialog
+from core.NodeRegistry import KIND_SINK, KIND_SOURCE, get_spec
+
+# 直线专用、但要被通用窗口藏起来的控件（它们的值对处理类算子没有意义）
+LINE_ONLY_WIDGETS = ("canny_low", "canny_high", "spin_canny_low", "spin_canny_high",
+                     "spin_hough_threshold", "spin_min_line_length", "spin_max_line_gap")
+
+
+class GenericProcessDialog(LineParamsDialog):
+    """按 param_specs 生成"运行参数"页的通用参数窗口（处理类算子用）"""
+
+    def __init__(self, parent=None, node=None, main_window=None):
+        # 动态控件的注册表要先建好：父类 __init__ 末尾会调一次 _load_params()，
+        # 那时候动态控件还没生成，靠这个空表跳过动态部分，之后再手动加载一次。
+        self.param_controls = {}
+        self.param_layout = None
+        # 行联动表：[(行布局, 依赖的参数键, 允许的值列表)]，见 _build_param_rows / _apply_param_visibility
+        self._linked_rows = []
+        super().__init__(parent, node, main_window)
+
+        self.spec = get_spec(node.name) if node is not None else None
+        title = getattr(self.spec, "name", None) or (node.name if node is not None else "运行参数")
+        self.setWindowTitle(title)
+
+        self._build_param_rows()      # 生成"运行参数"页（内部会先藏掉直线专用那几行）
+        # ★ 参数校验（批次4 目标4 轮2）：把动态生成的控件也登记进"参数名 → 控件"，
+        #   窗口层纠正完才能把新值写回控件（否则用户看到的还是自己填的那个非法值）
+        self._validate_widgets.update(self.param_controls)
+        self._tighten_param_rows()    # 微调框挪到紧挨标签（用户 2026.10.7 要求）
+        self._remove_result_tab()     # 处理类没有结构化结果 → 去掉"显示结果"页
+        if getattr(self.spec, "kind", None) == KIND_SOURCE:
+            # 图像源这类"流程起点"没有上游：基本参数页里那些"图像源绑定 / ROI 继承"对它没意义，
+            # 所以只留"运行参数"页；同时去掉"执行 / 连续执行"两个按钮（见 _remove_run_buttons）。
+            self._remove_basic_tab()
+            self._remove_run_buttons()
+        elif getattr(self.spec, "kind", None) == KIND_SINK:
+            # 输出类节点（"输出图像"，M5，用户 2026.10.7 要求"参考图像源节点，只保留运行参数页面"）：
+            # 它的输入是"上游给什么就存什么"，ROI / 继承那套在它身上没有意义，所以基本参数页也去掉。
+            # 注意**保留**"执行 / 连续执行"按钮 —— 它能用来单独存一张，用户没让去掉。
+            self._remove_basic_tab()
+        self._load_params()           # 再加载一次：这回把动态控件也灌上值
+        self._apply_dynamic_defaults()   # 最后补"动态默认值"（必须在 _load_params() 之后，否则被空默认值冲掉）
+
+    # ------------------------------------------------------------------
+    # 生成界面
+    # ------------------------------------------------------------------
+    def _param_group_layout(self):
+        """"运行参数"页里放行的那个垂直布局（.ui 里叫 verticalLayout_8）"""
+        layout = self.ui.findChild(QVBoxLayout, "verticalLayout_8")
+        if layout is not None:
+            return layout
+        # 兜底：万一 .ui 里布局改名了，就在"运行参数"分组框里自己加一个竖排布局
+        group = self.ui.findChild(QGroupBox, "groupBox_3")
+        if group is not None and group.layout() is not None:
+            layout = QVBoxLayout()
+            group.layout().addLayout(layout)
+            return layout
+        return None
+
+    @staticmethod
+    def _hide_item(item):
+        """把一个布局项（控件或嵌套布局）里的所有控件都藏起来"""
+        widget = item.widget()
+        if widget is not None:
+            widget.setVisible(False)
+            return
+        child = item.layout()
+        if child is not None:
+            for index in range(child.count()):
+                GenericProcessDialog._hide_item(child.itemAt(index))
+
+    def _hide_line_rows(self, layout):
+        """
+        把"运行参数"页里**已有的行**藏起来——那些是直线专用控件
+        （Canny 阈值 / Hough 阈值 / 最小线长 / 最大线间隙），处理类用不上。
+        按布局项遍历，不依赖控件名，所以 .ui 里改个名字也不会失效。
+        """
+        for index in range(layout.count()):
+            self._hide_item(layout.itemAt(index))
+
+    def _hint_to_bottom(self, layout):
+        """
+        把参数校验提示行挪到**参数行的下面**（2026.10.7 用户要求：提示不许挤在上面把布局弄乱）。
+
+        `.ui` 里它本来就摆在那一列的末尾，但本类是**动态 addLayout 追加**行的 ⇒ 新行会插到它前面，
+        于是提示跑到上面去了（实测：提示 y=87、参数行被顶到 132 以下）。这里把它挪回末尾。
+        调用时机：必须在 `layout.addStretch(1)` **之前**，否则提示会被弹簧顶到分组框最底下。
+        """
+        hint = getattr(self, "validate_hint", None)
+        if hint is None:
+            return
+        layout.removeWidget(hint)
+        layout.addWidget(hint)
+
+    def _build_param_rows(self):
+        """按 param_specs 生成"运行参数"页的行"""
+        layout = self._param_group_layout()
+        if layout is None:
+            return
+        self._hide_line_rows(layout)
+        self.param_layout = layout
+
+        specs = list(getattr(self.spec, "param_specs", None) or [])
+        if not specs:
+            # 这一页没有任何可调参数：给一行灰字提示。
+            # 注意文案要短 + 允许换行：QLabel 的 sizeHint 是按**整行文字**宽度算的，
+            # 长句子会把整个对话框顶宽（用户实测反馈："取反的窗口比别的宽一大截"就是这句长提示造成的）。
+            hint = QLabel("该模块没有可调参数")
+            hint.setStyleSheet("color: #888888;")
+            hint.setWordWrap(True)
+            hint.setToolTip("该模块没有可调参数，只按“基本参数”页里的 ROI / 继承设置处理")
+            layout.addWidget(hint)
+            self._hint_to_bottom(layout)
+            layout.addStretch(1)
+            return
+
+        for key, label, kind, options in specs:
+            widget = self._make_widget(key, kind, options)
+            if widget is None:
+                continue
+            self.param_controls[key] = widget
+            row = QHBoxLayout()
+            row.addWidget(QLabel("{0}:".format(label)))
+            row.addWidget(widget, 1)
+            layout.addLayout(row)
+            # ★ 行联动（目标5-M2）：options["visible_when"] = (依赖的参数键, [允许的值…])
+            #   只有"依赖参数"取到这些值时，这一行才显示（选 HSV 就只显示 HSV 那一套阈值）。
+            condition = (options or {}).get("visible_when")
+            if condition:
+                self._linked_rows.append(
+                    (row, condition[0], [str(value) for value in condition[1]]))
+        self._bind_linked_rows()
+        self._hint_to_bottom(layout)
+        layout.addStretch(1)
+
+    # ------------------------------------------------------------------
+    # 行联动（目标5-M2）：按"被依赖参数的当前值"显示 / 隐藏某些行
+    # ------------------------------------------------------------------
+    def _bind_linked_rows(self):
+        """给"被依赖的控件"接上信号，并先按当前值算一次显隐"""
+        if not self._linked_rows:
+            return
+        for _row, dep_key, _allowed in self._linked_rows:
+            widget = self.param_controls.get(dep_key)
+            if widget is None:
+                continue
+            if isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(self._apply_param_visibility)
+            elif isinstance(widget, QCheckBox):
+                widget.stateChanged.connect(self._apply_param_visibility)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.valueChanged.connect(self._apply_param_visibility)
+        self._apply_param_visibility()
+
+    @staticmethod
+    def _set_item_visible(item, visible):
+        """把布局项（控件或嵌套布局）里的所有控件显示 / 隐藏（`_hide_item` 的反向版本）"""
+        if item is None:
+            return
+        widget = item.widget()
+        if widget is not None:
+            widget.setVisible(visible)
+            return
+        child = item.layout()
+        if child is not None:
+            for index in range(child.count()):
+                GenericProcessDialog._set_item_visible(child.itemAt(index), visible)
+
+    def _apply_param_visibility(self, *_args):
+        """
+        按被依赖参数的当前值显示 / 隐藏联动行。
+
+        为什么必须 `setVisible(False)` 而不是"清空文字"：隐藏才会退出布局计算；
+        只清空文字的话那一行还占着位置、标签还挂在那里（项目里踩过这个坑）。
+        """
+        for row, dep_key, allowed in getattr(self, "_linked_rows", None) or []:
+            widget = self.param_controls.get(dep_key)
+            if widget is None:
+                continue
+            if isinstance(widget, QComboBox):
+                current = widget.currentText()
+            elif isinstance(widget, QCheckBox):
+                current = "True" if widget.isChecked() else "False"
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                current = str(widget.value())
+            else:
+                current = ""
+            visible = current in allowed
+            for index in range(row.count()):
+                self._set_item_visible(row.itemAt(index), visible)
+        # 行显隐会改变内容最小宽 ⇒ 同步一次滚动区最小宽（窗口不允许被缩到裁掉控件）
+        self._sync_scroll_min_width()
+
+    def _apply_dynamic_defaults(self):
+        """
+        给 `default_from` 声明的参数补"动态默认值"（**必须在 `_load_params()` 之后跑**）。
+
+        为什么不能放在建控件那一步：`_load_params()` 会拿 `options["default"]`（空串）再去
+        `setText("")`，把这里填好的默认值又冲掉（实测踩到）。
+        也已经存过值的参数一律不动 —— 用户改过的名字不能被默认值覆盖。
+        """
+        controls = getattr(self, "param_controls", None) or {}
+        for key, _label, kind, options in list(getattr(self.spec, "param_specs", None) or []):
+            widget = controls.get(key)
+            if widget is None or self.node is None:
+                continue
+            if self.node.params.get(key):
+                continue                      # 这个节点存过值了，别覆盖用户的选择
+            self._apply_source_default(widget, kind, options)
+
+    def _apply_source_default(self, widget, kind, options):
+        """
+        把 param_specs 里 `default_from` 声明的"动态默认值"填进控件。
+
+        目前只有一种：`default_from = "input_image_name"`
+        —— "输出图像"节点的"输出文件名"默认就是**这一轮输入图片的文件名**（用户 2026.10.7 要求）。
+        主窗口拿不到名字（没开图 / 相机帧 / 测试图）时就保持空，界面上会显示 placeholder 说明留空的含义。
+        """
+        if (options or {}).get("default_from") != "input_image_name":
+            return
+        win = self.main_window
+        if win is None or self.node is None or not hasattr(win, "input_image_name_of_node"):
+            return
+        name = win.input_image_name_of_node(self.node) or ""
+        if not name:
+            return
+        if kind == "text":
+            if not widget.text():             # 控件里已经有内容就别动
+                widget.setText(str(name))
+        elif kind == "dir":
+            if not widget.edit.text():
+                widget.edit.setText(str(name))
+
+    def _make_widget(self, key, kind, options):
+        """按控件类型造控件；造不出来返回 None（该参数就当不存在，界面不崩）"""
+        options = options or {}
+        if kind == "combo":
+            widget = QComboBox()
+            entries = [str(item) for item in options.get("options", [])]
+            widget.addItems(entries)
+            # ★ 让下拉框**可以被压窄**（用户 2026.10.12 实测："输出图像节点窗口被遮挡" ——
+            #   "选择目录…"按钮、下拉框右侧都被切掉）：
+            #   `QComboBox` 的 minimumSizeHint 默认按**最长那一项**算，像
+            #   "MP4（mp4v，体积小，推荐）" 这种长项会把整行顶到视口之外；而**横向滚动条是被禁用的**
+            #   （用户 2026.10.7 定的"横向条永不出现"）⇒ 超出的部分被**静默裁掉**。
+            #   改成"按 N 个字符算最小宽"之后：窗口够宽时照样撑满（行里有 stretch），
+            #   窗口窄了就把文字省略号显示 —— 无论用户机器上字体多宽，都不会再越界。
+            widget.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            widget.setMinimumContentsLength(int(options.get("min_contents", 10)))
+            # "预留"选项：在下拉框里**占位置灰**（看得见、但选不了）。
+            # 声明方式：param_specs 的 options 里加 "disabled": ["网络相机（预留）", ...]。
+            for index, text in enumerate(entries):
+                if text in [str(item) for item in options.get("disabled", [])]:
+                    model_item = widget.model().item(index)
+                    if model_item is not None:
+                        model_item.setEnabled(False)
+            default = options.get("default")
+            if default is not None:
+                widget.setCurrentText(str(default))
+        elif kind == "int":
+            widget = QSpinBox()
+            widget.setRange(int(options.get("min", 0)), int(options.get("max", 9999)))
+            widget.setValue(int(options.get("default", 0)))
+            if options.get("odd"):
+                # 卷积核尺寸必须是奇数：步长 2，再把手动输入 / 默认值里的偶数纠正过来
+                widget.setSingleStep(2)
+                widget.valueChanged.connect(
+                    lambda value, box=widget: box.setValue(self._to_odd(value)))
+        elif kind == "float":
+            widget = QDoubleSpinBox()
+            widget.setDecimals(int(options.get("decimals", 2)))
+            widget.setRange(float(options.get("min", 0.0)), float(options.get("max", 9999.0)))
+            widget.setSingleStep(float(options.get("step", 1.0)))
+            widget.setValue(float(options.get("default", 0.0)))
+        elif kind == "bool":
+            widget = QCheckBox()
+            widget.setChecked(bool(options.get("default", False)))
+        elif kind == "file":
+            widget = QWidget()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            edit = QLineEdit(str(options.get("default", "")))
+            browse = QPushButton("浏览…")
+            if options.get("plain"):
+                # ★ plain = "只选文件"（目标5-M2 的级联文件用）：
+                #   通用 file 控件在**非起点节点**上点"浏览…"弹的是"选图片"，
+                #   还会顺手 `import_image_path()` 把选中的图导进图库 —— 对"级联文件"这种参数
+                #   是彻头彻尾的副作用（2026.10.7 给"输出文件名"找控件时踩过同类坑）。
+                browse.clicked.connect(
+                    lambda _checked=False, target=edit,
+                    filters=options.get("filter", "所有文件 (*.*)"):
+                    self._browse_plain(target, filters))
+            else:
+                browse.clicked.connect(
+                    lambda _checked=False, target=edit,
+                    filters=options.get("filter", "所有文件 (*.*)"):
+                    self._browse_file(target, filters))
+            row.addWidget(edit)
+            row.addWidget(browse)
+            widget.edit = edit          # 取值时用它（见 _widget_value）
+        elif kind == "slider_int":
+            # ★ "进度条 + 微调框"（用户 2026.10.12 要求，界面格式 = 参数名 ──进度条── 数值）：
+            #   · 滑块用**真范围**（拖不出界），微调框沿用"**软范围**"（越界值可以先打完、
+            #     提交时才夹回上下限 —— 与其它数值框同一套手感）；两者**双向联动**；
+            #   · 值相同时 setValue 不发信号，所以两条连接不会来回死循环。
+            widget = QWidget()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            low = int(options.get("min", 0))
+            high = int(options.get("max", 255))
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(low, high)
+            # 滑块最小宽度 60（不是 Qt 默认的 84、也不是我一开始写的 90）：
+            # 实测"标签(52) + 滑块 + 微调框(70) + 边距"一旦超过滚动区视口宽度（226px），
+            # 因为**横向滚动条被禁用**（用户 2026.10.7 定的"横向条永不出现"），
+            # 多出来的部分会被**静默裁掉** —— 微调框右侧的上下箭头正好被切掉（截图里能看到）。
+            # 给 60 之后整行最小宽 218 < 226，留 8px 余量；滑块本身有 stretch，富余时照样撑满。
+            slider.setMinimumWidth(int(options.get("slider_width", 60)))
+            spin = QSpinBox()
+            spin.setRange(low, high)
+            row.addWidget(slider, 1)
+            row.addWidget(spin)
+            widget.slider = slider
+            widget.spin = spin
+            widget.setProperty("_slider_row", True)   # 给 _tighten_param_rows() 认（标签对齐用）
+            self._apply_soft_range(spin)              # 微调框照样是"软范围"
+            default = int(options.get("default", low))
+            spin.setValue(max(low, min(high, default)))
+            slider.setValue(spin.value())
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
+        elif kind == "text":
+            # 纯文本输入（M5「输出图像」的"输出文件名"用它）。
+            # **不能用 file 顶替**：file 的"浏览…"在非起点节点上弹的是"选图片"，
+            # 还会顺手把选中的图导进图库（副作用完全不对）。
+            widget = QLineEdit(str(options.get("default", "")))
+            if options.get("placeholder"):
+                widget.setPlaceholderText(str(options["placeholder"]))
+        elif kind == "dir":
+            # 选目录（M5「输出图像」的"输出目录"用它）：和 file 同形，只是弹"选择文件夹"
+            widget = QWidget()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            edit = QLineEdit(str(options.get("default", "")))
+            browse = QPushButton("选择目录…")
+            browse.clicked.connect(
+                lambda _checked=False, target=edit: self._browse_dir(target))
+            row.addWidget(edit)
+            row.addWidget(browse)
+            widget.edit = edit
+        else:
+            return None
+
+        widget.setObjectName("param_{0}".format(key))
+        # ★ 数值输入改成"软范围"（用户 2026.10.7 要求）：越界值可以先打进去，提交时才夹回上下限
+        self._apply_soft_range(widget)
+        return widget
+
+    @staticmethod
+    def _to_odd(value):
+        """偶数 → 最近的奇数（卷积核 / 自适应阈值块都要求奇数）"""
+        value = int(value)
+        return value + 1 if value % 2 == 0 else value
+
+    def _browse_wants_folder(self):
+        """
+        这次点"浏览…"该弹"选文件夹"还是"选图片"？
+
+        用户 2026.10.5 要求：图片和文件夹**分开**、对话框回到系统原生——
+        图片源节点的来源选成"文件夹"时，这里就弹"选择文件夹"；否则弹"选择图片"。
+        看的是下拉框**当前**选中的值（用户可能刚改过还没保存）。
+        """
+        if getattr(self.spec, "kind", None) != KIND_SOURCE:
+            return False
+        controls = getattr(self, "param_controls", None) or {}
+        combo = controls.get("source_type")
+        if combo is not None:
+            return combo.currentText() == "文件夹"
+        if self.node is None:
+            return False
+        return self.node.params.get("source_type") == "文件夹"
+
+    def _browse_file(self, edit, filters):
+        """file 类型参数右边那个"浏览…"按钮
+
+        用**系统原生**对话框（用户要求：图片和文件夹分开，界面回到原生）：
+          · 图片源节点的来源 = "文件夹" → 弹"选择文件夹"，选完路径就是这个文件夹
+            （里面的图片会静默导入图库，方便点缩略图切换）；
+          · 其它情况 → 弹"选择图片"，选完路径就是这张图。
+        导入全程不弹任何提示，坏的图片自动跳过。
+        """
+        if self._browse_wants_folder():
+            folder = QFileDialog.getExistingDirectory(self, "选择文件夹", edit.text())
+            if not folder:
+                return
+            if self.main_window is not None and hasattr(self.main_window, "import_folder_path"):
+                self.main_window.import_folder_path(folder)     # 静默导入，坏文件跳过
+            edit.setText(folder)
+            return
+
+        path, _selected = QFileDialog.getOpenFileName(self, "选择图片", edit.text(), filters)
+        if not path:
+            return
+        if self.main_window is not None and hasattr(self.main_window, "import_image_path"):
+            self.main_window.import_image_path(path)            # 静默导入，读不出来就跳过
+        edit.setText(path)
+
+    def _browse_plain(self, edit, filters):
+        """
+        "只选文件"的浏览按钮（目标5-M2 的级联文件用）。
+
+        与 `_browse_file()` 的区别：弹通用文件选择、选完**只把路径填进输入框** ——
+        不判断"要不要选文件夹"、也不把选中的文件导进图库（那是图片源节点才需要的副作用）。
+        """
+        path, _selected = QFileDialog.getOpenFileName(self, "选择文件", edit.text(), filters)
+        if not path:
+            return
+        edit.setText(path)
+
+    def _browse_dir(self, edit):
+        """dir 类型参数右边那个"选择目录…"按钮（M5「输出图像」的输出目录用）
+
+        用**系统原生**的选文件夹对话框；选完只把路径填进输入框，**不做任何别的动作**
+        （不导入、不建目录、不弹提示）——建目录留到真正保存那一刻。
+        """
+        folder = QFileDialog.getExistingDirectory(self, "选择输出目录", edit.text())
+        if not folder:
+            return
+        edit.setText(folder)
+
+    def _remove_result_tab(self):
+        """处理类没有结构化结果 → 去掉"显示结果"页（那页是结果计数）"""
+        result_page = self.ui.findChild(QWidget, "tab_3")
+        if result_page is None:
+            return
+        index = self.ui.tabWidget.indexOf(result_page)
+        if index >= 0:
+            self.ui.tabWidget.removeTab(index)
+
+    def _remove_basic_tab(self):
+        """"流程起点"类节点（图片源）：去掉"基本参数"页——它没有上游，图像源绑定无从谈起"""
+        basic_page = self.ui.findChild(QWidget, "tab")
+        if basic_page is None:
+            return
+        index = self.ui.tabWidget.indexOf(basic_page)
+        if index >= 0:
+            self.ui.tabWidget.removeTab(index)
+
+    def _remove_run_buttons(self):
+        """
+        "流程起点"类节点的窗口去掉"执行 / 连续执行"两个按钮，只留"确定"（用户 2026.10.5 要求）。
+
+        理由：它的参数只是"从哪儿拿图"，没有可以单独预览的算法效果；
+        留着那两个按钮只会让人以为"在这里执行的是这个节点"。
+        点"确定" = 保存参数并关闭（见下面重写的 on_ok）。
+        """
+        for name in ("btn_run", "btn_cont"):
+            btn = self.ui.findChild(QWidget, name)
+            if btn is not None:
+                btn.hide()
+
+    def on_ok(self):
+        """点"确定"：起点节点只保存参数并关窗；其它算子沿用父类行为（先执行一次单步再关）"""
+        if getattr(self.spec, "kind", None) == KIND_SOURCE:
+            self._update_params()
+            # ★ 与其它窗口保持一致（批次4 目标4 轮2）：起点节点目前没有校验规则，属"有备无患"
+            self._validate_params()
+            # 用户 2026.10.5 要求：在图片源窗口点"确定"时，就把这张图加进图像列表里
+            if self.main_window is not None and hasattr(self.main_window, "_ensure_source_images_in_gallery"):
+                self.main_window._ensure_source_images_in_gallery()
+            self.accept()
+            return
+        super().on_ok()
+
+    # ------------------------------------------------------------------
+    # 参数读写：基本参数交给父类，动态控件由本类处理
+    # ------------------------------------------------------------------
+    def _load_params(self):
+        super()._load_params()          # 图像源 / ROI / 继承 / 外扩 / 框选（父类那套）
+        controls = getattr(self, "param_controls", None) or {}
+        if not controls or self.node is None:
+            return
+        for key, _label, kind, options in list(getattr(self.spec, "param_specs", None) or []):
+            widget = controls.get(key)
+            if widget is None:
+                continue
+            value = self.node.params.get(key, (options or {}).get("default"))
+            self._set_widget_value(kind, widget, value)
+
+    def _update_params(self):
+        super()._update_params()        # 基本参数照旧存
+        if self.node is None:
+            return
+
+        # 父类会把直线专用的 5 个参数也写进 node.params（那些控件只是被藏起来了，
+        # 值还在）——通用窗口的算子用不上，这里**先**删掉。
+        # 注意这一步必须放在下面"没有动态控件就返回"之前：取反这类没有参数的算子
+        # 也得把直线参数清掉，否则会混进节点参数和方案文件里。
+        for key in ("canny_low", "canny_high", "hough_threshold",
+                    "min_line_length", "max_line_gap"):
+            self.node.params.pop(key, None)
+
+        if getattr(self.spec, "kind", None) in (KIND_SOURCE, KIND_SINK):
+            # 起点节点（图片源）和输出类节点（输出图像）都没有"处理区域"这个概念：
+            # 把父类写进来的 ROI 参数一并清掉，免得方案文件里留一堆没用的 roi_x / roi_w
+            # —— 画面上那个莫名其妙的黄框就是这么来的
+            # （对话框曾经把"主窗口当前图的尺寸"当成 ROI 默认值写了进去，用户实测看到 512×512 的怪框）。
+            for key in ("roi_x", "roi_y", "roi_w", "roi_h", "roi_shape", "roi_inherit",
+                        "roi_margin", "roi_source", "hide_roi"):
+                self.node.params.pop(key, None)
+
+        controls = getattr(self, "param_controls", None) or {}
+        for key, _label, kind, _options in list(getattr(self.spec, "param_specs", None) or []):
+            widget = controls.get(key)
+            if widget is None:
+                continue
+            self.node.params[key] = self._widget_value(kind, widget)
+
+    def _set_widget_value(self, kind, widget, value):
+        if value is None:
+            return
+        if kind == "combo":
+            widget.setCurrentText(str(value))
+        elif kind == "int":
+            widget.setValue(int(value))
+        elif kind == "float":
+            widget.setValue(float(value))
+        elif kind == "bool":
+            widget.setChecked(bool(value))
+        elif kind == "file":
+            widget.edit.setText(str(value))
+        elif kind == "text":
+            widget.setText(str(value))
+        elif kind == "dir":
+            widget.edit.setText(str(value))
+        elif kind == "slider_int":
+            widget.spin.setValue(int(value))
+
+    def _widget_value(self, kind, widget):
+        if kind == "combo":
+            return widget.currentText()
+        if kind == "int":
+            return widget.value()
+        if kind == "slider_int":
+            return widget.spin.value()
+        if kind == "float":
+            return widget.value()
+        if kind == "bool":
+            return widget.isChecked()
+        if kind == "file":
+            return widget.edit.text()
+        if kind == "text":
+            return widget.text()
+        if kind == "dir":
+            return widget.edit.text()
+        return None

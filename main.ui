@@ -263,28 +263,28 @@
           </item>
           <item>
            <property name="text">
-            <string>检测</string>
+            <string>检测识别</string>
            </property>
            <item>
             <property name="text">
-             <string>直线</string>
+             <string>直线识别</string>
             </property>
            </item>
            <item>
             <property name="text">
-             <string>圆</string>
+             <string>圆识别</string>
             </property>
            </item>
-          </item>
-          <item>
-           <property name="text">
-            <string>识别</string>
-           </property>
            <item>
             <property name="text">
              <string>人脸识别</string>
             </property>
            </item>
+          </item>
+          <item>
+           <property name="text">
+            <string>颜色处理</string>
+           </property>
            <item>
             <property name="text">
              <string>颜色提取</string>
