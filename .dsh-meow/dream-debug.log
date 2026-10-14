@@ -566,3 +566,28 @@
 [2026-10-13T11:39:38.374Z] dream group 3/3 steered
 [2026-10-13T11:40:50.942Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=true
 [2026-10-13T11:40:50.958Z] dream done session=4c85d180 groups=3 stamped=41
+[2026-10-13T19:10:58.691Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T19:16:32.503Z] hit-chain pid=3320 sid=4c85d180 textLen=121 hit=yes
+[2026-10-13T19:18:53.491Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T19:22:20.932Z] check sid=4c85d180 active=false idle=208s
+[2026-10-13T19:25:59.165Z] hit-chain pid=3320 sid=4c85d180 textLen=96 hit=null
+[2026-10-13T19:29:08.338Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T19:31:06.248Z] hit-chain pid=3320 sid=4c85d180 textLen=55 hit=yes
+[2026-10-13T19:33:42.282Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=false
+[2026-10-13T19:37:20.938Z] check sid=4c85d180 active=false idle=219s
+[2026-10-13T19:52:20.941Z] check sid=4c85d180 active=false idle=1119s
+[2026-10-13T20:07:20.941Z] check sid=4c85d180 active=false idle=2019s
+[2026-10-13T20:22:20.941Z] check sid=4c85d180 active=false idle=2919s
+[2026-10-13T20:37:20.944Z] check sid=4c85d180 active=false idle=3819s
+[2026-10-13T21:39:45.566Z] check sid=4c85d180 active=false idle=7564s
+[2026-10-13T22:39:44.873Z] check sid=4c85d180 active=false idle=11163s
+[2026-10-13T22:39:44.890Z] dream start pid=3320 session=4c85d180 rounds=3 T=1791920021549
+[2026-10-13T23:00:09.608Z] check sid=4c85d180 active=true idle=12388s
+[2026-10-13T23:31:38.771Z] check sid=4c85d180 active=true idle=14277s
+[2026-10-13T23:32:24.083Z] turn-stopping pid=3320 sid=4c85d180 reason=none wasDream=true
+[2026-10-13T23:32:24.094Z] dream group 2/3 steered
+[2026-10-14T10:48:19.804Z] check sid=4c85d180 active=true idle=54878s
+[2026-10-14T10:48:19.847Z] dream recovered session=4c85d180 stamped=42
+[2026-10-14T13:35:21.555Z] pre-step first pid=22876 sid=4c85d180 priorUser=49 userMsgs=1
+[2026-10-14T13:35:21.572Z] hit-chain pid=22876 sid=4c85d180 textLen=268 hit=null
+[2026-10-14T13:37:59.612Z] turn-stopping pid=22876 sid=4c85d180 reason=none wasDream=false
