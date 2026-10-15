@@ -39,6 +39,16 @@ def check(name, cond, extra=""):
         fails.append(name)
 
 
+def wait_batch(w, limit=8000):
+    """★ 批次5 目标3：「运行全部」改成**分片执行**（一张图一个分片、片之间让出事件循环）
+    ⇒ 点完"连续执行"要推进事件循环才算跑完。旧版是同步 for 循环，不需要等。
+    本函数把事件循环推到批量结束（`_batch_state` 清空）。"""
+    guard = 0
+    while w._batch_state is not None and guard < limit:
+        app.processEvents()
+        guard += 1
+
+
 tmp = tempfile.mkdtemp(prefix="vf_v5_")
 vals = {"A": 40, "B": 130, "C": 210}
 paths = {}
@@ -114,6 +124,7 @@ gw.set_scope_all(True)
 gw.set_current_index(0)
 w.execution_log.setRowCount(0)
 w.btn_continuous.click()
+wait_batch(w)                     # ★ 目标3：分片执行要推进事件循环才跑完
 check("范围=运行全部 → 连续执行跑 3 张", ran_rows() == 3, ran_rows())
 gw.set_scope_all(False)
 gw.set_current_index(0)
@@ -141,6 +152,7 @@ gw.set_scope_all(True)
 gw.set_current_index(1)
 w._show_static_image(gw.item_frame(gw.gallery_list.item(1)))
 w.btn_continuous.click()
+wait_batch(w)                     # ★ 目标3：等分片跑完
 cur = float(np.mean(w.current_static_image)) if w.current_static_image is not None else None
 check("不勾'自动切换'：跑完选中项回到第 2 张", gw.current_index() == 1, gw.current_index())
 check("不勾'自动切换'：画面也回到第 2 张（B=130）", cur is not None and abs(cur - 130) < 3, cur)
@@ -148,6 +160,7 @@ gw.auto_switch_box.setChecked(True)
 gw.set_current_index(0)
 w._show_static_image(gw.item_frame(gw.gallery_list.item(0)))
 w.btn_continuous.click()
+wait_batch(w)                     # ★ 目标3：等分片跑完
 cur = float(np.mean(w.current_static_image)) if w.current_static_image is not None else None
 check("勾'自动切换'：跑完停在最后一张（C=210）", gw.current_index() == 2 and cur is not None
       and abs(cur - 210) < 3, (gw.current_index(), cur))
@@ -160,9 +173,9 @@ calls = {"n": 0}
 orig = w._execute_static
 
 
-def patched(frame, mode, node=None, adopt_frame=True):
+def patched(frame, mode, node=None, adopt_frame=True, **kwargs):
     calls["n"] += 1
-    r = orig(frame, mode, node, adopt_frame)
+    r = orig(frame, mode, node, adopt_frame, **kwargs)
     if calls["n"] == 1:
         gw.stop_button.click()                  # 用户中途点"停止"按钮
     return r
@@ -171,6 +184,7 @@ def patched(frame, mode, node=None, adopt_frame=True):
 w.execution_log.setRowCount(0)
 w._execute_static = patched
 w.btn_continuous.click()
+wait_batch(w)                     # ★ 目标3：等分片跑完（"停止"在下一片开头生效）
 w._execute_static = orig
 hints = [w.execution_log.item(r, 4).text() for r in range(w.execution_log.rowCount())
          if w.execution_log.item(r, 4)]

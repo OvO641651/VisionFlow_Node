@@ -15,9 +15,10 @@ from core.NodeRegistry import KIND_SINK, KIND_SOURCE, SOURCE_KEY, get_spec, is_b
 from core.ParamRules import run_validation
 from ops.sink.OutputOps import SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO, close_all_recordings, set_input_name_provider, set_overlay_frame_provider, set_round_info_provider
 from core.param_store import VIDEO_ROI_KEY
+from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
 
 
-class FlowEngineMixin:
+class FlowEngineMixin(MainHost):
     """执行入口与数据流引擎 + 渲染显示 + 显示键（批次5 目标2 从 main.py 拆出）"""
 
     def _show_static_image(self, frame):
@@ -71,7 +72,7 @@ class FlowEngineMixin:
         """
         return (image_key, self.flow_page_mgr.page_key(), mode) # type:ignore
 
-    def _execute_static(self, frame, mode, node=None, adopt_frame=True):
+    def _execute_static(self, frame, mode, node=None, adopt_frame=True, show=True):
         """
         对一张静态图片执行检测并把结果显示出来。
         只有"单步执行"、"连续执行"两个按钮会调用它。
@@ -86,6 +87,9 @@ class FlowEngineMixin:
                从**图片源节点兜底**来的帧传 False——它只是"这一轮驱动流程用的帧"，
                不该篡改"主窗口当前打开的是哪张图"（否则用户换了图片源的文件、
                再点执行时还会拿旧的那张，用户实测报过这个问题）。
+        :param show: 要不要把处理后的图画到画布上。默认 True（单步 / 连续执行都要看结果）；
+               **"运行全部"在没勾「自动切换」时传 False** —— 那时只算不显示（用户 2026.10.15 要求：
+               不勾自动切换画布就不该动），结果照旧进缓存、日志照旧逐张写。
         :return: 检测到的数据列表 data。
         """
         if adopt_frame:
@@ -110,10 +114,14 @@ class FlowEngineMixin:
 
         # 显示处理后的图像；传图片标识让每张图片的缩放互相独立
         # （缓存键用 _image_key_of；画面键用 _display_key_of —— 视频帧/相机帧的画面键整段共用）
+        # ★ `show=False` 时**只算不显示**："运行全部"在**没勾「自动切换」**时就是这么用的 ——
+        #   用户 2026.10.15 报的问题："不选自动切换，画布也会自动播放处理后的图片、最后再切回选中的那张"。
+        #   不刷画布不影响正确性：结果照旧进缓存（切回那张图仍能看到）、日志照旧逐张写。
         image_key = self._image_key_of(frame)
         camera_used = self._camera_used_by(node, mode)
         display_key = self._camera_display_key(node, mode) if camera_used else None
-        self._display_image(work_frame, display_key or self._display_key_of(frame))
+        if show:
+            self._display_image(work_frame, display_key or self._display_key_of(frame))
 
         # ★ 相机帧**不进结果缓存**（用户 2026.10.7 定）：相机是无界流，每一帧都是新内容，
         #   缓存既没有"切回来还能看到上次结果"的意义，又会让内存随运行时间线性增长。

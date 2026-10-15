@@ -10,9 +10,10 @@ import json
 import time
 import os
 from core.NodeRegistry import SOURCE_KEY, get_spec, is_bound_node
+from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
 
 
-class ProjectStoreMixin:
+class ProjectStoreMixin(MainHost):
     """方案持久化（收集 / 指纹 / 读写 / 追加去重）（批次5 目标2 从 main.py 拆出）"""
 
     def _page_title(self, page):

@@ -105,8 +105,12 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         self._log_accumulate = False
         # 用户在图库里**主动删掉**过的图片路径：以后执行时不要再自动加回图库（删了又回来是 bug）
         self._removed_paths = set()
-        # 批量执行的"停止"标志：菜单里的"停止"把它置 True，批量循环每张之前检查一次
+        # 批量执行的"停止"标志：菜单里的"停止"把它置 True，分片循环每片之前检查一次
         self._batch_stop = False
+        # ★ 批次5 目标3："运行全部"的**分片上下文**（None = 当前没有批量在跑）——
+        #   一条记录装住这一批的进度 + "开始时的画面 / 选中项"（跑完要还原）。
+        #   为什么必须是 self 上的字段：分片之间要过一遍事件循环，函数里的局部变量活不过去。
+        self._batch_state = None
         # 视频"自动播放"（勾了"自动切换"时点执行就按原帧率连续播）：定时器 + 两个状态标志
         self._video_timer = None
         self._video_playing = False
@@ -301,6 +305,10 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             # 菜单"停止"（急停）；"运行选中"在 v1.17 改成"范围模式"的选择（工具栏下拉框），不再直接执行，
             # 所以这里只接 stop。
             self.gallery_widget.stop_requested.connect(self.stop_batch)
+            # ★ 批次5 目标3 修正：「自动切换」在**批量开始时定格**，所以批量跑着的时候拨它不影响
+            #   正在跑的这一批（否则会"半途开始吐画面、最后停在最后一张"，用户 2026.10.15 报的就是这个）。
+            #   这里只接一个薄处理器：批量进行中 + 与定格值不一致时，写一行短提示。
+            self.gallery_widget.auto_switch_changed.connect(self._on_auto_switch_changed)
 
 
     def open_file(self):

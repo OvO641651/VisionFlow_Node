@@ -7,6 +7,7 @@
 
 import os
 from core.NodeRegistry import KIND_SOURCE, get_spec, node_level_param_keys
+from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
 
 # 视频 / 摄像头帧**整段共用一份参数**用的"视频槽"键（原在 main.py 顶部，批次5 目标2 随参数归档搬来）：
 # 参数按图片归档时用它当键，这样一段视频里每帧共用同一份参数（中途改参数、后面的帧按新的跑）。
@@ -15,7 +16,7 @@ from core.NodeRegistry import KIND_SOURCE, get_spec, node_level_param_keys
 VIDEO_ROI_KEY = "video"
 
 
-class ParamStoreMixin:
+class ParamStoreMixin(MainHost):
     """参数归档（按图片 / 流程级 / per_node 三套口径）（批次5 目标2 从 main.py 拆出）"""
 
     @staticmethod

@@ -12,7 +12,8 @@
 
     ① 拆前 main.py 里 MainWindow 的 **117 个方法，拆完之后一个不少**（逐个 `hasattr`）
     ② 冻结清单自身没问题（117 个名字互不重复）—— 防"清单里写重了"造成假绿
-    ③ 没有意外新增：多出来的方法只允许是**弹窗出口白名单**（`_warn` / `_info` / `_ask_*`）
+    ③ 没有意外新增：多出来的方法只允许是**白名单**（目标2 的弹窗出口 `_warn` / `_info` / `_ask_*`；
+       目标3 的分片 `_batch_step` / `_batch_finish`）
     ④ 6 个 Mixin 都真的进了 `MainWindow` 的 MRO（拆出来的文件确实被用上，不是摆设）
     ⑤ Mixin 模块里**不出现 `QMessageBox.` / `QFileDialog.`** —— 用例挡弹窗靠的是
        `m.QMessageBox = FakeMB` / `m.QFileDialog = FakeFD` 给 **main 模块**打补丁；
@@ -44,8 +45,15 @@ from services.gallery_service import GalleryMixin      # noqa: E402
 MIXIN_CLASSES = [FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin,
                  CameraMixin, VideoMixin, GalleryMixin]
 
-# 目标2 新增的"弹窗出口"薄壳（**唯一的**允许新增面）
-NEW_SHELLS = ["_warn", "_info", "_ask_open_path", "_ask_save_path", "_ask_dir"]
+# ★ 允许新增的方法白名单（**逐条注明是谁加的**；除此之外多出来的方法一律算"意外新增"）
+ALLOWED_NEW_METHODS = [
+    # 批次5 目标2：弹窗出口薄壳（用例对 main 打补丁挡弹窗的必要条件）
+    "_warn", "_info", "_ask_open_path", "_ask_save_path", "_ask_dir",
+    # 批次5 目标3：把"运行全部"从同步 for 循环改成分片执行（一张图 = 一个分片）
+    "_batch_step", "_batch_finish",
+    # 批次5 目标3 修正：「自动切换」在批量开始时定格 ⇒ 接一个薄处理器，中途拨动给一行提示
+    "_on_auto_switch_changed",
+]
 
 # 拆前（改前快照 main.py）MainWindow 的 117 个方法名 —— 冻结清单，**不许删、只许更多的方法名留在别处**
 PRE_SPLIT_METHODS = [
@@ -113,8 +121,9 @@ check("② 冻结清单自身没问题（互不重复 + 条数 = %d）" % PRE_SP
 # ③ 没有意外新增（多出来的只能是弹窗出口白名单） ---------------------------
 have = set(n for n in dir(m.MainWindow)
            if not n.startswith("__") and callable(getattr(m.MainWindow, n, None)))
-unexpected = sorted(have - set(PRE_SPLIT_METHODS) - set(NEW_SHELLS))
-check("③ 没有意外新增的方法（只允许 %s）" % "、".join(NEW_SHELLS), unexpected == [], unexpected)
+unexpected = sorted(have - set(PRE_SPLIT_METHODS) - set(ALLOWED_NEW_METHODS))
+check("③ 没有意外新增的方法（只允许白名单 %d 个：目标2 薄壳 + 目标3 分片）" % len(ALLOWED_NEW_METHODS),
+      unexpected == [], unexpected)
 
 # ④ 6 个 Mixin 都进了 MRO --------------------------------------------------
 not_in_mro = [c.__name__ for c in MIXIN_CLASSES if c not in m.MainWindow.__mro__]

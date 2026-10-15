@@ -8,9 +8,10 @@
 from PySide2.QtCore import QTimer  # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死
 import cv2
 from core.param_store import VIDEO_ROI_KEY
+from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
 
 
-class VideoMixin:
+class VideoMixin(MainHost):
     """视频：帧游标 / 播放定时器 / 录制收尾（批次5 目标2 从 main.py 拆出）"""
 
     def _maybe_load_video_params(self):
