@@ -16,13 +16,35 @@ from core.result_cache import touch as _touch_result_cache  # ★ 目标4：命�
 class GalleryMixin(MainHost):
     """图库：导入 / 删除 / 切换 / 运行范围（批次5 目标2 从 main.py 拆出）"""
 
+    def _is_playing(self):
+        """
+        当前是不是正在播**视频 / 相机**（批次5目标5-M1 新增，2026.10.16）。
+
+        两个标志任一为真即算"正在播"：`_video_playing`（视频）与 `_camera_playing`（相机）。
+        M1 用它挡"播放中点图库"，M2 的"删除 / 连续执行"优先级也会复用同一个判据。
+        """
+        return bool(getattr(self, "_video_playing", False) or getattr(self, "_camera_playing", False))
+
     def _on_gallery_image_selected(self, img_bgr):
         """
         当用户点击图库中的图片时，切换主画面显示
         这张图片以前执行过 -> 直接显示它上一次的检测结果（不用再点执行按钮）；
         这张图片没执行过   -> 只显示原图，不显示检测结果。
         同时，每个节点在这张图片上设置过的运行参数（ROI + 算法参数）会被恢复。
+
+        ★ 例外（批次5目标5-M1，用户 2026.10.16 拍板"甲"）：**视频 / 相机正在播时，点图库只改选中项，
+          不碰画面、也不碰参数**。为什么（这条是三个现象的共同根因）：
+            `_show_static_image()` 一次做三件事 —— ① 记住"当前图" ② 按图切换节点参数
+            ③ 用**静态图的 key** 把画面画上去。而播放定时器每 30~60ms 会把视频帧盖回画布 ⇒
+            · 静态图被显示**一帧**就消失 = 用户报的"**闪现**"（视频源时代修过一次，点图库这条支路没被纳入）；
+            · 画布的缩放被切到那张静态图的记录，而视频帧不带 key（= 保持当前缩放）
+              ⇒ **视频画面按静态图的缩放显示** = 用户报的"缩放串扰"；
+            · 节点参数被换成那张静态图的那一份 ⇒ 视频槽 / 相机槽的参数被污染。
+          选中高亮由 QListWidget 自己处理（"图像源 (n/N)"照旧正确）；另一条信号
+          `image_path_selected`（同步图片源节点路径）**照旧走**——它是数据同步、不是画面。
         """
+        if self._is_playing():
+            return
         if img_bgr is not None:
             self._show_static_image(img_bgr)
 
@@ -356,6 +378,11 @@ class GalleryMixin(MainHost):
         这样"图片源指定的图"和"打开文件导入的图"一样，都能在图库里看到、点选。
         """
         if not hasattr(self, 'gallery_widget') or self.gallery_widget is None:
+            return
+        # ★ 批次5目标5-M1（2026.10.16）：导入方案末尾的那次自动重画**不补图库**
+        #   （它只是把当前图按新页面重算一遍，用户没在执行"图片源"那张图；
+        #     正常执行时这个标志是 False ⇒ 源图照旧进图库，保住 2026.10.5 的需求）
+        if getattr(self, "_no_source_gallery_sync", False):
             return
         for node in list(self.flow_nodes):
             spec = get_spec(node.name)

@@ -59,6 +59,8 @@ ALLOWED_NEW_METHODS = [
     "undo", "redo", "_on_undo_stack_changed", "_run_stack_step",
     # 批次5 目标4 修正：撤销栈改成"每页一条"⇒ 换页时绑定当前页的那条
     "_stack_for", "_bind_undo_stack_for_page",
+    # 批次5 目标5-M1：图库判"是不是正在播视频/相机"（播放中点图库只改选中项）
+    "_is_playing",
 ]
 
 # 拆前（改前快照 main.py）MainWindow 的 117 个方法名 —— 冻结清单，**不许删、只许更多的方法名留在别处**

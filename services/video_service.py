@@ -138,6 +138,11 @@ class VideoMixin(MainHost):
         self._camera_playing = False
         if self._video_timer is not None and self._video_timer.isActive():
             self._video_timer.stop()
+        # ★ 批次5目标5-M1：把"图像源 (n/N)"标签**交还图库**（顺带立刻刷回图库计数 ——
+        #   否则停止后标签会一直停在最后那格"视频帧 (n/N)"上）
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is not None and hasattr(gallery, "set_count_locked"):
+            gallery.set_count_locked(False)
         self._close_recordings(reason)
         self._append_log_hint("停止播放：{0}".format(reason))
 
@@ -169,6 +174,10 @@ class VideoMixin(MainHost):
             else:
                 self._stop_video_playback("已播到末尾")
                 return
+        # ★ 批次5目标5-M1：播放期间把"图像源 (n/N)"标签交给播放侧（免得点图库时被图库计数顶一下又弹回）
+        gallery = getattr(self, "gallery_widget", None)
+        if gallery is not None and hasattr(gallery, "set_count_locked"):
+            gallery.set_count_locked(True)
         self._video_tick_running = True
         self._video_log_throttle = True        # 播放中不刷执行日志（不然每格都重写表格）
         try:

@@ -397,7 +397,15 @@ class ProjectStoreMixin(MainHost):
         # 5、刷新画面与日志：有图就按新流程重跑一次，没图就只把连线刷新一下
         self.update_all_edges()
         if self.current_static_image is not None:
-            self._execute_static(self.current_static_image, "continuous")
+            # ★ 批次5目标5-M1（2026.10.16，实测取证）：这次"重画"只是把**当前那张图**按新页面重算一遍，
+            #   并不是用户真的要用「图片源」那张图 ⇒ **不要**让执行收尾把源图补进图库。
+            #   否则用户会看到"导入方案后图库里凭空多出一张、跟当前选择的那张冲突"（实测：图库 1 → 2 张）。
+            #   正常点执行时不受影响（那个标志只有这里会置上）。
+            self._no_source_gallery_sync = True
+            try:
+                self._execute_static(self.current_static_image, "continuous")
+            finally:
+                self._no_source_gallery_sync = False
 
 
 

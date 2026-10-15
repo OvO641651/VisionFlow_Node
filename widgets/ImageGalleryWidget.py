@@ -4,14 +4,49 @@ from PySide2.QtWidgets import (QWidget, QListWidgetItem, QListWidget,
                                QLabel, QCheckBox, QToolButton, QHBoxLayout,
                                QComboBox)
 from PySide2.QtCore import Signal, Qt, QSize, QEvent
-from PySide2.QtGui import QPixmap, QImage
+from PySide2.QtGui import QPixmap, QImage, QPainter, QColor
 import cv2
 import os
 import sys
 
 from core.ImageIO import read_image      # 图片读取统一入口（支持中文路径，2026.10.12）
 
-# 图像预览进度条 QListWidget 控件
+# 缩略图预览 QListWidget 控件
+
+# ----------------------------------------------------------------------
+# 缩略图的**固定画布**尺寸（批次5目标5-M1，2026.10.16）
+# ★ 这两个数必须恒定：列表开着 `setUniformItemSizes(True)`，它会把"某一项的尺寸"当成**所有项**的
+#   统一尺寸，而这一尺寸跟着"最近重排的那一项"走 ⇒ 只要缩略图尺寸不统一（出现一张竖长图），
+#   整个列表的单元格都会被压窄。详见 make_thumbnail_pixmap() 的说明。
+# ----------------------------------------------------------------------
+THUMB_W, THUMB_H = 80, 60                      # 缩略图画布（等比缩放后居中，四周留白）
+CELL_W, CELL_H = THUMB_W + 8, THUMB_H + 24     # 单元格 = 缩略图 + 内边距，由 setGridSize() 钉死
+THUMB_BG = (240, 240, 240)                     # 留白底色（浅灰，与面板底色接近，不刺眼）
+
+
+def make_thumbnail_pixmap(cv_img, width=THUMB_W, height=THUMB_H):
+    """
+    把任意长宽比的 OpenCV 图装进**固定的 width×height 画布**，返回 QPixmap。
+
+    ★ 为什么必须"固定画布"（用户 2026.10.16 实测报的 bug：图一多缩略图就变窄、点不中）：
+      旧写法 `QPixmap.fromImage(qt_img).scaled(80, 60, KeepAspectRatio)` 让缩略图**尺寸随原图长宽比变**——
+      竖长图（如 300×1200）缩出来只有 15×60。列表又开着 `setUniformItemSizes(True)`，于是
+      **一项的宽度成了全列表的统一宽度** ⇒ 只要出现一张竖长图（常常正是最后导入的那张），
+      整列表单元格被压到 ~21px，连横图也被挤成细条。实测：6 横图 + 1 竖长图 ⇒ 每项宽 86px → **21px**；
+      改用固定画布后 ⇒ **恒为 86px**（横在前 / 竖在前 / 混排 53 张，五组场景全稳）。
+
+    做法：等比缩放（不变形）→ 画到固定画布正中 → 四周填浅灰（letterbox，保证整图都看得见）。
+    """
+    rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    h, w, ch = rgb.shape
+    src = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+    scaled = QPixmap.fromImage(src).scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    canvas = QPixmap(width, height)
+    canvas.fill(QColor(*THUMB_BG))
+    painter = QPainter(canvas)
+    painter.drawPixmap((width - scaled.width()) // 2, (height - scaled.height()) // 2, scaled)
+    painter.end()
+    return canvas
 
 class ImageGalleryWidget(QWidget):
     """
@@ -89,7 +124,14 @@ class ImageGalleryWidget(QWidget):
         self.gallery_list.setIconSize(QSize(80, 70))
 
         #    setUniformItemSizes(True) 会强制每一个条目的尺寸严格保持一致。
+        #    ★★ 陷阱（批次5目标5-M1，用户 2026.10.16 实测）：它取的是"**某一项**的尺寸"当**所有项**的统一尺寸，
+        #       这一尺寸跟着**最近重排的那一项**走 ⇒ 只要列表里混进一张"竖长图"（缩略图很窄），
+        #       整列表的单元格都会被压窄到 ~21px（横图被挤成细条、点都点不中）。
+        #       ⇒ 所以**缩略图必须是恒定尺寸**（见 make_thumbnail_pixmap 的固定画布）：
+        #       这两件事必须成对出现，缺一个就会复现"图一多就变窄"。
         self.gallery_list.setUniformItemSizes(True)
+        #    GridSize：把单元格尺寸**钉死**（缩略图 80×60 + 内边距），进一步保证项尺寸不随内容变化。
+        self.gallery_list.setGridSize(QSize(CELL_W, CELL_H))
 
         #    FixedHeight: 固定图库控件自身的高度为 85 像素，防止它撑破主布局。
         #    缩略图高度为 60，加上上下内边距，85 像素刚好能紧密包裹住图片，去除了下方多余的方形空白区域。
@@ -110,6 +152,12 @@ class ImageGalleryWidget(QWidget):
         self.gallery_list.setDragDropMode(QAbstractItemView.NoDragDrop)    # 直接关闭拖放模式
         self.gallery_list.setDefaultDropAction(Qt.IgnoreAction)            # 默认拖放动作改成"忽略"
         self.gallery_list.setMovement(QListView.Static)                    # 条目位置固定，不允许拖动
+
+        # ★ 批次5目标5-M1（2026.10.16）：播放视频 / 相机期间，"图像源 (n/N)"这个标签**归播放侧** ——
+        #   播放中每个 tick 会把它写成"视频帧 (n/N)"；若此时用户点图库、`refresh_count()` 又把它写回
+        #   "图像源 (n/N)"，就会看到标签"闪一下又变回来"（用户实测报的现象）。
+        #   所以播放开始 / 结束时由播放侧 `set_count_locked(True/False)` 交接；锁着时 `refresh_count()` 不写。
+        self.count_locked = False
 
         # 拖放事件实际是发给 viewport 的，所以控件本体和 viewport 都要装事件过滤器
         self.gallery_list.installEventFilter(self)
@@ -326,8 +374,22 @@ class ImageGalleryWidget(QWidget):
         return bool(getattr(self, "run_mode_box", None) is not None
                     and self.run_mode_box.currentIndex() == 0)
 
+    def set_count_locked(self, locked):
+        """
+        把"图像源 (n/N)"标签**交给播放侧接管 / 交还图库**（批次5目标5-M1，2026.10.16）。
+
+        播放视频 / 相机期间，每个 tick 会把标签写成"视频帧 (n/N)"；此时若用户点图库，
+        `refresh_count()` 又会把它写回"图像源 (n/N)" ⇒ 标签"闪一下又变回来"（用户实测报的）。
+        `locked=True` 时 `refresh_count()` 不写；`locked=False` 时立刻按图库现状刷新一次（恢复显示）。
+        """
+        self.count_locked = bool(locked)
+        if not self.count_locked:
+            self.refresh_count()
+
     def refresh_count(self):
         """刷新"图像源 (n/N)"标签：n = 当前第几张（没选中显示 0），N = 总数"""
+        if getattr(self, "count_locked", False):
+            return              # ★ 播放中：标签归视频 / 相机（见 set_count_locked）
         label = getattr(self, "count_label", None)
         if label is None:
             return
@@ -367,14 +429,9 @@ class ImageGalleryWidget(QWidget):
                      传了就能"点图库改图片源节点的路径"；摄像头帧这类没有文件的就不传。
         :return: 新增的 QListWidgetItem
         """
-        # 图像格式转换：BGR -> RGB，并转换为 Qt 能够识别的 QPixmap。
-        rgb_frame = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_frame.shape
-        bytes_per_line = ch * w
-        # 使用零拷贝方式创建 QImage
-        qt_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888) # type:ignore
-        # 将原始图片按比例缩小至 80x60 像素，作为缩略图显示。
-        pixmap = QPixmap.fromImage(qt_img).scaled(80, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # ★ 批次5目标5-M1（2026.10.16）：缩略图统一装进**固定 80×60 画布**（等比缩放 + 居中 + 浅灰留白）。
+        #   尺寸恒定才不会触发 setUniformItemSizes 把整列表压窄 —— 原因见 make_thumbnail_pixmap()。
+        pixmap = make_thumbnail_pixmap(cv_img)
 
         # 创建一个空白的列表项，并设置图标。
         # QListWidgetItem 不能直接传 pixmap，必须使用 setIcon 方法
