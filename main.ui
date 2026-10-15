@@ -178,6 +178,38 @@
          </widget>
         </item>
         <item>
+         <widget class="QPushButton" name="btn_undo">
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="text">
+           <string>撤销</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btn_redo">
+          <property name="minimumSize">
+           <size>
+            <width>100</width>
+            <height>90</height>
+           </size>
+          </property>
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="text">
+           <string>重做</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <spacer name="horizontalSpacer">
           <property name="orientation">
            <enum>Qt::Horizontal</enum>
@@ -577,6 +609,18 @@
     </property>
     <addaction name="action"/>
    </widget>
+   <widget class="QMenu" name="menu_edit">
+    <property name="font">
+     <font>
+      <pointsize>9</pointsize>
+     </font>
+    </property>
+    <property name="title">
+     <string>编辑</string>
+    </property>
+    <addaction name="action_undo"/>
+    <addaction name="action_redo"/>
+   </widget>
    <widget class="QMenu" name="menu_project">
     <property name="font">
      <font>
@@ -591,6 +635,7 @@
     <addaction name="action_save_project_as"/>
    </widget>
    <addaction name="menu"/>
+   <addaction name="menu_edit"/>
    <addaction name="menu_project"/>
   </widget>
   <action name="action">
@@ -614,6 +659,22 @@
   <action name="action_save_project_as">
    <property name="text">
     <string>另存为…</string>
+   </property>
+  </action>
+  <action name="action_undo">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>撤销</string>
+   </property>
+  </action>
+  <action name="action_redo">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>重做</string>
    </property>
   </action>
  </widget>

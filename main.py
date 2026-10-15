@@ -37,12 +37,14 @@ from core.flow_engine import FlowEngineMixin, LOG_ERROR_MARK
 from services.camera_service import CameraMixin
 from services.video_service import VideoMixin
 from services.gallery_service import GalleryMixin
+from services.undo_service import UndoMixin    # ★ 批次5 目标4：撤销 / 重做（第 7 个 Mixin）
 
 
 uiloader = QUiLoader()
 
 
-class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin):
+class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin,
+                 UndoMixin):
     # 视频 / 摄像头也当成一个"图片槽"，参数单独存一份，与图片的运行参数分开
     VIDEO_ROI_KEY = "video"
 
@@ -267,9 +269,14 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             on_page_switched=self._on_flow_page_switched,
             on_page_close_requested=self._confirm_close_flow_page,
         )
+        # ★ 批次5 目标4：撤销 / 重做（**必须在 setup() 之前** —— 建页时会回调换页，
+        #   而换页要清空撤销栈；另外这一步也会把 .ui 里的四项控件接上线并置灰）
+        self._init_undo()
         self.flow_page_mgr.setup()
         # "当前页"的引用：换页时由 _on_flow_page_switched 整体替换，
         self._bind_current_flow_page()
+        # ★ 目标4：撤销栈也是"每页一条" ⇒ 这里把当前栈绑到第一页那个（setup 期间换页回调里也会绑）
+        self._bind_undo_stack_for_page()
 
 
         # 使用 QTableWidget 表格控件来显示运行日志，控件名字 Name 为 execution_log
@@ -427,8 +434,10 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         node = NodeItem(name, pos)
         page["view"].flow_scene.addItem(node)
         # 方框被拖动时：刷新连线 + 把这一页标记成"有改动"
-        node.positionChanged.connect(lambda *_: self._on_node_moved(page))  # type:ignore
+        node.positionChanged.connect(lambda *_, n=node: self._on_node_moved(page, n))  # type:ignore
         page["nodes"].append(node)
+        # ★ 目标4：记下它的初始坐标（拖动撤销要知道"拖动前在哪"）
+        self._undo_remember_node(node)
         if mark_dirty:
             self.flow_page_mgr.mark_dirty(page)
         return node
@@ -445,10 +454,14 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             self.flow_page_mgr.mark_dirty(page)
         return edge
 
-    def _on_node_moved(self, page=None):
+    def _on_node_moved(self, page=None, node=None):
         """方框被拖动：刷新连线，并把所在页面标记成"有改动" """
         self.flow_page_mgr.mark_dirty(page or self.flow_page_mgr.current_page)
         self.update_all_edges()
+        if node is not None:
+            # ★ 目标4：拖动也进撤销栈 —— 拖动期间这个信号连发很多次，`_undo_note` 会攒成
+            #   "一次拖动 = 一条命令"（停下 0.4 秒后提交），所以这里每帧调用不会把栈撑爆。
+            self._undo_note("move_pending", node)
 
 
     # ==================================================================================
@@ -546,12 +559,17 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
     def add_flow_node(self, name, pos):
         """拖拽 / 双击添加节点：加到"当前页"（真正建节点在 _add_node_to_page）"""
-        return self._add_node_to_page(self.flow_page_mgr.current_page, name, pos)
+        node = self._add_node_to_page(self.flow_page_mgr.current_page, name, pos)
+        self._undo_note("add_node", node)   # ★ 目标4：记一条"新建节点"命令
+        return node
 
     def add_edge(self, start_node, end_node):
         """从蓝点开始生成一条曲线（同一对起终点不重复连）"""
         edge = self._add_edge_to_page(self.flow_page_mgr.current_page, start_node, end_node)
         self.update_all_edges()  # 刷新一次画面，刷新出曲线
+        if edge is not None:
+            # ★ 目标4：记一条"新建连线"命令（`None` = 这对起终点已经连过了 ⇒ 什么都没发生，不记）
+            self._undo_note("add_edge", edge)
         return edge
 
     def delete_flow_node(self, node_to_delete):
@@ -559,6 +577,8 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         if node_to_delete not in self.flow_nodes:
             # 检测节点是否存在
             return
+        # ★ 目标4：**先**记命令（`_undo_note` 要在删之前把节点状态与相关连线采集下来），再删
+        self._undo_note("remove_node", node_to_delete)
         # 删掉的如果是"输出图像"节点，它正在录制的文件要先收尾（否则是一个打不开的半个文件）
         spec = get_spec(getattr(node_to_delete, "name", ""))
         if spec is not None and spec.kind == KIND_SINK:
@@ -630,6 +650,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         if edge_to_delete not in self.flow_edges:
             # 判断要删除的曲线线是否还在当前的连线列表中
             return
+        self._undo_note("remove_edge", edge_to_delete)   # ★ 目标4：同样先记命令再删
         self.main_window.graphicsView.flow_scene.removeItem(edge_to_delete) # 在画布上删除
         self.flow_edges.remove(edge_to_delete) # 在列表中删除
         self.flow_page_mgr.mark_dirty()  # 删了连线，这一页也算"有改动"
@@ -664,17 +685,23 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         这样关闭这一页时才能提醒用户保存。
         """
         before = dict(node.params)
+        # ★ 目标4：参数是**按图片存档**的 ⇒ 记命令时要带上"这是哪张图的参数"
+        #   （否则"在 A 图改完 → 切到 B 图 → 撤销 → 切回 A 图"时 A 的参数撤不回来）
+        before_key = self.current_image_key
         dialog = dialog_class(self.main_window, node=node, main_window=self)
         dialog.resize(390, 560)
         self.current_dialog = dialog
         dialog.finished.connect(lambda *_: self._clear_current_dialog())
-        dialog.finished.connect(lambda *_: self._mark_dirty_if_params_changed(node, before))
+        dialog.finished.connect(lambda *_: self._mark_dirty_if_params_changed(node, before, before_key))
         dialog.exec_()  # 模态显示
 
-    def _mark_dirty_if_params_changed(self, node, before):
+    def _mark_dirty_if_params_changed(self, node, before, image_key=None):
         """参数窗口关掉之后：只有参数确实变了，才把当前页标记成"有改动" """
         if before != dict(node.params):
             self.flow_page_mgr.mark_dirty()
+            # ★ 目标4：参数真的变了 ⇒ 记一条"改参数"命令（`before` 是开窗前那份快照；
+            #   `image_key` 是"这张图"——参数按图片存档，撤销要按同一张图恢复）
+            self._undo_note("set_params", (node, before, image_key))
 
     def _confirm_close_flow_page(self, page):
         """
@@ -835,6 +862,9 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         self.flow_nodes = page["nodes"]
         self.flow_edges = page["edges"]
         self.current_node_label = page["label"]
+        # ★ 目标4：把这一页所有节点的坐标记成"基准"（从方案读进来的节点也能撤回到原位置）
+        for node in page["nodes"]:
+            self._undo_remember_node(node)
 
     def _on_flow_page_switched(self, new_page, old_page):
         """
@@ -842,6 +872,11 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         存旧页节点参数 → 绑定新页 → 取新页节点参数 → 刷新当前图片。
         （标签页本身的增删、右键菜单都在 FlowPages.py 里）
         """
+        # ★ 批次5 目标4（2026.10.15 修正）：撤销栈**按页面各一条**，换页**不清空**历史 ——
+        #   用户实测口径："在一个页面画好流程图 → 切到另一页画 → 回到第一页后撤销按钮失去了作用"。
+        #   绑定放在 `_bind_current_flow_page()` 之后（那时"当前页"已经换好了），
+        #   顺带把已删页面的栈丢掉。导入 / 新建的页面第一页用到时栈是空的 = 以导入那一刻为基准。
+        self._bind_undo_stack_for_page()
         # 1、离开上一页之前：记下它的选中节点，并把它每个节点的参数存到"当前图片"名下
         if old_page is not None:
             old_page["selected_node"] = self.selected_node

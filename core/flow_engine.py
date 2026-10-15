@@ -16,6 +16,7 @@ from core.ParamRules import run_validation
 from ops.sink.OutputOps import SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE_VIDEO, close_all_recordings, set_input_name_provider, set_overlay_frame_provider, set_round_info_provider
 from core.param_store import VIDEO_ROI_KEY
 from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
+from core.result_cache import evict as _evict_result_cache, touch as _touch_result_cache  # ★ 目标4：两池 LRU
 
 
 class FlowEngineMixin(MainHost):
@@ -45,10 +46,15 @@ class FlowEngineMixin(MainHost):
 
         # 取"这张图片 × 这一页流程图"上一次的执行结果：
         # 优先取连续执行（整条流程，画面和日志表最完整），没有连续结果时才取单步执行的
-        cached = self.result_cache.get(self._result_cache_key(image_key, "continuous"))
+        cache_key = self._result_cache_key(image_key, "continuous")
+        cached = self.result_cache.get(cache_key)
         if cached is None:
-            cached = self.result_cache.get(self._result_cache_key(image_key, "step"))
+            cache_key = self._result_cache_key(image_key, "step")
+            cached = self.result_cache.get(cache_key)
         if cached is not None:
+            # ★ 批次5 目标4：**命中缓存 = "用过一次"** ⇒ 把它移到最新（真 LRU；少了这步就是 FIFO 近似，
+            #   "刚看过的图照样被淘汰"，用户 2026.10.15 拍板要修的就是这个）。
+            _touch_result_cache(self.result_cache, cache_key)
             # 有缓存：直接显示上次画好检测结果的那张图
             self._display_image(cached["frame"], image_key)
             # 顺便把"上次检测数据"和日志表格也同步过来，保证和画面对得上
@@ -134,6 +140,10 @@ class FlowEngineMixin(MainHost):
                 "data": data,
                 "exec_info": exec_info,
             }
+            # ★ 批次5 目标4：写完就按上限淘汰一次（**两池 LRU**：静态图一池、视频逐帧一池，各按"条数 + 字节"双上限）。
+            #   旧版只有视频分支里那段"超过 400 条丢最旧"⇒ ① 静态图批量跑其实**没有上限**；
+            #   ② 而且是 FIFO 近似（命中不刷新顺序）。实现见 `core/result_cache.py`。
+            _evict_result_cache(self.result_cache)
 
         # 保存数据并同步窗口
         self.last_detected_data = data  # 保存给以后打开的窗口使用
@@ -157,11 +167,8 @@ class FlowEngineMixin(MainHost):
             # 视频的**参数整段共用一份**（用户 2026.10.6 定的语义）：跑完把当前这份参数存进"视频槽"
             # （VIDEO_ROI_KEY，模块顶部已定义），这样切去别的图、再切回来点视频执行时，参数不会被清空。
             self._save_node_params(self.flow_nodes, VIDEO_ROI_KEY)
-            # 结果缓存加个上限（尾巴之二，2026.10.7 补）：视频逐帧跑会不断新增键，
-            # 超过 400 条就把最旧的丢掉（FIFO 近似 LRU），免得越跑越吃内存。
-            if len(self.result_cache) > 400:
-                for old_key in list(self.result_cache)[:-400]:
-                    self.result_cache.pop(old_key, None)
+            # （结果缓存的上限已挪到 `_execute_static` 写完缓存处统一做 —— 见 `core/result_cache.py`：两池 LRU，
+            #   不再只对视频路径生效，也不再是"命中不刷新顺序"的 FIFO 近似。）
             # 勾了"自动切换"时：这一轮结束后**接着自动播放**（用户 2026.10.6 要求：
             # "点自动切换后再点执行，视频会转成自动播放，不用一帧一帧点；点停止就停"）。
             self._maybe_start_video_playback(node, mode)
@@ -982,6 +989,10 @@ class FlowEngineMixin(MainHost):
                 # 将表格项放入指定行和列的单元格中
                 # 如果该单元格已有内容，会自动替换；如果之前没有，会创建新单元格
                 self.execution_log.setItem(offset + row, col, item)
+        # ★ 批次5 目标4：写完**自动滚到最后一行**。用户 2026.10.15 提问："前面的执行日志太长会不会影响观看"
+        #   —— 实测全工程原来**没有** scrollToBottom() ⇒ "运行全部"跑几十张后，新行写在**底部**、
+        #   而视图还停在**顶部**，这才是"看不见"的真症结（不是日志太长）。
+        self.execution_log.scrollToBottom()
 
     def _update_execution_log_throttled(self, exec_info):
         """
@@ -1020,6 +1031,9 @@ class FlowEngineMixin(MainHost):
         self.execution_log.insertRow(row)
         for col, value in enumerate(["-", time.strftime("%H:%M:%S"), "提示", "-", text]):
             self.execution_log.setItem(row, col, QtWidgets.QTableWidgetItem(str(value)))
+        # ★ 批次5 目标4：提示行也一样滚到最后（否则"用户停止 / 出错跳过 / 共执行 N/N 张"这些
+        #   关键提示在批量跑几十张后全在视野外）。
+        self.execution_log.scrollToBottom()
 
     def _display_key_of(self, frame):
         """

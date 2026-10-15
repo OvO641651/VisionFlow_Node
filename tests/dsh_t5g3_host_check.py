@@ -25,7 +25,8 @@ import sys
 
 PROJ = r"E:\opencv_python_3_8\PySide\VisionFlowNoed"
 MIXINS = ["core/flow_engine.py", "core/project_store.py", "core/param_store.py",
-          "services/camera_service.py", "services/video_service.py", "services/gallery_service.py"]
+          "services/camera_service.py", "services/video_service.py", "services/gallery_service.py",
+          "services/undo_service.py"]
 HOST = "core/host_contract.py"
 os.chdir(PROJ)
 sys.path.insert(0, PROJ)
@@ -40,9 +41,10 @@ from core.project_store import ProjectStoreMixin   # noqa: E402
 from services.camera_service import CameraMixin    # noqa: E402
 from services.video_service import VideoMixin      # noqa: E402
 from services.gallery_service import GalleryMixin  # noqa: E402
+from services.undo_service import UndoMixin        # noqa: E402
 
 MIXIN_CLASSES = [FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin,
-                 CameraMixin, VideoMixin, GalleryMixin]
+                 CameraMixin, VideoMixin, GalleryMixin, UndoMixin]
 
 fails = []
 
@@ -139,7 +141,7 @@ check("④ 运行时 MainHost 是空壳（除 dunder 外无成员）", extra_mem
 
 # ---------------------------------------------------------------- ⑤ MRO
 mro_bad = [c.__name__ for c in MIXIN_CLASSES if len(c.__mro__) < 2 or c.__mro__[1] is not host_contract.MainHost]
-check("⑤ 6 个 Mixin 都直接继承 MainHost",
+check("⑤ 7 个 Mixin 都直接继承 MainHost",
       mro_bad == [] and host_contract.MainHost.__mro__ == (host_contract.MainHost, object)
       and host_contract.MainHost in m.MainWindow.__mro__,
       (mro_bad, host_contract.MainHost.__mro__, host_contract.MainHost in m.MainWindow.__mro__))

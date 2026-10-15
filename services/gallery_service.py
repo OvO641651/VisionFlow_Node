@@ -10,6 +10,7 @@ from PySide2.QtCore import QTimer    # ★ 批次5 目标3：分片执行要在�
 from core.ImageIO import read_image  # 图片读取统一入口（支持中文路径，2026.10.12）
 from core.NodeRegistry import KIND_SOURCE, get_spec
 from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
+from core.result_cache import touch as _touch_result_cache  # ★ 目标4：命中缓存 = "用过一次"（真 LRU）
 
 
 class GalleryMixin(MainHost):
@@ -267,6 +268,10 @@ class GalleryMixin(MainHost):
                 mode = state["mode"]
                 cached = (self.result_cache.get(self._result_cache_key(key, mode))
                           or self.result_cache.get(self._result_cache_key(key, "step")))
+                # ★ 批次5 目标4：这里也算"用过一次" ⇒ 移到最新（真 LRU；否则刚还原的那张图
+                #   会被当成最旧的、下一步就被淘汰掉）。
+                _touch_result_cache(self.result_cache, self._result_cache_key(key, mode))
+                _touch_result_cache(self.result_cache, self._result_cache_key(key, "step"))
                 self._display_image(cached["frame"] if cached is not None
                                     else state["start_frame"].copy(), key)
         finally:

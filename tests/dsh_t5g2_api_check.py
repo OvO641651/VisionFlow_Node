@@ -41,9 +41,10 @@ from core.project_store import ProjectStoreMixin       # noqa: E402
 from services.camera_service import CameraMixin        # noqa: E402
 from services.video_service import VideoMixin          # noqa: E402
 from services.gallery_service import GalleryMixin      # noqa: E402
+from services.undo_service import UndoMixin            # noqa: E402
 
 MIXIN_CLASSES = [FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin,
-                 CameraMixin, VideoMixin, GalleryMixin]
+                 CameraMixin, VideoMixin, GalleryMixin, UndoMixin]
 
 # ★ 允许新增的方法白名单（**逐条注明是谁加的**；除此之外多出来的方法一律算"意外新增"）
 ALLOWED_NEW_METHODS = [
@@ -53,6 +54,11 @@ ALLOWED_NEW_METHODS = [
     "_batch_step", "_batch_finish",
     # 批次5 目标3 修正：「自动切换」在批量开始时定格 ⇒ 接一个薄处理器，中途拨动给一行提示
     "_on_auto_switch_changed",
+    # 批次5 目标4：撤销 / 重做（第 7 个 Mixin `services/undo_service.py` 的 10 个方法）
+    "_init_undo", "_undo_note", "_commit_pending_moves", "_undo_remember_node",
+    "undo", "redo", "_on_undo_stack_changed", "_run_stack_step",
+    # 批次5 目标4 修正：撤销栈改成"每页一条"⇒ 换页时绑定当前页的那条
+    "_stack_for", "_bind_undo_stack_for_page",
 ]
 
 # 拆前（改前快照 main.py）MainWindow 的 117 个方法名 —— 冻结清单，**不许删、只许更多的方法名留在别处**
