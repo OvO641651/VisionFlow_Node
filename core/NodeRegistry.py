@@ -41,6 +41,18 @@ SOURCE_KEY = "__global_source__"
 # "图像源"参数 = 自动（沿连线继承上游的图像输出）
 AUTO_SOURCE = "__auto__"
 
+
+def is_bound_node(binding):
+    """
+    这个"图像源绑定值"是不是**某个上游节点对象**。
+
+    绑定值只有三种：`None`（= 自动）· 字符串键（`SOURCE_KEY` / `AUTO_SOURCE` 这类）· 节点对象。
+    为什么不写 `isinstance(binding, NodeItem)`：`NodeItem` 住在 `widgets/FlowChart.py`，
+    那会让 `core/` **反向依赖 `widgets/`**（批次5 目标2 收尾时改掉，见《批次5 技术方案》§5.6）；
+    按"节点对象一定带 name 与 params"来判断，效果一样、依赖方向干净。
+    """
+    return hasattr(binding, "name") and hasattr(binding, "params")
+
 # 算子类型
 KIND_PROCESS = "process"    # 处理类：会改写数据层图像
 KIND_DETECT = "detect"      # 检测类：图像透传，只产出结果

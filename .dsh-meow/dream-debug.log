@@ -609,3 +609,29 @@
 [2026-10-14T18:02:11.934Z] check sid=4c85d180 active=false idle=8377s
 [2026-10-14T18:08:40.957Z] hit-chain pid=22876 sid=4c85d180 textLen=152 hit=yes
 [2026-10-14T18:11:58.667Z] turn-stopping pid=22876 sid=4c85d180 reason=none wasDream=false
+[2026-10-14T18:17:11.945Z] check sid=4c85d180 active=false idle=314s
+[2026-10-14T18:22:34.845Z] hit-chain pid=22876 sid=4c85d180 textLen=40 hit=yes
+[2026-10-14T18:23:38.321Z] turn-stopping pid=22876 sid=4c85d180 reason=none wasDream=false
+[2026-10-14T18:32:11.948Z] check sid=4c85d180 active=false idle=515s
+[2026-10-14T18:33:36.771Z] hit-chain pid=22876 sid=4c85d180 textLen=171 hit=yes
+[2026-10-14T18:34:07.624Z] turn-stopping pid=22876 sid=4c85d180 reason=none wasDream=false
+[2026-10-15T04:00:33.878Z] pre-step first pid=15852 sid=f9a751bd priorUser=0 userMsgs=1
+[2026-10-15T04:05:14.743Z] check sid=4c85d180 active=false idle=34267s
+[2026-10-15T04:05:14.754Z] dream start pid=15852 session=4c85d180 rounds=3 T=1792002847616
+[2026-10-15T04:06:24.065Z] turn-stopping pid=15852 sid=4c85d180 reason=none wasDream=true
+[2026-10-15T04:06:24.071Z] dream group 2/3 steered
+[2026-10-15T04:07:07.058Z] turn-stopping pid=15852 sid=4c85d180 reason=none wasDream=true
+[2026-10-15T04:07:07.065Z] dream group 3/3 steered
+[2026-10-15T04:08:32.609Z] turn-stopping pid=15852 sid=4c85d180 reason=none wasDream=true
+[2026-10-15T04:08:32.641Z] dream done session=4c85d180 groups=3 stamped=50
+[2026-10-15T04:17:55.214Z] turn-stopping pid=15852 sid=f9a751bd reason=none wasDream=false
+[2026-10-15T04:18:51.052Z] turn-stopping pid=15852 sid=f9a751bd reason=none wasDream=false
+[2026-10-15T04:20:14.776Z] check sid=f9a751bd active=false idle=141s
+[2026-10-15T04:29:32.286Z] hit-chain pid=15852 sid=f9a751bd textLen=37 hit=yes
+[2026-10-15T04:35:14.757Z] check sid=f9a751bd active=false idle=9s
+[2026-10-15T04:39:18.965Z] turn-stopping pid=15852 sid=f9a751bd reason=none wasDream=false
+[2026-10-15T04:49:09.365Z] hit-chain pid=15852 sid=f9a751bd textLen=250 hit=yes
+[2026-10-15T04:50:07.402Z] turn-stopping pid=15852 sid=f9a751bd reason=none wasDream=false
+[2026-10-15T04:50:14.776Z] check sid=f9a751bd active=false idle=8s
+[2026-10-15T04:57:49.813Z] hit-chain pid=15852 sid=f9a751bd textLen=76 hit=yes
+[2026-10-15T04:59:46.598Z] turn-stopping pid=15852 sid=f9a751bd reason=none wasDream=false

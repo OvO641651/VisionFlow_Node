@@ -7933,6 +7933,277 @@ VisionFlowNode_批次4技术方案_v1.28_2026.10.7.md文件保留"
 ③ 节点多了以后再按领域给 `process/`、`detect/` 分二级目录。
 **另**：`dsh_doc_consistency_check` 目前只校验"文档提到的 `.py` 名字存在"、**不校验路径**（这次 `temp\dsh_run_all_checks.py`
 旧路径是靠人工核对发现的）⇒ 将来若加"路径存在"断言，会让 861 变 862，需同步所有写"861"的地方。
+
+
+## 2026.10.15 批次5目标2 12:16
+
+存在问题：
+  批次5 目标1（目录重构）已收口，按《批次5 技术方案》§5 开工**目标2 = 拆 `MainWindow`**：
+  `main.py` 3327 行 / 117 个方法 / 54 个状态字段，主窗口 + 数据流引擎 + 方案持久化 + 参数归档 +
+  相机 / 视频 / 图库全挤在一个类里。判据 = **行为零变化 + 门禁套数 / 断言数一个不少 + 界面零变化**。
+  开工前用户点了三个待拍板项（都取推荐）：**① 分 3 批做**（每批独立跑门禁）· **② 弹窗出口用"甲"方案** ·
+  **③ 加更硬的门禁断言**（"拆分前后 MainWindow 方法名集合一致"）。
+
+原因分析：
+  ① 用户 2026.10.13 已拍板"**先 Mixin、后组合**"：我实测 **27 个方法被用例以 `w.方法名(...)` 直调、
+     35 套用例 `import main as m`**（方案 §5.2 写的"29 个方法 × 40 套用例"是旧口径）——
+     Mixin 共享 `self` ⇒ 调用点 0 改动（组合式则要改 29×40 处）；
+  ② 落点按 §5.1：`core/flow_engine` · `core/project_store` · `core/param_store` +
+     `services/camera_service` · `video_service` · `gallery_service`；`main.py` 只留入口 + 界面装配 + 建图改动 + 双击路由；
+  ③ ★ **方案漏掉的一条硬约束（实测才发现，是目标2 成败关键）**：用例挡弹窗靠**给 `main` 模块打补丁**
+     （`m.QMessageBox = FakeMB` / `m.QFileDialog = FakeFD` / 4 个 `*ParamsDialog = make_stub(...)`），
+     而 `main.py` 里**直接引用这些全局名的有 14 个方法**。方法一搬进新模块，全局名就在**新模块的命名空间**里解析
+     ⇒ 补丁失效（弹真窗口 / 路由用例挂）。三条对策：**(a)** 先在 `main.py` 收口 5 个弹窗出口薄壳；
+     **(b)** 搬运工具**只生成"真正用到的 import"**，绝不把 `QMessageBox` / `QFileDialog` 顺手带进新模块；
+     **(c)** 4 个对话框类的路由（`on_node_double_clicked` / `_open_node_dialog`）留 `main.py`；
+  ④ 两条事实纠偏：**(i)** `MainWindow` **没有 Qt 基类**（普通类，只持有 `self.main_window`）——
+     照方案 §5.2 的示例写 `class MainWindow(…, QMainWindow)` 会 `NameError: name 'QMainWindow' is not defined`（踩了一次）；
+     **(ii)** `core/project_store.py` **不是零 Qt**（`_page_fingerprint` / `_collect_page` 要 `NodeItem`、`_apply_project` 要 `QPointF`）；
+  ⑤ 基线门禁先红了 4 项（全在"参数窗口宽度"）：根因是**漏设 `QT_QPA_FONTDIR`**，Qt 退回另一种字体
+     ⇒ 274px 量级飙到 383px（实测：不设 = 857 过 / 4 失败；设上 = 861 过 / 0 失败）。
+
+修改：
+  0、**备份 + 基线**：改前整份备份 `E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_t5g2_split_mainwindow\`
+     （98 个文件）；抓改前截图 `t5g2_before_split_mainwindow.png`（登记《截图索引》，台账先备份成
+     `_backup_截图索引_before_t5g2.md`）；
+  1、**弹窗出口收口（甲方案；先做、单独验一轮）** —— `main.py` 新增 5 个薄壳、改写 **13 处**调用点：
+
+        # 对话框出口（批次5 目标2 加）：凡"要弹窗"的地方都从这里走。
+        # 为什么要收口：目标2 把一批方法搬进 Mixin（新模块），方法体里的全局名
+        # 会在**新模块**里解析 —— 如果里面直接写 QMessageBox / QFileDialog，
+        # 用例对 main 模块打的补丁（m.QMessageBox = FakeMB / m.QFileDialog = FakeFD）
+        # 就失效了；收口到这几个薄壳之后，补丁照旧生效、行为一字不变。
+        def _warn(self, title, text):
+            """统一"警告"出口（父窗口固定是主窗口）"""
+            QMessageBox.warning(self.main_window, title, text)
+
+        def _info(self, title, text):
+            """统一"提示"出口（父窗口固定是主窗口）"""
+            QMessageBox.information(self.main_window, title, text)
+
+        def _ask_open_path(self):
+            """选一个方案文件来打开（取消返回空串）"""
+            path, _ = QFileDialog.getOpenFileName(
+                self.main_window, "打开方案", "",
+                "VisionFlowNode 方案 (*.vfproj);;所有文件 (*.*)")
+            return path
+
+        def _ask_save_path(self, default_name):
+            """选一个方案保存路径（取消返回空串）"""
+            path, _ = QFileDialog.getSaveFileName(
+                self.main_window, "保存方案", default_name,
+                "VisionFlowNode 方案 (*.vfproj);;所有文件 (*.*)")
+            return path
+
+        def _ask_dir(self):
+            """选一个文件夹（取消返回空串）"""
+            return QFileDialog.getExistingDirectory(self.main_window, "选择文件夹")
+
+     改写点（13 处）：`save_project_as`（`getSaveFileName`）· `_write_project_file`（1 处 warning）·
+     `open_project`（`getOpenFileName`）· `load_project`（5 处 warning + 2 处 information）·
+     `_open_camera_device`（1）· `update_frame`（1）· `add_folder_to_gallery`（`getExistingDirectory`）；
+     改法形如 `QMessageBox.warning(self.main_window, "保存方案失败", …)` → `self._warn("保存方案失败", …)`；
+     **收口后复跑门禁仍 37 套 861 项全绿**（证明这一步本身零变化）。
+  2、**三批机械搬运**（工具 `temp\dsh_t5g2_split.py`：AST 按方法名**原样**剪贴 + 按"方法体里真正用到的全局名"
+     推导新模块 import；带 `--coverage` 自检"117 个方法不丢不重"）：
+     第 1 批 `core/param_store.py`（11 方法 / 175 行，含 `VIDEO_ROI_KEY`）+ `core/project_store.py`（13 方法 / 413 行，含 `_fingerprint_value`）
+       ⇒ `main.py` 3351 → 2793 行；
+     第 2 批 `core/flow_engine.py`（34 方法 / 1104 行，含 `_result_note` / `_result_error` / `LOG_ERROR_MARK`）⇒ 1709 行；
+     第 3 批 `services/camera_service.py`（12 方法 / 314 行）+ `video_service.py`（8 / 219）+ `gallery_service.py`（12 / 339）
+       ⇒ **`main.py` 888 行**（从 3327 行起算，减 73%）；
+     类头 = `class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamStoreMixin, ProjectStoreMixin):`；
+     `VIDEO_ROI_KEY` 搬到 `core/param_store.py`，`main.py` 用 `from core.param_store import ParamStoreMixin, VIDEO_ROI_KEY`
+     **再导出一次**（用例里有 `m.VIDEO_ROI_KEY`；顺带在 import 上方写了注释，防止后人当"没用的 import"删掉）；
+  3、**新增门禁用例 `tests\dsh_t5g2_api_check.py`（8 项）**（把"接口面零变化"钉死）：
+
+        PRE_SPLIT_METHODS = [...117 个方法名...]      # 从改前快照 main.py 抽出来的冻结清单
+        NEW_SHELLS = ["_warn", "_info", "_ask_open_path", "_ask_save_path", "_ask_dir"]
+        missing = [n for n in PRE_SPLIT_METHODS if not hasattr(m.MainWindow, n)]
+        check("① 拆前 %d 个方法一个不少（拆完仍能 `w.方法名(...)` 调）" % PRE_SPLIT_COUNT, missing == [], missing)
+        have = set(n for n in dir(m.MainWindow)
+                   if not n.startswith("__") and callable(getattr(m.MainWindow, n, None)))
+        unexpected = sorted(have - set(PRE_SPLIT_METHODS) - set(NEW_SHELLS))
+        check("③ 没有意外新增的方法（只允许 %s）" % "、".join(NEW_SHELLS), unexpected == [], unexpected)
+        hits = [k for k in ("QMessageBox.", "QFileDialog.") if k in mixin_source(cls)]
+        check("⑤ Mixin 模块里不直接引用 QMessageBox. / QFileDialog.（用例补丁才挡得住弹窗）", leak == {}, leak)
+
+     （另 5 项：清单自身无重复 · 6 个 Mixin 都在 MRO · Mixin 模块不 `import main` · `main.py` ≤ 1200 行 · 两个再导出仍读得到）
+  4、**门禁口径升级（都是"换成更硬的"，不是删断言）+ 环境兜底**：
+     · `dsh_doc_consistency_check`：套数断言从"与**冻结**的《项目技术文档》相等"改成
+       "**冻结文档只增不减 + 现行《批次5 技术方案》精确相等**"（14 → 15 项）—— 冻结文档不用回溯改，精确数字由现行方案承担；
+     · `dsh_run_all_checks.py`：① **自己设 `QT_QPA_FONTDIR=C:\Windows\Fonts`**（目录存在才设）；
+       ② 跑完**把实测套数 / 项数与《批次5 技术方案》写的口径对一遍**，不一致直接算不合格；
+     ⇒ 门禁口径 **37 套 861 项 → 38 套 870 项**；
+  5、**新增静态自检工具** `temp\dsh_t5g2_orphan_check.py`：逐个模块算"函数体里读到的全局名 − 本模块能提供的名字"，
+     剩下的就是"孤儿全局名"（`py_compile` 只查语法，`NameError` 要跑到那条分支才炸；拆 Mixin 最容易犯的就是这个）；
+  6、**方案升 v2.0**（`plan\VisionFlowNode_批次5技术方案_v2.0_2026.10.15.md`）：新增 §5.4 落地结果 / §5.5 验证 / §5.6 纠偏与遗留，
+     §5.1 加"落地后纠偏 3 条"注、§5.2 补"第二条硬约束（用例给 main 打补丁）"与类头纠偏、§5.3 判据改成"套数 / 断言数一个不少"、
+     §11.1 补 `services\` 与三个 core 新文件、§11.3 门禁口径换 38 套 870 项、头部版本 / 门禁基线 / 当前状态同步；
+     **v1.9 已留档到 `backups\VisionFlowNode_批次5技术方案_v1.9_2026.10.15.md`**。
+
+验证：
+  · **`tests\dsh_run_all_checks.py` ⇒ 38 套 870 项断言"失败项：无"**，并且跑完自己打出
+    "门禁口径与《批次5 技术方案》一致（38 套 870 项断言）"；**37 套老用例一行没改** ⇒ "调用点 0 改动"由此证明；
+  · 每批都单独复跑过门禁：第 1 批 861 全绿 · 第 2 批 861 全绿 · 第 3 批 870 全绿（三批都是"套数 / 断言数一个不少"）；
+  · 新用例 8 项全过：117 个方法一个不少 · 清单无重复 · 只多 5 个薄壳 · 6 个 Mixin 在 MRO · Mixin 模块无 `QMessageBox.`/`QFileDialog.` ·
+    不 import main · `main.py` 888 ≤ 1200 · `m.VIDEO_ROI_KEY` / `m.LOG_ERROR_MARK` 读得到；
+  · **界面零变化**：`t5g2_before_split_mainwindow.png` 与 `t5g2_after_split_mainwindow.png`
+    **sha256 完全相同**（`a84f5a04c4caef8293cb42d6ae7d056810953bde69b2aef6d02ab1d3cac4d8ee`）⇒ **逐像素一致**；两张已登记《截图索引》（77 → 79 张）；
+  · `temp\dsh_t5g2_orphan_check.py` ⇒ **0 处孤儿全局名**（7 个模块全 OK）；
+  · `temp\dsh_t5g2_split.py --coverage` ⇒ **117 = 搬走 90 + 留 27，不丢不重**；
+  · `py_compile` 全部改动文件通过；`MainWindow()` 正常构造、MRO 顺序正确、树仍 5 组、算子仍 **14** 个。
+
+遗留：
+  1、`main.py` 仍留 27 个"界面装配 / 建图 / 双击路由"方法 —— 要不要再抽 `StartupMixin` / `FlowBuilderMixin`，
+     等目标3 / 目标4 之后再评估（本批按"最小可用第一版"没动）；
+  2、**54 个状态字段仍集中在 `main.py::__init__`**，收敛成 `FlowContext` 留到目标3（线程化要先把"纯计算"和"碰控件"分开）；
+  3、三份**冻结文档**里"37 套 861 项"是批次4 收口时的**当时事实** ⇒ 本次不回溯改（口径已升级成"冻结文档只增不减 + 现行方案精确相等"）；
+  4、本轮**没动 git**（提交由用户掌握）。
+
+## 2026.10.15 批次5目标2 12:37
+
+存在问题：
+  用户贴出 PyCharm 截图（`core/flow_engine.py` **68 条**、`core/project_store.py` **53 条**"未解析的特性引用"，
+  形如「类 'FlowEngineMixin' 的未解析的特性引用 '_image_key_of'」）+ 两问：① 这些调用警告怎么办；
+  ② 批次5 目标2 还存在什么问题。（口径：先只分析、不动内容。）
+
+原因分析：
+  ① 警告根因 = **Mixin 的隐性 `self` 契约**：6 个 Mixin 的 `self.xxx` 里，**128 个名字（按文件计）是跨文件**定义的
+     （在别的 Mixin 或 `main.py` 里），PyCharm 只分析单个文件、看不到 `MainWindow` 把它们拼起来 ——
+     这正是方案 §5.2 硬点 1 说的"**56 个宿主状态**（53 个 `__init__` 赋值 + 3 个类属性）靠 Mixin 共享 `self`"，
+     是**有意选择的代价**，不是代码错。实测（新工具 `temp\dsh_t5g2_self_contract_check.py`）：
+     `self.X` 名字 261 个 / 跨文件 128 个名字（按引用点 256 处）/ **真缺失 0 处** ⇒ 不会 `AttributeError`；
+     PyCharm 报的 68、53 是"**按问题条数**"（同一名字多处引用各报一条 + 它自己的类型检查项），口径不同、量级一致；
+  ② 截图里那条 `应为类型 'SupportsWrite[str]'，但实际为 'TextIO'`（`project_store.py:161` 的 `json.dump(data, fp, …)`）
+     **在改前快照里一模一样** ⇒ 不是目标2 引入的（PyCharm/typeshed 的老毛病）；
+  ③ 用户对警告的拍板 = **A 方案（只登记、不改代码）**：目标3 的 `FlowContext` 本来就要把 56 个宿主状态显式化，
+     现在加 `if TYPE_CHECKING:` 契约存根等于做两遍（B 方案）；"真组合化"要用例改 27 方法 × 35 套（C 方案，已否）；
+  ④ 用户点选**收尾做 a + b + c**（清死 import / 同步方案 §4.5 / 修 `core/ → widgets/` 倒挂）；
+  ⑤ ★ **收尾时我自己踩出一个真回归**：按"没人 import 了"把 `main.py` 的 `KIND_SOURCE` / `result_bbox` 一起删掉，
+     而用例把 `main` 当**聚合入口**读 `m.KIND_SOURCE` / `m.result_bbox` ⇒ `dsh_source_check` / `dsh_m3_video_check` /
+     `dsh_m4_camera_check` **三套直接 AttributeError（PASS=0）** —— **门禁当场抓出**（也证明"实测口径与方案对照"这条新校验有用）。
+
+修改：
+  0、**改前备份 + 旧版留档**：`E:\opencv_python_3_8\backups\_backup_VisionFlowNoed_before_t5g2_cleanup\`（302 个文件）；
+     方案 v2.0 留档到 `backups\VisionFlowNode_批次5技术方案_v2.0_2026.10.15.md`；
+  1、**清掉 `main.py` 里 17 个"只被搬走的方法用过"的 import**（`deque` / `json` / `time` / `read_image` /
+     `QBrush` / `QColor` / `SOURCE_KEY` / `run_validation` / `node_level_param_keys` / `SAVE_OVERLAY` /
+     `SOURCE_*` / `close_all_recordings` / `set_*_provider`），并在原处留一段说明防止后人又加回来：
+
+        from core.NodeRegistry import KIND_SINK, get_spec          # ← 第一版写成这样，结果 3 套用例崩
+        # ★ 再导出（别当"废 import"删）：用例把 main 当**聚合入口**读 `m.KIND_SOURCE` 与 `m.result_bbox`
+        #   —— `dsh_m3_video_check.py` / `dsh_m4_camera_check.py` / `dsh_source_check.py`（2026.10.15 收尾时踩过）
+        from core.NodeRegistry import KIND_SINK, KIND_SOURCE, get_spec, result_bbox
+        from ops.sink.OutputOps import close_recording
+
+     ⇒ **main.py 现在只剩 4 个"用不上的 import"，全是有意的再导出**：`VIDEO_ROI_KEY` · `LOG_ERROR_MARK` ·
+     `KIND_SOURCE` · `result_bbox`；
+  2、**修 `core/ → widgets/` 倒挂**（`core` 不该为了一个 `isinstance` 去 import UI 层的节点类）：
+     `core/NodeRegistry.py` 新增（放在 `SOURCE_KEY` 旁边 —— 它是"绑定词汇"的自然归宿）：
+
+        def is_bound_node(binding):
+            """
+            这个"图像源绑定值"是不是**某个上游节点对象**。
+            绑定值只有三种：`None`（= 自动）· 字符串键（`SOURCE_KEY` / `AUTO_SOURCE` 这类）· 节点对象。
+            为什么不写 `isinstance(binding, NodeItem)`：`NodeItem` 住在 `widgets/FlowChart.py`，
+            那会让 `core/` **反向依赖 `widgets/`**（批次5 目标2 收尾时改掉，见《批次5 技术方案》§5.6）；
+            按"节点对象一定带 name 与 params"来判断，效果一样、依赖方向干净。
+            """
+            return hasattr(binding, "name") and hasattr(binding, "params")
+
+     然后 4 处换掉：`core/flow_engine.py` 的 `_node_input_frame` / `_binding_origin`、
+     `core/project_store.py` 的 `_page_fingerprint` / `_collect_page` 里
+     `if isinstance(binding, NodeItem):` → `if is_bound_node(binding):`，并删掉两处
+     `from widgets.FlowChart import NodeItem` ⇒ **`core/` 对 `widgets` 的引用 0 处**；
+  3、**新增自检工具 `temp\dsh_t5g2_self_contract_check.py`**：把 7 个文件的 `self.<名字>` **引用**与**定义**都算出来，
+     分"真缺失（会 AttributeError，必须 0）/ 跨文件隐性契约（= 静态警告的量级）/ 本文件自洽"三类报，
+     额外给一列"**跨文件引用点**"（对齐 PyCharm 的口径）；
+  4、**方案升 v2.1**（`plan\VisionFlowNode_批次5技术方案_v2.1_2026.10.15.md`）：§4.5 目录速查同步到目标2 之后
+     （`services/` 真实内容、`tests/` 38 套、`main.py` 885 行 / 32 方法）、§5.4 加"收尾"行、§5.5 数字改 885、
+     §5.6 补"收尾记录 + 已知静态警告 + 遗留（56 宿主状态）"、**新增 §11.6**（PyCharm 静态警告的实测数据表 +
+     排查 / 排除步骤 + 被否掉的 B / C 两个选项的理由）、§一 现状体检表加 2026.10.15 复核纠偏注、头部版本 / 状态同步；
+     **v2.0 已留档到 `backups\`**。
+
+验证：
+  · **门禁 `tests\dsh_run_all_checks.py` ⇒ 38 套 870 项断言、失败项：无**，并自动打出
+    "门禁口径与《批次5 技术方案》一致（38 套 870 项断言）"；
+  · **中途真的抓出回归**：清 import 后第一次复跑 ⇒ `dsh_source_check` / `dsh_m3_video_check` / `dsh_m4_camera_check`
+    三套 `AttributeError`（PASS=0、合计 797 项）⇒ 恢复 `KIND_SOURCE` / `result_bbox` 后复跑 **870 项全绿**；
+  · **死 import 复检**（AST 逐个名字核对）：`main.py` 只剩 `KIND_SOURCE` / `result_bbox` / `VIDEO_ROI_KEY` /
+    `LOG_ERROR_MARK` 这 4 个"故意的再导出"，其余 7 个文件 **0 个**；
+  · **`core/` 对 `widgets` 的引用 = 0 处**（改前 2 处）；**孤儿全局名 0 处**；**self 契约真缺失 0 处**；
+    `py_compile` 全部改动文件通过；`MainWindow()` 正常构造、树仍 5 组、算子仍 14、
+    `m.VIDEO_ROI_KEY` / `m.LOG_ERROR_MARK` / `m.KIND_SOURCE` / `m.result_bbox` 都还读得到；
+  · **界面零变化**：改前 / 改后截图 **sha256 仍完全相同**（`a84f5a04c4caef8293cb42d6ae7d056810953bde69b2aef6d02ab1d3cac4d8ee`）。
+
+遗留：
+  1、`main.py` 仍留 27 个"界面装配 / 建图 / 路由"方法 + **56 个宿主状态**（53 个 `__init__` 赋值 + 3 个类属性）
+     ⇒ 目标3 收敛成 `FlowContext`（届时"PyCharm 静态警告"与"MixIn 不能独立测试"两个问题一起解决，别现在做两遍）；
+  2、**PyCharm 静态警告按 A 方案"只登记、不改代码"**：排除步骤写在方案 **§11.6**（在 IDE 里按它关掉这 6 个文件的检查即可）；
+  3、三份**冻结文档**的目录树 / "37 套 861 项"不回溯改（你的口径）；
+  4、`temp\` 里 5 个目标2 一次性工具（split / orphan / self_contract / shot_before / shot_after）留着，不进 git；
+  5、本轮**没动 git**（提交由用户掌握）。
+
+## 总结：批次5 目标2「拆 MainWindow」整体总结（2026.10.15 12:58）
+
+**目标**（用户 2026.10.13 定方案、2026.10.15 点选三项拍板）：**目标2 = 拆 `MainWindow`** —— 把 **3327 行 / 117 个方法 /
+56 个宿主状态**（53 个 `__init__` 赋值 + 3 个类属性）的 `main.py` 拆成"入口 + 界面装配"再加 6 个 Mixin，
+**判据 = 行为零变化 + 门禁套数 / 断言数一个不少 + 界面零变化**。三条拍板（用户全取推荐项）：
+**① 分 3 批做**（每批独立跑门禁）· **② 弹窗出口用"甲"方案**（`main.py` 留 `_warn` / `_info` / `_ask_*` 薄壳）·
+**③ 加更硬的门禁断言**（"117 个方法一个不少 + 只允许 5 个薄壳新增"）。
+
+**一、四步做了什么**
+
+| 轮次 | 用户口径 / 触发 | 做了什么 |
+|---|---|---|
+| **第 0 步**（基线） | 用户"开始批次5目标2" + 点选三项 | 改前整份备份 `_backup_VisionFlowNoed_before_t5g2_split_mainwindow`（98 个文件）+ 跑基线门禁 + 抓改前截图；**基线先红了 4 项**，根因 = 漏设 `QT_QPA_FONTDIR`（见经验 5） |
+| **第 1 批** | 分 3 批之 1 | **先**做弹窗出口收口（5 个薄壳 + 改写 13 处调用点，单独验一轮 861 全绿）**再**搬 `core/param_store.py`（11 方法）+ `core/project_store.py`（13 方法）⇒ `main.py` 3351 → 2793 行 |
+| **第 2 批** | 分 3 批之 2 | 搬 `core/flow_engine.py`（34 方法 + 模块级 `_result_note` / `_result_error` / `LOG_ERROR_MARK`）⇒ 1709 行 |
+| **第 3 批** | 分 3 批之 3 | 搬 `services/camera_service.py`（12）· `video_service.py`（8）· `gallery_service.py`（12）⇒ **885 行** |
+| **收尾** | 用户问"这些警告怎么办 / 目标2 还有什么问题" | 清 17 个死 import（保留 4 个故意的再导出）· 修 `core/ → widgets/` 倒挂（新增 `is_bound_node()`）· 方案 §4.5 同步 · PyCharm 静态警告**只登记不改代码**（§11.6） |
+
+**二、数字**
+
+- `main.py`：**3327 → 885 行**（-73%）；117 个方法 = **搬走 90 + 留 27**，另加 5 个弹窗薄壳 = 32 个；
+- 6 个新文件：`core/param_store.py` 175 · `core/project_store.py` 412 · `core/flow_engine.py` 1103 ·
+  `services/camera_service.py` 314 · `video_service.py` 219 · `gallery_service.py` 339（合计 2562 行）；
+- 搬走的模块级 5 个：`VIDEO_ROI_KEY` · `_fingerprint_value` · `_result_note` · `_result_error` · `LOG_ERROR_MARK`；
+- 门禁：**37 套 861 项 → 38 套 870 项**（新增 `tests\dsh_t5g2_api_check.py` 8 项 + `dsh_doc_consistency_check` 1 项）；
+- 新增工具 5 个（`temp\`，不进 git）：`dsh_t5g2_split.py` · `dsh_t5g2_orphan_check.py` ·
+  `dsh_t5g2_self_contract_check.py` · `dsh_t5g2_shot_before.py` · `dsh_t5g2_shot_after.py`；
+- 截图 +2（台账 77 → 79）；方案版本 v1.9 → v2.0 → v2.1 → **v2.2**（每一版都留档）；改前备份 2 个 + 改后 `_at_` 快照 3 个。
+
+**三、判据与结果（8 条，全部实测）**
+
+同《批次5 技术方案》v2.2 §5.8：① 门禁 **38 套 870 项断言"失败项：无"**（37 套老用例**一行没改** ⇒ 调用点 0 改动）·
+② 接口面 8 项全过（117 方法一个不少 / 只多 5 个薄壳 / 6 个 Mixin 在 MRO / Mixin 无 `QMessageBox.`·`QFileDialog.` / 不 import main /
+`main.py` 885 ≤ 1200 / 4 个再导出可读）· ③ 界面改前改后截图 **sha256 完全相同**（`a84f5a04…d8ee`）·
+④ 孤儿全局名 **0 处** / `self` 契约真缺失 **0 处** · ⑤ 覆盖度 117 = 90 + 27 不丢不重 · ⑥ `MainWindow()` 构造正常 / 树 5 组 / 算子 14 ·
+⑦ 方案 v2.2 + 本总结 + 索引行同步 · ⑧ 备份链完整。
+**结论：批次5 目标2（含收尾）全部完成。**
+
+**四、经验（值得留下来的 6 条）**
+
+1. **大文件拆 Mixin 的配方**：AST 按方法名**原样**剪贴（别手抄）+ 新模块 import 由"方法体里真正用到的全局名"自动推导 +
+   `--coverage` 自检（不丢不重）+ **孤儿全局名**静态检查（`py_compile` 查不出 `NameError`）+ **分批**跑门禁 +
+   改前 / 改后界面截图比 **sha256**（比"看着一样"硬得多）；
+2. ★ **用例靠给 `main` 打补丁挡弹窗**（`m.QMessageBox` / `m.QFileDialog` / 4 个 `*ParamsDialog`）⇒ 方法一搬走补丁就失效
+   —— 解法 = **弹窗出口收口成薄壳** + 搬运工具**只生成用得到的 import** + 对话框**路由留 main**（新用例第 ⑤ 条把它钉死）；
+3. ★ **方案文档里的示例代码与数字不能照抄**：`class MainWindow(…, QMainWindow)`（其实没有 Qt 基类，照抄直接 `NameError`）、
+   "碰 Qt？否"（`project_store` 要用 `NodeItem` / `QPointF`）、"29 方法 × 40 套用例"（实测 27 × 35）—— 动手前先用实测校验；
+4. ★ **清"没人 import 的 import"之前，先查用例是否以 `m.<名字>` 读它**：我删掉 `KIND_SOURCE` / `result_bbox` ⇒ 三套用例
+   `AttributeError`、断言数从 870 掉到 797，**门禁当场抓出**（"总数是不变量"这条规矩的价值就在这）；
+5. **基线门禁先红 4 项 = 环境假失败**：漏设 `QT_QPA_FONTDIR` 时 Qt 退回另一种字体、宽度从 274px 级别飙到 383px ⇒
+   已让 `dsh_run_all_checks.py` **自己兜住**；另外**跑门禁期间别改文档 / 别加截图**（会造竞态假红）；
+6. **门禁的"套数 / 断言数"是不变量，且要与现行方案对账**：断言不适用时**换成更硬的**、不删；
+   `dsh_run_all_checks.py` 现在跑完会把实测口径与《批次5 技术方案》写的对一遍。
+
+**五、遗留**
+
+① `main.py` 仍留 27 个"界面装配 / 建图 / 路由"方法 + **56 个宿主状态** ⇒ 目标3 收敛 `FlowContext`（届时 PyCharm 静态警告
+与"混入不能独立测试"两个问题一起解决）；② PyCharm 静态警告按 **A 方案**只登记（排除步骤见方案 §11.6）；
+③ 三份**冻结文档**的目录树 / "37 套 861 项"不回溯改；④ `temp\` 5 个一次性工具留着；⑤ 本轮**没动 git**（提交由用户掌握）。
+
 ## 全项目里程碑索引（2026.10.12 M3 收口时建立；2026.10.13 扩到全项目 + 定"新条目带批次号"约定 + 01:18 **挪到文件最后**）
 
 > **用法**：查某件事**先看这张表**，再到正文里按"可搜的关键日志条目"去找；**"现行口径"一列是唯一权威**
@@ -7966,7 +8237,7 @@ VisionFlowNode_批次4技术方案_v1.28_2026.10.7.md文件保留"
 | **目标5-M3** 日志与截图收口 | 2026.10.12 | 本日志、`backups\_ui_preview\截图索引.md`、`plan\批次4_验收点清单_v1.md` | `## 2026.10.12 批次4目标5-M3 23:45` | 方案 §6C（**尚未提交**（2026.10.13 凌晨的工作）—— 建议提交标题 `批次4目标5-M3+M4修改，参考日志2026.10.12 23:45-2026.10.13 01:40`） |
 | **目标5-M4** 最终备份 + 三份文档校准 | 2026.10.13 | 《用户手册》·《代码说明书》·《项目技术文档》·本方案 v1.47/v1.48 | `## 2026.10.13 批次4目标5-M4 01:40` | 方案 §6D / §6E（含《批次5 规划》）；**尚未提交**（与 M3 同一批，建议提交标题 `批次4目标5-M3+M4修改，参考日志2026.10.12 23:45-2026.10.13 01:40`） |
 | **文档体系与改动规矩** | 2026.10.7 | `plan\` 五份文档 | `## 2026.10.7 14:45`、`## 2026.10.7 15:07` | 方案开头《修改代码 / 文件的规矩》、《项目技术文档》§7（GitHub 提交标题：`添加4个markdown文件。更新技术文档，添加总技术文档/用户手册，日志转换为markdown形式`） |
-| **批次5**（**目标1 目录重构 ✅ 2026.10.14（三轮 + 收口）**：`core/ ops/{source,sink,process,detect,color}/ ui/ widgets/` 落位、14 个节点文件（一个节点一个文件）、`tests\` 进 git、直线/圆 改名「直线识别/圆识别」、树干合并成「检测识别」+ 新建「颜色处理」；目标2 拆 `MainWindow` / 目标3 执行线程化 / 目标4 缓存上限 + 撤销重做）；**批次6**（目标1 节点修改 / 目标2 流程图预览控件 / 目标3 帮助页 / 目标4 其它）未排期 | **2026.10.13 定、2026.10.14 起（目标1 已完成，目标2~4 未开工）** | `plan\VisionFlowNode_批次5技术方案_v1.9_2026.10.15.md` + `core\ ops\ ui\ widgets\ tests\` | `## 2026.10.14 批次5目标1 21:50` · `## 2026.10.14 批次5目标1 22:14` · `## 2026.10.14 批次5目标1 23:36` · `## 总结：批次5 目标1「目录重构」整体总结（2026.10.15 02:11）` | **《批次5 技术方案》v1.9 是口径真源**（§4.1 目录、§4.4 三轮落地结果、**§4.5 落地后目录现状速查**、**§4.6 节点文件为什么用函数而不是类**、§5 拆 MainWindow、§9.1 参考项目目录分类、§十 待拍板 4 项、**§11.3 门禁在 `tests\`**、§11.4 GitHub 仓库、§11.5 PyCharm 红线解法、§十二《想法（未开发）》）；批次4 方案 v1.53 已冻结；批次4 已提交 GitHub |
+| **批次5**（**目标1 目录重构 ✅ 2026.10.14（三轮 + 收口）**：`core/ ops/{source,sink,process,detect,color}/ ui/ widgets/` 落位、14 个节点文件（一个节点一个文件）、`tests\` 进 git、直线/圆 改名「直线识别/圆识别」、树干合并成「检测识别」+ 新建「颜色处理」；**目标2 拆 `MainWindow` ✅ 2026.10.15（三批）**：`core/{flow_engine,project_store,param_store}.py` + `services/{camera,video,gallery}_service.py` 六个 Mixin 落位、`main.py` **3327 → 885 行**、弹窗出口收口成 5 个薄壳、**收尾清掉 17 个死 import + 修掉 `core/ → widgets/` 倒挂（`is_bound_node`）**、新增接口面门禁 `dsh_t5g2_api_check.py`（门禁 **38 套 870 项**）；目标3 执行线程化 / 目标4 缓存上限 + 撤销重做 未开工）；**批次6**（目标1 节点修改 / 目标2 流程图预览控件 / 目标3 帮助页 / 目标4 其它）未排期 | **2026.10.13 定、2026.10.14 起（目标1、目标2 已完成；目标3~4 未开工）** | `plan\VisionFlowNode_批次5技术方案_v2.2_2026.10.15.md` + `core\ ops\ ui\ widgets\ services\ tests\` | `## 2026.10.14 批次5目标1 21:50` · `## 2026.10.14 批次5目标1 22:14` · `## 2026.10.14 批次5目标1 23:36` · `## 总结：批次5 目标1「目录重构」整体总结（2026.10.15 02:11）` · `## 2026.10.15 批次5目标2 12:16` · `## 2026.10.15 批次5目标2 12:37` · `## 总结：批次5 目标2「拆 MainWindow」整体总结（2026.10.15 12:58）` | **《批次5 技术方案》v2.2 是口径真源**（§4.1 目录、§4.4 三轮落地结果、**§4.5 落地后目录现状速查**、**§4.6 节点文件为什么用函数而不是类**、**§5 拆 `MainWindow`：§5.1 边界 + §5.2 两条硬约束（先 Mixin / 用例给 main 打补丁）+ §5.4 落地结果 + §5.5 验证 + §5.6 纠偏与遗留 + §5.7 目标2 落地后的目录（现在的真实目录，含每个文件行数） + §5.8 完工判定**、§9.1 参考项目目录分类、§十 待拍板 4 项、**§11.3 门禁在 `tests\`（38 套 870 项 + 脚本自带字体目录兜底）**、§11.4 GitHub 仓库、§11.5 PyCharm 红线解法、**§11.6 PyCharm 静态警告（未解析的特性引用）的处置（含实测数据表 + 排除步骤）**、§十二《想法（未开发）》）；批次4 方案 v1.53 已冻结；批次5 方案 v1.9 / v2.0 已留档到 `backups\`；批次4 已提交 GitHub |
 
 **已知被取代的条目（读到它们别照着做 —— 本轮已就地加了 ⚠️ 标注）**：
 

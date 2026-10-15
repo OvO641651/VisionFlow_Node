@@ -91,14 +91,25 @@ td = docs['项目技术文档']
 nums = re.findall(r'(\d+)\s*套用例\s*/\s*(\d+)\s*项断言', td)
 check('③ 《项目技术文档》写了"N 套用例 / M 项断言"', bool(nums), nums)
 if nums:
-    check('③ 文档写的套数 = 实测套数（%d）' % n_suites, int(nums[0][0]) == n_suites,
-          '文档 %s / 实测 %d' % (nums[0][0], n_suites))
+    # ★ 2026.10.15（批次5 目标2）口径升级：《项目技术文档》是**冻结**的（写的是批次4 收口时的
+    #   37 套 861 项），而门禁会随批次增长 ⇒ 这里从"相等"改成"**只增不减**"：
+    #   既能保住"套数一个不少"，又不用去动冻结文档。**精确相等**改由 ③d 盯现行方案。
+    check('③ 门禁套数只增不减（冻结文档写的不超过实测；%d）' % n_suites,
+          int(nums[0][0]) <= n_suites, '文档 %s / 实测 %d' % (nums[0][0], n_suites))
 else:
-    check('③ 文档写的套数 = 实测套数（%d）' % n_suites, False)
+    check('③ 门禁套数只增不减（冻结文档写的不超过实测；%d）' % n_suites, False)
 cm_nums = re.findall(r'(\d+)\s*套用例\s*/\s*(\d+)\s*项断言', docs['代码说明书'])
 check('③ 两份技术文档的"项数"一致（若都写了）',
       (not nums or not cm_nums or nums[0][1] == cm_nums[0][1]),
       (nums[:1], cm_nums[:1]))
+# ③d ★ 现行口径真源 =《批次5 技术方案》：写的套数必须**正好等于**实测
+_p5 = sorted(f for f in os.listdir(PLAN)
+             if f.startswith('VisionFlowNode_批次5技术方案_v') and f.endswith('.md'))
+p5 = read(os.path.join(PLAN, _p5[-1])) if _p5 else ''
+p5_nums = re.findall(r'(\d+)\s*套\s*(\d+)\s*项断言', p5)
+check('③ 《批次5 技术方案》写的套数 = 实测套数（%d）' % n_suites,
+      bool(p5_nums) and int(p5_nums[0][0]) == n_suites,
+      (_p5[-1:] or 'plan 里缺《批次5 技术方案》', p5_nums[:1], '实测 %d 套' % n_suites))
 
 # ---- ④ §五 算子表 ↔ NODE_SPECS ----
 sec5 = td[td.index('## 五、算子全景'):td.index('## 六、进度与验证方式')]

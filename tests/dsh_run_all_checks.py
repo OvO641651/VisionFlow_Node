@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """跑一遍所有 dsh_*_check.py，汇总每套的 PASS/FAIL 与退出码"""
+import io
 import os
 import re
 import subprocess
@@ -28,6 +29,13 @@ scripts = sorted(_found)
 env = dict(os.environ)
 env["QT_QPA_PLATFORM"] = "offscreen"
 env["PYTHONIOENCODING"] = "utf-8"
+# ★ 批次5 目标2 补：参数窗口宽度那几套（dsh_m2_ctrl_check / dsh_roi_default_check / dsh_dlg_width_check）
+#   量的是"文字排版之后的真实宽度"，**不指定字体目录**时 Qt 会退回另一种字体，宽度直接飙到 380+
+#   ⇒ 4 项断言假失败（实测：不设 = 857 过 / 4 失败；设上 = 861 过 / 0 失败）。
+#   由门禁自己兜住，换个人跑 / 换个终端也不会莫名其妙红；目录不存在就跳过（非 Windows）。
+_FONTDIR = r"C:\Windows\Fonts"
+if os.path.isdir(_FONTDIR):
+    env["QT_QPA_FONTDIR"] = _FONTDIR
 
 total_p = total_f = 0
 bad = []
@@ -59,6 +67,31 @@ for name in scripts:
 print()
 print("合计：{0} 套，PASS {1}，FAIL {2}；不合格 {3} 套".format(
     len(scripts), total_p, total_f, len(bad)))
+
+# ★ 批次5 目标2 补：门禁的"套数 / 项数"是**不变量** —— 精确数字必须与**现行方案
+#   《批次5 技术方案》**里写的一致（三份冻结文档写的是批次4 收口时的 37 套 861 项，
+#   它们不动，所以"只增不减"那条由 dsh_doc_consistency_check 管，这里管"精确相等"）。
+_plan_dir = os.path.join(PROJ, "plan")
+_plans = sorted(f for f in os.listdir(_plan_dir)
+                if f.startswith("VisionFlowNode_批次5技术方案_v") and f.endswith(".md"))
+_total = total_p + total_f
+if _plans:
+    _txt = io.open(os.path.join(_plan_dir, _plans[-1]), "r", encoding="utf-8").read()
+    _m = re.findall(r"(\d+)\s*套\s*(\d+)\s*项断言", _txt)
+    if not _m:
+        bad.append(("方案没写口径", _plans[-1]))
+        print("BAD 《批次5 技术方案》里没找到形如「N 套 M 项断言」的口径")
+    elif int(_m[0][0]) != len(scripts) or int(_m[0][1]) != _total:
+        bad.append(("方案写的口径不一致", "方案 %s 套 %s 项 / 实测 %d 套 %d 项"
+                    % (_m[0][0], _m[0][1], len(scripts), _total)))
+        print("BAD 门禁口径与《批次5 技术方案》写的不一致：方案 %s 套 %s 项 / 实测 %d 套 %d 项"
+              % (_m[0][0], _m[0][1], len(scripts), _total))
+    else:
+        print("OK  门禁口径与《批次5 技术方案》一致（%s 套 %s 项断言；%s）"
+              % (_m[0][0], _m[0][1], _plans[-1]))
+else:
+    print("（提示：plan\\ 里没有《批次5 技术方案》，跳过口径对照）")
+
 if bad:
     print("不合格：", bad)
 sys.exit(1 if bad else 0)
