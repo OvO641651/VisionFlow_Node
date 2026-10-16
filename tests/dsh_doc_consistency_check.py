@@ -11,7 +11,7 @@ M4 的门禁用例：**文档 ↔ 代码一致性**（`dsh_doc_consistency_check
     ④ 《项目技术文档》§五 算子表 ↔ `NodeRegistry.NODE_SPECS` 完全一致（14 个）；
     ⑤ 文档引用的**方案版本文件名**真实存在；
     ⑥ 《用户手册》的《目录》每一项都能对上真实二级标题；
-    ⑦ 三份文档的"版本号"与文件名一致（用户口径：批次5 打包前不改版号）；
+    ⑦ 三份文档的"版本号"与文件名一致（用户 2026.10.16 口径：三份文档各升一级 —— v1.0→v1.1 · v1.2→v1.3）；
     ⑧ 《代码说明书》不再出现"人脸/颜色 未实现"与旧行数，且已补 4 个新文件章节。
 """
 import io
@@ -22,9 +22,9 @@ import sys
 PROJ = r'E:\opencv_python_3_8\PySide\VisionFlowNoed'
 PLAN = os.path.join(PROJ, 'plan')
 DOCS = {
-    '用户手册': 'VisionFlowNode_用户手册_v1.0_2026.10.7.md',
-    '代码说明书': 'VisionFlowNode_代码说明书_v1.0_2026.10.7.md',
-    '项目技术文档': 'VisionFlowNode_项目技术文档_v1.2_2026.10.7.md',
+    '用户手册': 'VisionFlowNode_用户手册_v1.1_2026.10.7.md',
+    '代码说明书': 'VisionFlowNode_代码说明书_v1.1_2026.10.7.md',
+    '项目技术文档': 'VisionFlowNode_项目技术文档_v1.3_2026.10.7.md',
 }
 TEMP = os.environ.get('TEMP', '')
 # 2026.10.13 起用例在工程内 temp/（本文件所在目录）；%TEMP% 兜底
