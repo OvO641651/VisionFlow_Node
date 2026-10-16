@@ -297,6 +297,16 @@ class CameraMixin(MainHost):
         self._video_tick_running = True
         self._video_log_throttle = True        # 出画面期间不刷执行日志（不然每格都重写表格）
         try:
+            # ★ 批次5目标5-M2 轮2（2026.10.16）：相机出画面期间，**"图像源 (n/N)"标签也归播放侧**
+            #   （视频那条路是在 `_video_tick` 里上的锁；相机这条路会提前 return，所以必须在这里再上一次）
+            #   —— 否则"打开摄像头时点图库里的图"，标签会被 `refresh_count()` 顶一下、下一拍又变成"相机画面"
+            #   （用户实测："计数文本…还是会有一瞬间消失当前点击的排序"）。
+            try:
+                gallery = getattr(self, "gallery_widget", None)
+                if gallery is not None and hasattr(gallery, "set_count_locked"):
+                    gallery.set_count_locked(True)
+            except Exception:
+                pass
             try:
                 label = getattr(getattr(self, "gallery_widget", None), "count_label", None)
                 if label is not None:

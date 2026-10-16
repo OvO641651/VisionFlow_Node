@@ -61,6 +61,8 @@ ALLOWED_NEW_METHODS = [
     "_stack_for", "_bind_undo_stack_for_page",
     # 批次5 目标5-M1：图库判"是不是正在播视频/相机"（播放中点图库只改选中项）
     "_is_playing",
+    # 批次5 目标5-M2：判"这一轮是不是活源（视频/相机）流程"（活源 ⇒ 连续执行不展开成批量）
+    "_uses_live_source",
 ]
 
 # 拆前（改前快照 main.py）MainWindow 的 117 个方法名 —— 冻结清单，**不许删、只许更多的方法名留在别处**

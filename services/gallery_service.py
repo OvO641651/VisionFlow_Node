@@ -75,16 +75,43 @@ class GalleryMixin(MainHost):
         gallery = getattr(self, "gallery_widget", None)
         if gallery is None:
             return
-        # ★ 删除前先停掉正在播放的视频/相机：否则下面把视频路径清掉之后，播放定时器还在每一格
-        #   去取帧、每格都会弹一次"请先导入图片/视频…"（用户实测：点完 OK 又弹一个，无限弹）。
-        if self._video_playing:
-            self._stop_video_playback("相机已被删除" if self._camera_playing else "视频已被删除")
-        # ★ 相机源（M4）：点"删除"要把相机**关掉**（用户 2026.10.7 定："停止不关、删除才关"），
-        #   同时把画布清掉；但**不动相机源节点里的参数**（编号 / 分辨率留着，下次执行会重新打开）。
+        # ★ 批次5目标5-M2 轮2（2026.10.16，用户口径）：「删除」要**一次见效**，不要"先停播、再点一次才删"。
+        #   语义 = **删掉"当前画布上显示的那个东西"**：
+        #     · 活源（视频在播 / 流程是视频·相机源流程 / 相机开着）⇒ 停播（如需）+ 关相机 +
+        #       **清画布 + 清视频源路径**，**一次完成**（用户 2026.10.6 定的"删除能清掉画布上的视频"）；
+        #     · 静态图（画布上是图库里的某张图）⇒ 删掉那一条图库条目（老逻辑，连带清参数 / 缓存 / 缩放）。
+        #   用户原话："我想要的是**直接删除视频，不需要停止**，如果需要停止直接点**停止按钮**即可。"
+        #   （"停止"按钮 = 只停播；"删除" = 真把视频/相机这一路清掉。）
+        playing = self._is_playing()
         camera = self._camera_source_node()
-        if camera is not None and (self.cap is not None and self.cap.isOpened()):
-            self._release_camera_device()
-            self._append_log_hint("已关闭相机（相机源节点里的参数保留）")
+        camera_open = camera is not None and (self.cap is not None and self.cap.isOpened())
+        video_node = self._video_source_node()
+        live_video = video_node is not None and (video_node.params.get("video_path") or "")
+        # ★ 2026.10.16 轮3（用户实测报的第 ② 条）：「画布上当前是谁」要**看图片标识** ——
+        #   活源执行的帧其标识 = "视频路径#帧号"（带 `#`，见 core/param_store.py::_image_key_of）；
+        #   图库静态图的标识 = 文件路径（不带 `#`）。之前这里只看 `current_static_image is None`，
+        #   而活源执行会把那一帧记成"当前图"⇒ 判据不成立 ⇒ 点删除跑去删图库条目
+        #   （用户原话："再点击删除就会把该图片删除，而不是把画布中的视频帧清除"）。
+        on_live_frame = getattr(self, "_canvas_shows_live", False) or "#" in (self.current_image_key or "")
+        if playing or camera_open or on_live_frame or (live_video and self.current_static_image is None):
+            if playing:
+                self._stop_video_playback("相机已关闭" if self._camera_playing else "视频已停止")
+            if camera_open:
+                # 相机源（M4）：保留用户 2026.10.7 定的"停止不关、**删除才关**"；
+                #   相机源节点里的参数（编号 / 分辨率）**不动**，下次执行会重新打开。
+                self._release_camera_device()
+                self._append_log_hint("已关闭相机（相机源节点里的参数保留）")
+            self.current_static_image = None
+            self.current_image_key = None
+            view = getattr(self, "image_view", None)
+            if view is not None:
+                view.set_image(None)
+            video = self._video_source_node()
+            if video is not None and (video.params.get("video_path") or ""):
+                video.params["video_path"] = ""
+            # 文案同时保留老用例认的"已清除画布内容"这个说法（`dsh_m3_delete_check` 会读日志）
+            self._append_log_hint("已清除画布内容（视频帧已删除 / 相机已关闭；图像列表里的图片未动）")
+            return
         if item is None:
             # 列表里**没有可删的条目**（典型场景：画布上放的是"视频源"的帧，帧不进图库）⇒
             # 退化成"清空画布"：顺便把视频源节点里的路径也清掉，免得下次执行又把它跑出来

@@ -95,7 +95,20 @@ class VideoMixin(MainHost):
             return
         if video.params.get("auto_next", True) is False:
             return
-        video.params["frame_index"] = int(video.params.get("frame_index") or 0) + 1
+        _nxt = int(video.params.get("frame_index") or 0) + 1
+        # ★ 2026.10.16 用户实测：不勾「自动切换」连点单步执行 ⇒ 帧号一直涨（"视频帧 (49/36)"）而画面停在第一帧。
+        #   原因：这里**只 +1、没处理末尾**（播放那条路 `_video_tick` 里有"到末尾就回卷 / 停播"）。
+        #   处置：**只在"没在播放"（= 单步这条路）时**处理末尾 —— 勾了「循环」⇒ 回卷到 0；没勾 ⇒ 停在最后一帧。
+        #   ★ 播放中**不动**这里：`_video_tick` 自己管末尾（老用例 `dsh_m3_video2_check` 钉着那段行为）。
+        if not (self._video_playing or self._camera_playing):
+            try:
+                from ops.source.VideoSourceOps import video_info
+                _count, _fps = video_info(video.params.get("video_path") or "")
+            except Exception:
+                _count = 0
+            if _count and _nxt >= _count:
+                _nxt = 0 if video.params.get("loop") else max(int(_count) - 1, 0)
+        video.params["frame_index"] = _nxt
 
     def _start_video_playback(self, node, mode):
         """

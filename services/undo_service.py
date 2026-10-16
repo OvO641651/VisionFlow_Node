@@ -406,6 +406,17 @@ class UndoMixin(MainHost):
                 self._append_log_hint("没有可{0}的操作".format(verb))
             return None
         self._append_log_hint("已{0}：{1}".format(verb, command.text))
+        # ★ 批次5目标5-M2 轮2（2026.10.16，用户实测）：撤销 / 重做要**同步这一页的"未保存"标记** ——
+        #   撤销到**栈底** = 回到这一页的基线（导入 / 保存那一刻）⇒ 清掉 dirty；重做 ⇒ 重新标脏。
+        #   否则会出现用户报的："一直撤销到按钮变灰（已回到初始导入状态），点关闭页面却弹'有修改是否保存'"。
+        try:
+            manager = self.flow_page_mgr
+            if method_name == "undo" and not stack.can_undo:
+                manager.clear_dirty(manager.current_page)
+            elif method_name == "redo":
+                manager.mark_dirty()
+        except Exception:
+            pass
         return command
 
     def undo(self):

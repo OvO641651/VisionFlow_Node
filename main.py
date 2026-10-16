@@ -293,6 +293,10 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             self.execution_log.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             # 隐藏最左侧的垂直表头（行号）
             self.execution_log.verticalHeader().setVisible(False)
+            # ★ 批次5目标5-M2（2026.10.16）：日志表格**按像素滚动**。默认是 `ScrollPerItem`（一滚一行），
+            #   用户实测："日志表格的滚动条不能连续滚动，每一只能移动固定的距离。"
+            self.execution_log.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+            self.execution_log.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
 
 
         # 初始化 图像预览进度条 QListWidget 控件，控件名字 Name 为 image_gallery
@@ -819,6 +823,30 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         # 静态图：有当前图就用当前图；图库为空但流程里有"图片源"就用它那张（内部判定）
         self.run_flow_step(self.selected_node)
 
+    def _uses_live_source(self):
+        """
+        这一轮的"取图来源"是不是**活源**（视频 / 相机）—— 批次5目标5-M2（2026.10.16 用户拍板"甲"）。
+
+        判据（任一成立即为活源）：
+          · 视频 / 相机**正在播**（`_is_playing()`）；
+          · 当前页流程里有**视频源节点**（★ §8.2.7 甲：**只看"节点在不在"，不看它有没有配视频**）；
+          · 当前页流程里有**相机源节点、且这一轮真会用到它**（`_camera_used_by`，与执行路径同一个判据）。
+        活源流程的"连续执行"语义 = 按视频 / 相机跑（或按帧率播），**不该展开成"跑图库每一张"**。
+        """
+        if self._is_playing():
+            return True
+        # ★ §8.2.7 甲（2026.10.16）：**只要流程里有视频源节点就算活源流程**（不看它现在有没有配视频）——
+        #   删除视频后 `video_path` 被清空，若这里仍按"有没有配视频"判 ⇒ 判据变假 ⇒ "连续执行"会落进
+        #   "跑图库每张"的批量分支（用户实测报的 §8.2.7："点击删除把视频删除了，这时候如果图像列表中有图片，
+        #   那么会把这些图片作为检测对象进行执行"）。改成看"节点在不在"之后，删掉视频再点连续执行会走
+        #   `run_flow_continuous()`，由 `_flow_source_frame()` **如实提示**"请先导入图片/视频…"，不会偷跑图库。
+        if self._video_source_node() is not None:
+            return True
+        camera = self._camera_source_node()
+        if camera is not None and self._camera_used_by(camera, "continuous"):
+            return True
+        return False
+
     def on_continuous_execute(self):
         """点击连续执行按钮时触发：按整个流程图顺序执行"""
         # 视频 / 摄像头模式：老行为不变
@@ -830,6 +858,14 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
         # 方案 B（用户 2026.10.6 拍板）：**范围只看下拉框**（运行全部 / 运行选中）——
         # "自动切换"不参与范围判定，它只管"执行时是否跟随选中项"（见 run_all_images）。
+        # ★ 批次5目标5-M2（2026.10.16 用户拍板"甲"）：**这一轮真用到视频 / 相机源 ⇒ 不展开成批量**。
+        #   批量（逐张跑图库）只对**纯静态图流程**生效；否则"批量逐张刷画布"会和"视频/相机按帧率出画面"
+        #   抢同一个画布 —— 用户实测："画布上会同时播放图像列表的图片和视频，可能是每个一帧得进行。
+        #   图片播放完成后会继续播放视频"；同时修 ⑦(1)"图像列表中存在图片时，点击连续执行按钮，
+        #   不能打开摄像头，而是对图像列表中的图片进行了处理"（**单步本来就不展开批量 ⇒ 两条入口终于一致**）。
+        if self._uses_live_source():
+            self.run_flow_continuous()
+            return
         gallery = getattr(self, "gallery_widget", None)
         if gallery is not None and gallery.count() > 0 and gallery.scope_all():
             self.run_all_images("continuous")

@@ -38,6 +38,9 @@ class FlowEngineMixin(MainHost):
 
         # 记住当前图片，后面点执行按钮都是基于它计算
         self.current_static_image = frame
+        # ★ 批次5目标5-M2 轮3：画布上要放的是**静态图**了 ⇒ 清掉"画布是活源帧"的标记
+        #   （`_execute_static` 会在这一轮真用到视频 / 相机时再把它置回 True）
+        self._canvas_shows_live = False
 
         # 切换图片：把每个节点的运行参数按图片分别存档 / 载入
         # （标识优先用文件路径，见 _image_key_of：跨会话稳定、能写进方案文件）
@@ -124,6 +127,18 @@ class FlowEngineMixin(MainHost):
         #   用户 2026.10.15 报的问题："不选自动切换，画布也会自动播放处理后的图片、最后再切回选中的那张"。
         #   不刷画布不影响正确性：结果照旧进缓存（切回那张图仍能看到）、日志照旧逐张写。
         image_key = self._image_key_of(frame)
+        # ★★ 第 ② 条的真凶（2026.10.16 实测定位）：**活源（视频）轮的结果不能记在"启动那一帧"的键下**。
+        #   视频源节点不理输入、直接吐自己的帧 ⇒ 这一轮的产物其实是"视频帧"的结果，可 `image_key` 还是
+        #   启动时那张静态图（图库里的图）⇒ 结果被缓存到**那张静态图的键**下 ⇒ 用户"更换图片再换回来，
+        #   该图片依旧是视频帧的图"（原话），关页面（换页 ⇒ 缓存键落空）才恢复正常。
+        #   处置：只把**写缓存用的键**换成"视频帧键"（`路径#帧号`，带 `#` ⇒ 进 LRU 的视频序列池）；
+        #   `image_key` 本身保持原义，别影响后面用到它的地方。
+        cache_image_key = image_key
+        if self._video_used_by(node, mode):
+            _v = self._video_source_node()
+            _vp = (_v.params.get("video_path") or "") if _v is not None else ""
+            if _vp:
+                cache_image_key = "{0}#{1}".format(_vp, int(_v.params.get("frame_index") or 0))
         camera_used = self._camera_used_by(node, mode)
         display_key = self._camera_display_key(node, mode) if camera_used else None
         if show:
@@ -135,7 +150,7 @@ class FlowEngineMixin(MainHost):
             # 把这次的结果缓存到"这张图片 × 这一页流程图 × 本次执行方式"名下
             # 下次切回这张图片（或这一页）时可以直接显示，不用再点一次执行按钮。
             # work_frame 本来就是 frame 的独立副本，直接存起来即可。
-            self.result_cache[self._result_cache_key(image_key, mode)] = {
+            self.result_cache[self._result_cache_key(cache_image_key, mode)] = {
                 "frame": work_frame,
                 "data": data,
                 "exec_info": exec_info,
@@ -150,9 +165,50 @@ class FlowEngineMixin(MainHost):
         if self.current_dialog and self.current_dialog.isVisible():
             self.current_dialog.update_result_count(data)
 
+        # ★ 批次5目标5-M2 轮3（用户 2026.10.16 拍板"甲"，实测定位）：这一轮**真用到活源（视频 / 相机）**时，
+        #   画布上画的是**活源那一帧的处理结果**，可 `current_image_key` 还是"启动那一帧"的标识
+        #   ⇒ 标签显示"图像源 (n/N)"、删按钮也按图库那张去删，用户看到的就是"图像列表里的图片被换成了视频帧"。
+        #   处置：① 标签交给活源侧并写明"视频帧 / 相机画面"；② 记一个 `_canvas_shows_live` 供删除判据使用。
+        try:
+            _live = self._video_used_by(node, mode) or self._camera_used_by(node, mode)
+        except Exception:
+            _live = False
+        self._canvas_shows_live = bool(_live)
+        try:
+            _gallery = getattr(self, "gallery_widget", None)
+            if _gallery is not None and hasattr(_gallery, "set_count_locked"):
+                if _live:
+                    _gallery.set_count_locked(True)
+                    _label = getattr(_gallery, "count_label", None)
+                    if _label is not None:
+                        if self._camera_used_by(node, mode):
+                            _label.setText("相机画面")
+                        else:
+                            # ★ 恢复"视频帧 (n/总数)"计数（用户 2026.10.16："原本是可以对视频的帧数进行计算的，
+                            #   比如视频帧（5/20），但是现在没有，给我恢复这个功能"）。
+                            #   格式与 `_video_tick` 里那一处保持一致。
+                            _v = self._video_source_node()
+                            _vp = (_v.params.get("video_path") or "") if _v is not None else ""
+                            _idx = int(_v.params.get("frame_index") or 0) if _v is not None else 0
+                            _total = 0
+                            try:
+                                from ops.source.VideoSourceOps import video_info
+                                _total, _fps = video_info(_vp)
+                            except Exception:
+                                _total = 0
+                            _label.setText("视频帧 ({0}/{1})".format(_idx, _total or "?"))
+                else:
+                    _gallery.set_count_locked(False)      # 静态图 ⇒ 标签回到图库计数
+        except Exception:
+            pass
         # 图片源节点用到的图片也放进图库列表（用户 2026.10.5 要求：不管是"打开文件"导入的，
         # 还是图片源节点指定的，都要在图库里看得见）
-        self._ensure_source_images_in_gallery()
+        # ★ 例外（2026.10.16 用户实测 + 桌面探针定案）：**活源（视频 / 相机）轮不"补图库"** ——
+        #   探针抓到的那一栈是：相机流程执行 ⇒ `_ensure_source_images_in_gallery()` 把**当前页「图片源」节点**
+        #   指定的那张图（实测 path = `save_test\image\face2_0002.png`）塞进**空图库** ⇒ 用户看到"首次执行
+        #   突然多出一张图、以为是相机第一帧"（相机帧本来就不进图库）。静态图轮**保留** 2026.10.5 的行为。
+        if not getattr(self, "_canvas_shows_live", False):
+            self._ensure_source_images_in_gallery()
         # 相机源（目标3-M4，2026.10.7）：相机是**无界流**——
         #   · 没有帧游标可以推进（视频那套 "一次执行 = 前进一帧" 不适用）；
         #   · 参数**复用视频槽**（用户定："相机和视频共用一份参数"），跑完把这份存回槽里；
