@@ -102,14 +102,16 @@ cm_nums = re.findall(r'(\d+)\s*套用例\s*/\s*(\d+)\s*项断言', docs['代码�
 check('③ 两份技术文档的"项数"一致（若都写了）',
       (not nums or not cm_nums or nums[0][1] == cm_nums[0][1]),
       (nums[:1], cm_nums[:1]))
-# ③d ★ 现行口径真源 =《批次5 技术方案》：写的套数必须**正好等于**实测
-_p5 = sorted(f for f in os.listdir(PLAN)
-             if f.startswith('VisionFlowNode_批次5技术方案_v') and f.endswith('.md'))
-p5 = read(os.path.join(PLAN, _p5[-1])) if _p5 else ''
-p5_nums = re.findall(r'(\d+)\s*套\s*(\d+)\s*项断言', p5)
-check('③ 《批次5 技术方案》写的套数 = 实测套数（%d）' % n_suites,
-      bool(p5_nums) and int(p5_nums[0][0]) == n_suites,
-      (_p5[-1:] or 'plan 里缺《批次5 技术方案》', p5_nums[:1], '实测 %d 套' % n_suites))
+# ③d ★ 现行口径真源 =《批次6 技术方案》：写的套数必须**正好等于**实测
+#   （★ 2026.10.17 批次6 目标1-M1：口径校验目标从《批次5 技术方案》**移交**到《批次6 技术方案》，
+#     批次5 方案同日冻结、只作历史；已在其冻结标记处补一句"门禁口径已移交"。）
+_p6 = sorted(f for f in os.listdir(PLAN)
+             if f.startswith('VisionFlowNode_批次6技术方案_v') and f.endswith('.md'))
+p6 = read(os.path.join(PLAN, _p6[-1])) if _p6 else ''
+p6_nums = re.findall(r'(\d+)\s*套\s*(\d+)\s*项断言', p6)
+check('③ 《批次6 技术方案》写的套数 = 实测套数（%d）' % n_suites,
+      bool(p6_nums) and int(p6_nums[0][0]) == n_suites,
+      (_p6[-1:] or 'plan 里缺《批次6 技术方案》', p6_nums[:1], '实测 %d 套' % n_suites))
 
 # ---- ④ §五 算子表 ↔ NODE_SPECS ----
 sec5 = td[td.index('## 五、算子全景'):td.index('## 六、进度与验证方式')]

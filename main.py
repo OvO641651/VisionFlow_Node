@@ -565,12 +565,26 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         """拖拽 / 双击添加节点：加到"当前页"（真正建节点在 _add_node_to_page）"""
         node = self._add_node_to_page(self.flow_page_mgr.current_page, name, pos)
         self._undo_note("add_node", node)   # ★ 目标4：记一条"新建节点"命令
+        # ★ 批次6 目标1-M1：画布 = 固定大画布；这一页**还没"跟过内容"**且已经有节点
+        #   （= 新建页首次出现内容 / 刚导入的方案）⇒ 视口**跟到内容**；否则只做
+        #   "向右下兜底增长"（原点恒 (0,0) ⇒ 其它节点的视口坐标不变、画面不跳）
+        view = self.flow_page_mgr.current_page.get("view")
+        if view is not None and hasattr(view, "_apply_canvas_rect"):
+            if not getattr(view, "_content_positioned", True) and self.flow_nodes:
+                view.goto_content_or_topleft()
+                view._content_positioned = True
+            else:
+                view._apply_canvas_rect()
         return node
 
     def add_edge(self, start_node, end_node):
         """从蓝点开始生成一条曲线（同一对起终点不重复连）"""
         edge = self._add_edge_to_page(self.flow_page_mgr.current_page, start_node, end_node)
         self.update_all_edges()  # 刷新一次画面，刷新出曲线
+        # ★ 批次6 目标1-M1：连线增删不影响画布矩形（两端都挂在节点上），这里只是兜底重算一次
+        view = self.flow_page_mgr.current_page.get("view")
+        if view is not None and hasattr(view, "_apply_canvas_rect"):
+            view._apply_canvas_rect()
         if edge is not None:
             # ★ 目标4：记一条"新建连线"命令（`None` = 这对起终点已经连过了 ⇒ 什么都没发生，不记）
             self._undo_note("add_edge", edge)
@@ -602,6 +616,10 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         self.flow_nodes.remove(node_to_delete) # 从列表中移除节点记录
         self.flow_page_mgr.mark_dirty()  # 删了东西，这一页就算"有改动"
         self.update_all_edges() # 刷新画面
+        # ★ 批次6 目标1-M1：删节点只会让内容变小（画面不会跳），顺手兜底重算一次画布矩形
+        _view = self.flow_page_mgr.current_page.get("view")
+        if _view is not None and hasattr(_view, "_apply_canvas_rect"):
+            _view._apply_canvas_rect()
 
     def update_all_edges(self):
         """可更新的边缘连接曲线，移动方框后曲线会跟着移动"""
@@ -645,7 +663,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             new_x = last_node.pos().x()  # + 180 # x方向距离增加180
             new_y = last_node.pos().y() + 180  # y方向距离不变
         else:
-            new_x, new_y = 20, 20  # 第一个方框的位置
+            new_x, new_y = 80, 80  # 第一个方框的位置（★ 批次6 目标1-M1：20,20 → 80,80，不贴边）
 
         self.add_flow_node(name, QPointF(new_x, new_y))
 

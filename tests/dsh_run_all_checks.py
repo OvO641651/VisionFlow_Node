@@ -69,28 +69,30 @@ print("合计：{0} 套，PASS {1}，FAIL {2}；不合格 {3} 套".format(
     len(scripts), total_p, total_f, len(bad)))
 
 # ★ 批次5 目标2 补：门禁的"套数 / 项数"是**不变量** —— 精确数字必须与**现行方案
-#   《批次5 技术方案》**里写的一致（三份冻结文档写的是批次4 收口时的 37 套 861 项，
+#   《批次6 技术方案》**里写的一致（三份冻结文档写的是批次4 收口时的 37 套 861 项，
 #   它们不动，所以"只增不减"那条由 dsh_doc_consistency_check 管，这里管"精确相等"）。
+#   ★ 批次6 目标1-M1（2026.10.17）：口径校验目标**从《批次5 技术方案》移交到《批次6 技术方案》**
+#     （批次5 方案同日冻结；已在其冻结标记处补一句"门禁口径已移交"）。
 _plan_dir = os.path.join(PROJ, "plan")
 _plans = sorted(f for f in os.listdir(_plan_dir)
-                if f.startswith("VisionFlowNode_批次5技术方案_v") and f.endswith(".md"))
+                if f.startswith("VisionFlowNode_批次6技术方案_v") and f.endswith(".md"))
 _total = total_p + total_f
 if _plans:
     _txt = io.open(os.path.join(_plan_dir, _plans[-1]), "r", encoding="utf-8").read()
     _m = re.findall(r"(\d+)\s*套\s*(\d+)\s*项断言", _txt)
     if not _m:
         bad.append(("方案没写口径", _plans[-1]))
-        print("BAD 《批次5 技术方案》里没找到形如「N 套 M 项断言」的口径")
+        print("BAD 《批次6 技术方案》里没找到形如「N 套 M 项断言」的口径")
     elif int(_m[0][0]) != len(scripts) or int(_m[0][1]) != _total:
         bad.append(("方案写的口径不一致", "方案 %s 套 %s 项 / 实测 %d 套 %d 项"
                     % (_m[0][0], _m[0][1], len(scripts), _total)))
-        print("BAD 门禁口径与《批次5 技术方案》写的不一致：方案 %s 套 %s 项 / 实测 %d 套 %d 项"
+        print("BAD 门禁口径与《批次6 技术方案》写的不一致：方案 %s 套 %s 项 / 实测 %d 套 %d 项"
               % (_m[0][0], _m[0][1], len(scripts), _total))
     else:
-        print("OK  门禁口径与《批次5 技术方案》一致（%s 套 %s 项断言；%s）"
+        print("OK  门禁口径与《批次6 技术方案》一致（%s 套 %s 项断言；%s）"
               % (_m[0][0], _m[0][1], _plans[-1]))
 else:
-    print("（提示：plan\\ 里没有《批次5 技术方案》，跳过口径对照）")
+    print("（提示：plan\\ 里没有《批次6 技术方案》，跳过口径对照）")
 
 if bad:
     print("不合格：", bad)

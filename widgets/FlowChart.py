@@ -1,4 +1,4 @@
-from PySide2.QtCore import Qt, QPointF, Signal, QObject, QTimer
+from PySide2.QtCore import Qt, QPointF, Signal, QObject, QTimer, QRectF
 from PySide2.QtGui import QColor, QPen, QPainterPath, QBrush
 from PySide2.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem,
@@ -6,6 +6,32 @@ from PySide2.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem,
     QStyleOptionGraphicsItem, QMenu, QAction
 )
+
+
+# ★ 批次6 目标1-M1（2026.10.17，用户报"拖动节点后其它节点留在最左边"）：
+#   流程图**固定大画布**的尺寸与兜底余量。以前从不设 sceneRect ⇒ Qt 按内容自动算：
+#   内容小时视图自动居中、内容超出视口后视图锚定场景矩形左上角 ⇒ 拖节点时其余节点整体跳。
+#   设成下面这块固定大画布后：滚动条一开始就在、**原点恒 (0,0)**、只在节点被拖到画布外时
+#   向右下兜底增长（原点不动 ⇒ 画面永不跳）。
+CANVAS_W, CANVAS_H = 4000, 3000
+CANVAS_MARGIN = 200
+# ★ 批次6 目标1-M1 第 3 次修改曾加过 `FOLLOW_MARGIN = 24`（"视口跟着节点走"的**乙方案**）；
+#   ★ **第 5 次修改（2026.10.17）已撤回乙**：乙会让 sceneRect 随拖动**无限增长**
+#   （实测 4000×3000 → 5141×3851 → …），用户要的是"跟随到画布中间就**停止增大**"
+#   ⇒ 改用 **丙 = 四个边界全固定**。乙的方案细节留在《批次6 技术方案》§4.1「★ 已撤回：乙方案」里备查。
+# ★ **第 6 次修改（2026.10.17，用户选"甲"）= 丙 + 只复活乙的 B（视图跟随）**：
+#   拖动时**只滚视图**（`ensureVisible`），**绝不调 `_apply_canvas_rect()`** ⇒ sceneRect 恒 4000×3000、
+#   滚动条范围不变；而 `ensureVisible` 会改滚动条 ⇒ Qt **同步重投 `mouseMoveEvent`** ⇒
+#   必须有 `NodeItem._in_follow` 重入锁（否则就是第 3 次那种 `stack overflow` 无限递归崩溃）。
+FOLLOW_MARGIN = 24
+# ★ **第 7 次修改（2026.10.17，用户："移动速度太快了，能否降低一下速度"）**：
+#   第 6 次用的是 `ensureVisible()` —— "差多少就一次滚多少" ⇒ 节点一碰 24px 边距就是一记大跳
+#   （实测单步滚动量 **最大 120px / 平均 113px**）。
+#   ★ 第一版改成"硬上限 6px/帧"，实测**快拖时视图追不上**（节点在视口内只有 2/20 步 ✗，等于跑丢）
+#   ⇒ 改成**按差距比例追（比例 + 单帧上限 + 最小步长）**：慢拖很平滑、快拖也跟得住。
+FOLLOW_FACTOR = 0.35      # 每帧只追"差距"的 35%（越大跟得越紧；0.2~0.5 之间调手感）
+FOLLOW_MAX_STEP = 24      # 单帧最多滚多少像素（防瞬移）
+FOLLOW_MIN_STEP = 1       # 差距小于它就别动（防抖）
 
 
 class NodeItem(QObject, QGraphicsRectItem):
@@ -25,7 +51,10 @@ class NodeItem(QObject, QGraphicsRectItem):
 
         self.params = {} # 字典类型，存储该节点的参数配置
 
-        self.setPos(pos)
+        # ★ 第 6 次修改：拖动时"视图跟随"的重入锁（`ensureVisible` 会同步重投 mouseMoveEvent）
+        self._in_follow = False
+
+        self.setPos(QPointF(max(0.0, pos.x()), max(0.0, pos.y())))  # ★ 甲：构造入口就夹在画布内（≥0,0）
         self.setBrush(QBrush(QColor(250, 250, 250))) # QBrush画刷，方块的内颜色(r,g,b),QBrush为填充颜色
         self.setPen(QPen(QColor("darkblue"), 2)) # QPen画笔，方块边框样式，参数为(颜色,线框宽度)
 
@@ -38,15 +67,95 @@ class NodeItem(QObject, QGraphicsRectItem):
         self.out_port = QPointF(70, 50) # 输出端口（下侧）
         # self.out_port_1 = QPointF(140, 25)  # 端口（右侧）
 
+    def _clamp_point(self, p):
+        """★ 丙（第 5 次修改，2026.10.17）：把"节点左上角"夹进**固定大画布**四边内。
+
+        规则 = **四个边界全固定**：节点的**整个矩形**必须留在画布内
+        ⇒ `0 ≤ x ≤ CANVAS_W - 宽`、`0 ≤ y ≤ CANVAS_H - 高`（贴边可到 = 余量 0）。
+        ★ 用 `boundingRect()`（**含画笔 2px**）而不是 `rect()`：`scene.itemsBoundingRect()`
+        是按 `sceneBoundingRect()`（含画笔）算的 ⇒ 用 `rect()` 夹会让内容右缘 = 画布边 + 1
+        ⇒ 反过来又触发兜底增长（实测 `sceneRect` 变 4201×3201 ✗，用例 ⑤/⑯ 照红）。
+        :param p: 目标位置（节点左上角）
+        :return: 夹取后的 QPointF
+        """
+        w = float(self.boundingRect().width())
+        h = float(self.boundingRect().height())
+        max_x = max(0.0, float(CANVAS_W) - w)
+        max_y = max(0.0, float(CANVAS_H) - h)
+        x = min(max(0.0, float(p.x())), max_x)
+        y = min(max(0.0, float(p.y())), max_y)
+        return QPointF(x, y)
+
+    def setPos(self, *args):
+        """★ 甲（2026.10.17）+ ★ 丙（第 5 次修改，2026.10.17）：**所有走 Python 的位置设定都在这里夹进画布**。
+
+        为什么不用 `itemChange(ItemPositionChange)`：本类 `class NodeItem(QObject, QGraphicsRectItem)`
+        （QObject 在前），**实测 PySide2 不把 `itemChange` 虚函数派发到 Python 侧** ⇒ 夹取不生效
+        （用例 ⑩ 一度失败）。覆盖 `setPos` 能罩住：构造 `__init__` / 导入项目 / 撤销重做重建 /
+        右键建节点 / 测试与将来代码的显式 `setPos`；Qt 内部（`ItemIsMovable` 的拖动）不走 Python
+        ⇒ 那条路由 `mouseMoveEvent` 里的 `_clamp_into_canvas()` 兜。
+        ★ 丙之后**四个边界都夹**（见 `_clamp_point`）；历史方案里若有超出 4000×3000 的坐标，
+        导入时会被夹回画布内（当前所有已知数据都在画布内，风险低）。
+        """
+        if len(args) == 1:
+            return super().setPos(self._clamp_point(args[0]))
+        if len(args) == 2:
+            return super().setPos(self._clamp_point(QPointF(float(args[0]), float(args[1]))))
+        return super().setPos(*args)
+
+    def _clamp_into_canvas(self):
+        """把自身位置夹回固定大画布（★ 丙：四个边界全固定；供鼠标拖动这条路兜底）。"""
+        pos = self.pos()
+        clamped = self._clamp_point(pos)
+        if clamped != pos:
+            self.setPos(clamped)
+
+    def _flow_view(self):
+        """★ 第 6 次修改：取自己所在的 FlowchartView。
+
+        为什么需要它：**拖动中鼠标被 item 抓着** ⇒ 视图层收不到 `mouseMoveEvent`，
+        所以要跟随滚动就得从 item 这里拿到视图。
+        """
+        try:
+            scene = self.scene()
+            if scene is None:
+                return None
+            views = scene.views()
+            return views[0] if views else None
+        except RuntimeError:
+            return None
+
     def mouseMoveEvent(self, event):
         """实时拖拽响应"""
         super().mouseMoveEvent(event) # 先让底层把方块真正拖拽过去
+        self._clamp_into_canvas()     # ★ 丙：拖动时也不许出画布（四个边界全固定）
+        # ★ 第 6 次修改（甲 = 丙 + 只复活乙的 B）：让视口跟着节点滚，节点始终留在视野里。
+        #   · 只调 follow_item（ensureVisible）—— **绝不调 `_apply_canvas_rect()`**（那会让矩形无限增长）
+        #   · ensureVisible 会改滚动条 ⇒ Qt 同步重投本函数 ⇒ 用 `_in_follow` 重入锁挡住，否则无限递归
+        if not self._in_follow:
+            view = self._flow_view()
+            if view is not None:
+                self._in_follow = True
+                try:
+                    view.follow_item(self)
+                finally:
+                    self._in_follow = False
         # 立即通知外界位置变了
         self.positionChanged.emit() # type:ignore
 
     def mouseReleaseEvent(self, event):
         """鼠标松开"""
         super().mouseReleaseEvent(event)  # 鼠标松开时更新最后一次位置
+        self._clamp_into_canvas()         # ★ 丙：松手时再夹一次（保险）
+        # ★ 第 7 次修改：限速跟随期间节点可能短暂贴边 ⇒ 松手时**不限速**拉回可见（同样持重入锁）
+        if not self._in_follow:
+            view = self._flow_view()
+            if view is not None:
+                self._in_follow = True
+                try:
+                    view.snap_item_visible(self)
+                finally:
+                    self._in_follow = False
         self.positionChanged.emit() # type:ignore
 
     def mouseDoubleClickEvent(self, event):
@@ -196,6 +305,9 @@ class FlowchartView(QGraphicsView):
         # 用同名属性会把它遮蔽掉，Python 侧就再也调不到 scene() 了
         self.flow_scene = QGraphicsScene() # 创建一个画布，专门用来存放方框（NodeItem）和连线（EdgeItem）。
         self.setScene(self.flow_scene) # 讲画布放到场景视图里面
+        # ★ 批次6 目标1-M1：固定大画布（原点恒 (0,0)）+ 初始停在左上角
+        self._content_positioned = False   # 这一页的视口是否已经"跟过内容"（导入方案时用）
+        self._apply_canvas_rect(goto_topleft=True)
 
         self._start_node = None # 开始节点
         self._temp_line = None # 灰线
@@ -203,6 +315,106 @@ class FlowchartView(QGraphicsView):
         # 监听场景中选中节点的变化，用来在main.ui中显示当前选中(单击)的节点
         self.flow_scene.selectionChanged.connect(self.on_selection_changed) # type:ignore
 
+
+    def _apply_canvas_rect(self, goto_topleft=False):
+        """
+        把场景矩形固定成"固定大画布"（★ 批次6 目标1-M1）。
+
+        · 原点**恒为 (0, 0)** ⇒ 无论怎么兜底增长，画面都不会跳；
+        · 只有节点被拖到画布外时才**向右下**长大（叠加 CANVAS_MARGIN 余量）；
+        · `goto_topleft=True` 时把滚动条拨到最小值（= 初始显示整图的**左上角**）。
+        """
+        scene = self.flow_scene
+        try:
+            content = scene.itemsBoundingRect()
+        except RuntimeError:
+            return                                  # 场景已销毁（关窗口 / 换页瞬间）
+        self._canvas_rect_calls = getattr(self, "_canvas_rect_calls", 0) + 1   # 打点（第 3 次修改引入，判据已不需要；保留无害）
+        # ★ 第 5 次修改（丙，2026.10.17）：**只有内容真的超出画布才兜底增长**。
+        #   丙之后节点可以贴到画布最边（`x + 宽 == 4000`），若还写成
+        #   `max(CANVAS_W, content.right() + CANVAS_MARGIN)` ⇒ 每次都会多扩 200
+        #   ⇒ sceneRect 变成 4200×3200 ✗（用例 ⑤/⑯ 当场照红）⇒ 改成"超了才长"。
+        right = float(CANVAS_W)
+        bottom = float(CANVAS_H)
+        if float(content.right()) > float(CANVAS_W):
+            right = float(content.right()) + CANVAS_MARGIN
+        if float(content.bottom()) > float(CANVAS_H):
+            bottom = float(content.bottom()) + CANVAS_MARGIN
+        scene.setSceneRect(QRectF(0, 0, right, bottom))
+        if goto_topleft:
+            h = self.horizontalScrollBar()
+            v = self.verticalScrollBar()
+            h.setValue(h.minimum())
+            v.setValue(v.minimum())
+
+    def follow_item(self, item):
+        """★ 第 7 次修改（2026.10.17）：**限速平滑跟随**（第 6 次是 `ensureVisible` 一次滚到位 ⇒ 太快）。
+
+        · 只**滚动视口**、**绝不改 `sceneRect`** ⇒ 滚动条范围始终是固定大画布（4000×3000）；
+        · 算出"节点视口矩形与视口安全区"的差 ⇒ **每步最多滚 `FOLLOW_MAX_STEP` 像素**；
+        · ★ `setValue` 一样会改滚动条 ⇒ Qt 同步重投 `mouseMoveEvent` ⇒ 调用方必须持 `_in_follow` 重入锁。
+        """
+        try:
+            vp = self.viewport().rect()
+            vr = self.mapFromScene(item.sceneBoundingRect()).boundingRect()
+            dx = dy = 0
+            if vr.left() < vp.left() + FOLLOW_MARGIN:
+                dx = int(vr.left() - (vp.left() + FOLLOW_MARGIN))
+            elif vr.right() > vp.right() - FOLLOW_MARGIN:
+                dx = int(vr.right() - (vp.right() - FOLLOW_MARGIN))
+            if vr.top() < vp.top() + FOLLOW_MARGIN:
+                dy = int(vr.top() - (vp.top() + FOLLOW_MARGIN))
+            elif vr.bottom() > vp.bottom() - FOLLOW_MARGIN:
+                dy = int(vr.bottom() - (vp.bottom() - FOLLOW_MARGIN))
+            # ★ 限速（第 7 次修改）：**按差距比例追**（不平滑就一记大跳；硬上限太死就追不上）
+            #   · 每帧只追 FOLLOW_FACTOR 的差距 ⇒ 视觉上平滑；
+            #   · 单帧不超过 FOLLOW_MAX_STEP、差距太小（< MIN）就不动 ⇒ 防瞬移 / 防抖。
+            def _smooth(need):
+                if not need:
+                    return 0
+                step = int(round(abs(need) * FOLLOW_FACTOR))
+                step = max(FOLLOW_MIN_STEP, min(FOLLOW_MAX_STEP, step))
+                return step if need > 0 else -step
+
+            dx = _smooth(dx)
+            dy = _smooth(dy)
+            if dx:
+                h = self.horizontalScrollBar()
+                h.setValue(int(h.value() + dx))
+            if dy:
+                v = self.verticalScrollBar()
+                v.setValue(int(v.value() + dy))
+        except RuntimeError:
+            pass                                   # item 已销毁（关窗口 / 撤销重建瞬间）
+
+    def snap_item_visible(self, item):
+        """★ 第 7 次修改：**松手时补一次"不限速"对齐**，把节点拉回视野里。
+
+        限速跟随在快速拖动时允许节点短暂贴边/略微出界 ⇒ 松手用 `ensureVisible` 一次到位兜住。
+        """
+        try:
+            self.ensureVisible(item, FOLLOW_MARGIN, FOLLOW_MARGIN)
+        except RuntimeError:
+            pass
+
+    def goto_content_or_topleft(self):
+        """
+        视口定位（★ 批次6 目标1-M1）：场景里有节点 ⇒ **跟到内容**（第一个节点附近，用于
+        导入项目 / 首次出现内容）；空页 ⇒ **左上角**。
+        """
+        first = None
+        for item in self.flow_scene.items():
+            if isinstance(item, NodeItem):
+                first = item
+                break
+        if first is not None:
+            self.centerOn(first)
+        else:
+            h = self.horizontalScrollBar()
+            v = self.verticalScrollBar()
+            h.setValue(h.minimum())
+            v.setValue(v.minimum())
+        self._apply_canvas_rect()
 
     def dragEnterEvent(self, event):
         """
@@ -358,6 +570,9 @@ class FlowchartView(QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
+        # ★ 批次6 目标1-M1：拖动结束兜底重算一次画布矩形（正常情况什么都不变；只有被拖到
+        #   画布外才会向右下长大，原点不动 ⇒ 其它节点的视口坐标不变、画面不跳）
+        self._apply_canvas_rect()
 
     def _start_connection(self, node):
         """负责记录连线的起点，并在屏幕上生成一条初始的灰色虚线。"""
@@ -525,7 +740,7 @@ class FlowChartWindow(QMainWindow):
             new_x = last_node.pos().x() # + 180 # x方向距离增加180
             new_y = last_node.pos().y() + 180 # y方向距离不变
         else:
-            new_x, new_y = 20, 20 # 第一个方框的位置
+            new_x, new_y = 80, 80 # 第一个方框的位置（★ 批次6 目标1-M1：20,20 → 80,80，不贴边）
 
         self.add_flow_node(name, QPointF(new_x, new_y))
 
