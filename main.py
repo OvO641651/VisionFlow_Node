@@ -11,7 +11,7 @@ import cv2
 import os
 
 from core.Detector import DetectorShape
-from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView
+from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView, node_topleft_for_center
 from widgets.FlowPages import FlowPageManager
 from ui.LineParamsDialog import LineParamsDialog
 from ui.CircleParamsDialog import CircleParamsDialog
@@ -662,8 +662,36 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         # 延迟 1 毫秒的，把“文本数据”而不是“C++对象”传给创建函数，然后触发创建方框的功能
         QTimer.singleShot(1, lambda: self._create_node_from_name(node_name))
 
-    def _create_node_from_name(self, name):
-        """双击树状图的树枝后执行的内容"""
+    def _create_node_from_name(self, name, pos=None):
+        """
+        建一个节点 —— ★ **两个入口共用**：左侧树双击 / 右键画布空白处（批次6 目标1-M4）。
+
+        :param name: 节点名
+        :param pos: `None` = **树双击的老行为**（第一个在 (80,80)，之后沿上一节点往下 180，
+                    ★ M1 把起始点从 20,20 改到 80,80；这条逻辑本次**一字未改**）；
+                    给了坐标 = **右键画布建节点**：用户拍板"**节点中心对齐鼠标点击处**"，
+                    建完还要**自动选中 + 滚动到可见**。
+        """
+        if pos is not None:
+            node = self.add_flow_node(name, node_topleft_for_center(name, pos))
+            # ★ M4：自动选中（`setSelected` 会触发 selectionChanged → `on_node_selected`，
+            #   底部"当前选中的节点"文字也随之更新）+ 滚动到可见（`ensureVisible` 自带画布边界夹取）
+            try:
+                view = self.flow_page_mgr.current_page.get("view")
+                if view is not None:
+                    # ★ 先取消其它节点的选中：`setSelected(True)` **不会**自动取消别人
+                    #   （那是鼠标点击的行为）⇒ 不先清，场景里会同时选中多个，
+                    #   而 `on_selection_changed` 取的是 `selectedItems()[0]` ⇒
+                    #   "自动选中新节点"就会选中到别人身上去。
+                    for other in list(view.flow_scene.selectedItems()):
+                        other.setSelected(False)
+                node.setSelected(True)          # 选中（触发 selectionChanged → on_node_selected）
+                if view is not None:
+                    view.ensureVisible(node, 24, 24)   # 滚动到可见（自带画布边界夹取）
+                    view.update()
+            except RuntimeError:
+                pass                      # 节点/视图已销毁（换页瞬间）⇒ 忽略
+            return node
 
         '''计算新方框的摆放坐标'''
         if self.flow_nodes:

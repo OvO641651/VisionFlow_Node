@@ -4,6 +4,8 @@ from PySide2.QtGui import (QColor, QPen, QPainterPath, QBrush, QFont,
 
 # ★ 批次6 目标1-M2a：算子名 → 图标键（零 Qt）+ 图标的占位画法（QPainter 自绘，不用图片素材）
 from core.icon_keys import icon_key_for
+# ★ 批次6 目标1-M4：右键画布「添加节点」两级菜单的清单（零 Qt；目标2 的树搜索以后共用这一份）
+from core import node_catalog
 from widgets.node_visuals import draw_icon
 from PySide2.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem,
@@ -44,6 +46,19 @@ class NodeItem(QObject, QGraphicsRectItem):
 
     positionChanged = Signal() # 自定义信号，解决线没有跟着方框一起动的问题
 
+    @classmethod
+    def size_for(cls, name):
+        """
+        节点尺寸（宽随名字自适应、高固定 44）—— ★ **唯一公式**。
+
+        批次6 目标1-M4 抽出来：右键画布建节点要"**以鼠标点为节点中心**"，
+        必须先知道尺寸才能把中心换算成左上角；两处各写一份公式 ⇒ 迟早写歪（差几像素就"点哪建哪"不准）。
+        """
+        font = QFont()
+        font.setPointSize(9)
+        text_w = float(QFontMetricsF(font).width(str(name)))
+        return float(max(140.0, 32.0 + 8.0 + text_w + 8.0 + 2.0)), 44.0
+
     def __init__(self, name, pos):
         """
         :param name: 节点名字
@@ -52,12 +67,11 @@ class NodeItem(QObject, QGraphicsRectItem):
         # 多重继承，继承QObject,QGraphicsRectItem，分别初始化
         QObject.__init__(self)
         # ★ 批次6 目标1-M2a：节点外观重构（方案 §4.2）—— 高固定 44；宽 = max(140, 图标块 32 + 文字宽 + 边距)
+        # ★ 批次6 目标1-M4：尺寸改由 `size_for()` 统一算（"右键建节点"要用同一份公式换算"中心 → 左上角"）
         font = QFont()
         font.setPointSize(9)
         self._font = font
-        text_w = float(QFontMetricsF(font).width(str(name)))
-        self._node_w = float(max(140.0, 32.0 + 8.0 + text_w + 8.0 + 2.0))
-        self._node_h = 44.0
+        self._node_w, self._node_h = self.size_for(name)
         QGraphicsRectItem.__init__(self, 0, 0, self._node_w, self._node_h) # 创建一个方块 (x,y,length,wide),(x,y)为左上角点的坐标
         self.name = name
         # ★ 四态：normal / error / idle（"selected" 不存状态，按 `isSelected()` 现判）
@@ -362,6 +376,21 @@ class NodeItem(QObject, QGraphicsRectItem):
         return self.mapToScene(self.out_port) # 返回终点end位置
 
 
+def node_topleft_for_center(name, center):
+    """
+    ★ 批次6 目标1-M4：把「**节点中心**落在 `center`」换算成 `NodeItem` 需要的**左上角**坐标。
+
+    右键画布建节点时用 —— 用户 2026.10.17 拍板：**节点中心对齐鼠标点击处**（不是左上角对齐）。
+    尺寸走 `NodeItem.size_for()`（唯一公式）；万一取不到就退化成"左上角对齐"，
+    绝不让右键建节点因为这里报错而失败。
+    """
+    try:
+        node_w, node_h = NodeItem.size_for(name)
+    except Exception:                                  # pragma: no cover - 兜底，正常走不到
+        return QPointF(float(center.x()), float(center.y()))
+    return QPointF(float(center.x()) - node_w / 2.0, float(center.y()) - node_h / 2.0)
+
+
 class EdgeItem(QGraphicsPathItem):
     """连线（贝塞尔曲线）：S型平滑曲线"""
     def __init__(self, start_node, end_node):
@@ -422,6 +451,11 @@ class FlowchartView(QGraphicsView):
     自定义流程图视图（支持拖放）
     继承画布QGraphicsView模块(用来放置方块的模块)
     """
+
+    # ★ 批次6 目标1-M4：右键画布空白处选中某个节点名 ⇒ 发这个信号（名字 / 场景坐标 = 节点中心）
+    #   视图**不直接建节点**：建节点要碰 `main.py` 的 `add_flow_node`（撤销栈、脏标记、画布重算都在那儿）
+    node_create_requested = Signal(str, QPointF)
+
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
         self.main_window = main_window # 主窗口
@@ -440,6 +474,13 @@ class FlowchartView(QGraphicsView):
 
         # 监听场景中选中节点的变化，用来在main.ui中显示当前选中(单击)的节点
         self.flow_scene.selectionChanged.connect(self.on_selection_changed) # type:ignore
+
+        # ★ 批次6 目标1-M4：右键画布建节点 —— 视图发信号，**主窗口用与"树双击"同一个入口**建节点
+        #   （名字 / kind / 默认参数 / **撤销只记一条** 全部自动一致）。
+        #   ★ 连接写在视图 `__init__` 里，是为了**不新增 MainWindow 方法**
+        #     （门禁 `dsh_t5g2_api_check` 只允许白名单里的那几个新方法）。
+        if main_window is not None and hasattr(main_window, "_create_node_from_name"):
+            self.node_create_requested.connect(main_window._create_node_from_name)  # type: ignore
 
 
     def _apply_canvas_rect(self, goto_topleft=False):
@@ -736,6 +777,69 @@ class FlowchartView(QGraphicsView):
             self._temp_line = None
         self._start_node = None
         self.setDragMode(QGraphicsView.ScrollHandDrag) # 连线结束，回复可以拖到背景画布的功能
+
+    # ------------------------------------------------------------------ 右键画布建节点（M4）
+    def contextMenuEvent(self, event):
+        """
+        右键菜单总入口（★ 批次6 目标1-M4，用户 2026.10.17 口径）。
+
+        · 右键**节点 / 连线** ⇒ **老行为一字不改**：交给 `NodeItem` / `EdgeItem` 各自的
+          `contextMenuEvent`（弹「删除节点」/「删除连线」）；
+        · 右键**画布空白处** ⇒ 弹**两级「添加节点」菜单**（一级 = 树干，二级 = 节点名），
+          选中后以**该点为中心**建一个节点（点哪建哪）。
+        """
+        item = self.itemAt(event.pos())
+        if item is not None:
+            # 命中节点 / 连线：完全走原有逻辑（不新建、不改菜单）
+            super().contextMenuEvent(event)
+            return
+
+        scene_pos = self.mapToScene(event.pos())
+        menu = self.build_create_menu(scene_pos)
+        self._exec_menu(menu, event.globalPos())   # ESC / 点菜单外 ⇒ 返回 None ⇒ 什么都不建
+        menu.deleteLater()
+
+    def _exec_menu(self, menu, global_pos):
+        """
+        弹出菜单并返回用户点中的那一个动作（★ 单独一层，**方便无头用例替换掉**）。
+
+        为什么要这一层：PySide2 的 `QMenu.exec_` 是 C++ 方法，**用例里无法用"="替换掉它**
+        （实测赋值被忽略、仍会真的弹菜单并把 offscreen 环境卡死）⇒ 在我们自己的代码里留一个
+        可替换的钩子，用例把它换成"记下菜单结构 + 返回 None"，就能验"右键空白会弹什么"而**不必真弹**。
+        """
+        return menu.exec_(global_pos)
+
+    def build_create_menu(self, scene_pos=None):
+        """
+        构建**两级「添加节点」菜单**（★ 只构建、不弹 —— 无头用例直接断言它的结构，不必真弹菜单）。
+
+        :param scene_pos: 建节点用的"**节点中心**"（场景坐标）；None ⇒ 用当前视口中心兜底。
+        一级 = 树干（顺序与左侧树一致），二级 = 节点名；**不含测试夹具**（清单见 `core/node_catalog.py`）。
+        """
+        menu = QMenu(self)
+        if scene_pos is None:
+            center = self.mapToScene(self.viewport().rect().center())
+        else:
+            center = QPointF(scene_pos)
+        pairs = node_catalog.groups()
+        if not pairs:                                  # 兜底：别弹一个空菜单
+            empty = QAction("（没有可用节点）", menu)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+            return menu
+        for group, names in pairs:
+            sub = menu.addMenu(group)
+            for name in names:
+                act = sub.addAction(name)
+                act.triggered.connect(
+                    lambda checked=False, n=name, p=QPointF(center):
+                        self.node_create_requested.emit(n, p)
+                )
+        return menu
+
+    def create_menu_structure(self, registered=None):
+        """菜单结构快照 `[(树干, [节点名…]), …]`（给门禁用例核对"与左侧树逐项一致"用）"""
+        return node_catalog.groups(registered)
 
     def on_selection_changed(self):
         """当场景中的选中节点发生变化时触发"""
