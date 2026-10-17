@@ -3,6 +3,9 @@ from PySide2.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTabWidget,
                                QToolButton, QTabBar)
 from PySide2.QtCore import QObject, Qt, QEvent, QTimer
 
+# ★ 批次6 目标1-M3：画布右下角小地图（全局一个，换页重绑）
+from widgets.flow_minimap import FlowMiniMap
+
 
 class FlowPageManager(QObject):
     """
@@ -57,6 +60,7 @@ class FlowPageManager(QObject):
         self._title_editor_index = None  # 这个小输入框正在改第几页
         self.add_button = None           # "+"标签里那个按钮（setup() 里创建）
         self.add_tab_widget = None       # "+"所在的那个装饰标签（它不是流程图页面）
+        self.minimap = None   # ★ 批次6 目标1-M3：全局唯一的小地图（换页重绑，不是每页一个）
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -96,6 +100,10 @@ class FlowPageManager(QObject):
 
         # 6、切换标签页 → 换掉 current_page 并通知调用方
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
+
+        # 7、★ 批次6 目标1-M3：画布右下角小地图（全局一个，换页时重绑到新页的 view）
+        self.minimap = FlowMiniMap()
+        self._bind_minimap(self.current_page)
         return self.current_page
 
     def _create_add_tab(self):
@@ -571,8 +579,19 @@ class FlowPageManager(QObject):
             self.current_page = page
             self._notify_switched(old_page)
 
+    def _bind_minimap(self, page):
+        """把全局唯一的小地图重绑到某一页的画布（★ 批次6 目标1-M3：换页重绑，不残留旧页）。"""
+        mm = getattr(self, "minimap", None)
+        if mm is None or page is None:
+            return
+        try:
+            mm.bind_view(page.get("view"))   # 内部会断开旧信号、setParent 到新画布视口、贴右下角
+        except RuntimeError:
+            return                            # 控件/画布已销毁（关窗口、删页瞬间）
+
     def _notify_switched(self, old_page):
         """通知调用方：当前页换了（调用方在这里切换节点表、参数，并刷新画面）"""
+        self._bind_minimap(self.current_page)   # ★ M3：换页重绑小地图
         if self.on_page_switched is not None:
             self.on_page_switched(self.current_page, old_page)
 
