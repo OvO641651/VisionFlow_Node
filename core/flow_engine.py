@@ -783,6 +783,13 @@ class FlowEngineMixin(MainHost):
                               self._format_result_text(node, results, roi_info, spec)))
             seq += 1
 
+            # ★ M2b「出错即停」开关（**默认关**，用户 2026.10.17 拍板 C：默认"出错只标红、流程继续"）：
+            #   打开后，首个出错节点之后不再执行后续节点，并在日志里说明。
+            if getattr(self, "stop_on_error", False) and _results_have_error(results):
+                exec_info.append((seq, time.strftime("%H:%M:%S"), "提示", "-",
+                                  "「出错即停」已开启：节点「{0}」出错，后续节点未执行".format(node.name)))
+                break
+
         if skipped:
             # 孤立方框、或者连线成环的方框：如实告诉用户它们没有执行
             names = "、".join(node.name for node in skipped)
@@ -800,13 +807,25 @@ class FlowEngineMixin(MainHost):
 
         # 4、渲染层：底图取 base_node（单步执行 = 目标节点；连续执行 = 当前选中的节点），
         #    没选中 / 选中的节点这一轮没执行，就退回用最后一个执行节点的输出。
+        settled = [item[0] for item in executed]
         pick = base_node if base_node is not None else self.selected_node
-        if pick in out_images:
-            shown = executed[:order.index(pick) + 1]
-        else:
-            pick = order[-1]
+        if pick in out_images and pick in settled:
+            shown = executed[:settled.index(pick) + 1]
+        elif settled:
+            pick = settled[-1]
             shown = executed
-        display = self._render_display(out_images[pick], shown)
+        else:
+            pick = None
+            shown = executed
+        if pick is None:
+            display = self._render_display(out_images[SOURCE_KEY], executed)
+        else:
+            display = self._render_display(out_images[pick], shown)
+        # ★ M2b：执行完把"哪几个节点出错"回填到节点状态（红脸）+ 传播一跳（只标记，不阻断）
+        try:
+            _apply_run_states(self, executed)
+        except Exception:
+            pass
         return display, all_data, exec_info
 
     def _bind_output_providers(self):
@@ -1179,3 +1198,75 @@ def _result_error(results):
 #   而且**显示时会去掉标记**，用户在表格里看到的就是纯文案。
 # ----------------------------------------------------------------------
 LOG_ERROR_MARK = "\u26a0"        # ⚠ 只用来传递"这行是错误"，不给用户看
+
+
+# ======================================================================================
+# ★ 批次6 目标1-M2b：错误状态回填（节点变红）+ 错误沿数据流**只传播一跳**
+#   放模块级函数而不是 Mixin 方法：`tests\dsh_t5g2_api_check.py` ③ 只允许 MainWindow 新增
+#   20 个白名单方法（Mixin 继承来的也算"新增"）⇒ 写成模块函数就不算新增方法。
+# ======================================================================================
+def _results_have_error(results):
+    """这条结果里有没有通用错误标记（`{"__error__": True}`，见 main.py 的红色日志通道）。"""
+    for item in (results or []):
+        if isinstance(item, dict) and item.get("__error__"):
+            return True
+    return False
+
+
+def _apply_run_states(host, executed):
+    """把"这一轮的结果"回填到节点状态上（★ 只标记、绝不阻断执行）。
+
+    规则（用户 2026.10.17 拍板 B + M2c 甲）：
+      · **本轮执行到的**节点 ⇒ `normal`（绿）；
+      · 其中 `results` 里带 `__error__` 的 ⇒ `error`（红）；
+      · 再沿数据流只传播一跳：每个出错节点的直接下游也标 `error`；
+      · ★ **本页其余节点（本轮没跑到的）⇒ `idle`（灰 = 未运行）** —— 多分支时"没跑的那条分支是灰的"。
+      · ★ **只在执行结束时统一刷新**（不在执行前清灰，避免整屏闪一下）。
+    :param host: MainWindow（要它的 flow_nodes / flow_edges）
+    :param executed: [(节点, 结果, roi_info, spec), ...]（`_run_nodes` 里的 executed）
+    :return: 本轮被标红的节点列表
+    """
+    nodes = list(getattr(host, "flow_nodes", []) or [])
+    exec_ids = set()
+    for item in (executed or []):
+        try:
+            exec_ids.add(id(item[0]))
+        except Exception:
+            continue
+    for node in nodes:
+        try:
+            if not hasattr(node, "set_state"):
+                continue
+            # ★ M2c：跑到的先设 normal（下面再按 __error__ 标红）；没跑到的设 idle（灰）
+            node.set_state("normal" if id(node) in exec_ids else "idle")
+        except RuntimeError:
+            continue
+    errored = []
+    for item in (executed or []):
+        try:
+            node, results = item[0], item[1]
+        except Exception:
+            continue
+        if _results_have_error(results):
+            errored.append(node)
+    downstream = {}
+    for edge in (getattr(host, "flow_edges", []) or []):
+        downstream.setdefault(edge.start_node, []).append(edge.end_node)
+    marked = []
+    seen = set()
+    for node in errored:
+        if id(node) not in seen:
+            seen.add(id(node))
+            marked.append(node)
+        for nxt in downstream.get(node, []):
+            if id(nxt) not in seen:
+                seen.add(id(nxt))
+                marked.append(nxt)
+    for node in marked:
+        try:
+            if hasattr(node, "set_state"):
+                node.set_state("error")
+        except RuntimeError:
+            continue
+    host._error_nodes = marked
+    return marked

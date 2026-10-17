@@ -447,9 +447,18 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         return node
 
     def _add_edge_to_page(self, page, start_node, end_node, mark_dirty=True):
-        """在指定页里连一条线（同一对起终点不重复连）"""
+        """在指定页里连一条线（同一对起终点不重复连；★ M2a：一个节点只接受**一个输入**）"""
         for edge in page["edges"]:
             if edge.start_node == start_node and edge.end_node == end_node:
+                return None
+        # ★ 批次6 目标1-M2a「输入点唯一防线」（用户 2026.10.17 实测："图片源和相机源同时接到
+        #   灰度节点上，运行后执行的是相机源"）：一个节点的输入点只能接一条线 —— 第二条直接拒绝，
+        #   并提示用户改用"参数 → 图像源绑定"（执行/渲染路径**不弹 QMessageBox**）。
+        for edge in page["edges"]:
+            if edge.end_node == end_node:
+                self._append_log_hint(
+                    "节点「{0}」只接受一个输入；如需第二路数据请用『参数 → 图像源绑定』".format(
+                        getattr(end_node, "name", "")))
                 return None
         edge = EdgeItem(start_node, end_node)
         page["view"].flow_scene.addItem(edge)

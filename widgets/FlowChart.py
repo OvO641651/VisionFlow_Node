@@ -1,5 +1,10 @@
 from PySide2.QtCore import Qt, QPointF, Signal, QObject, QTimer, QRectF
-from PySide2.QtGui import QColor, QPen, QPainterPath, QBrush
+from PySide2.QtGui import (QColor, QPen, QPainterPath, QBrush, QFont,
+                           QFontMetricsF, QPainter)
+
+# ★ 批次6 目标1-M2a：算子名 → 图标键（零 Qt）+ 图标的占位画法（QPainter 自绘，不用图片素材）
+from core.icon_keys import icon_key_for
+from widgets.node_visuals import draw_icon
 from PySide2.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem,
     QSplitter, QGraphicsRectItem, QGraphicsPathItem,
@@ -46,8 +51,18 @@ class NodeItem(QObject, QGraphicsRectItem):
         """
         # 多重继承，继承QObject,QGraphicsRectItem，分别初始化
         QObject.__init__(self)
-        QGraphicsRectItem.__init__(self, 0, 0, 140, 50) # 创建一个方块 (x,y,length,wide),(x,y)为左上角点的坐标
+        # ★ 批次6 目标1-M2a：节点外观重构（方案 §4.2）—— 高固定 44；宽 = max(140, 图标块 32 + 文字宽 + 边距)
+        font = QFont()
+        font.setPointSize(9)
+        self._font = font
+        text_w = float(QFontMetricsF(font).width(str(name)))
+        self._node_w = float(max(140.0, 32.0 + 8.0 + text_w + 8.0 + 2.0))
+        self._node_h = 44.0
+        QGraphicsRectItem.__init__(self, 0, 0, self._node_w, self._node_h) # 创建一个方块 (x,y,length,wide),(x,y)为左上角点的坐标
         self.name = name
+        # ★ 四态：normal / error / idle（"selected" 不存状态，按 `isSelected()` 现判）
+        # ★ M2c（2026.10.17，用户选甲）：**新建即 `idle`（灰 = 还没运行过）**；跑过一轮才变绿/红
+        self._state = "idle"
 
         self.params = {} # 字典类型，存储该节点的参数配置
 
@@ -62,10 +77,14 @@ class NodeItem(QObject, QGraphicsRectItem):
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)# 允许用户用鼠标拖拽这个节点 | 允许节点被鼠标点击选中
         self.setAcceptHoverEvents(True) # 允许鼠标悬停
 
-        # 方框的尺寸为(140, 50)
-        self.in_port = QPointF(70, 0) # 输入端口（上侧）
-        self.out_port = QPointF(70, 50) # 输出端口（下侧）
-        # self.out_port_1 = QPointF(140, 25)  # 端口（右侧）
+        # ★ 批次6 目标1-M2a：四个锚点（上 = 主输入、下 = 主输出；左 / 右本批**只画不接**，
+        #   "可引线"能力在 M6、"双向"留 M8 —— 见方案 §4.2 / §4.6 / §4.9）
+        _cx = self._node_w / 2.0
+        _cy = self._node_h / 2.0
+        self.in_port = QPointF(_cx, 0.0)              # 上（主输入）
+        self.out_port = QPointF(_cx, self._node_h)    # 下（主输出）
+        self.left_port = QPointF(0.0, _cy)            # 左（本批只画）
+        self.right_port = QPointF(self._node_w, _cy)  # 右（本批只画）
 
     def _clamp_point(self, p):
         """★ 丙（第 5 次修改，2026.10.17）：把"节点左上角"夹进**固定大画布**四边内。
@@ -198,14 +217,8 @@ class NodeItem(QObject, QGraphicsRectItem):
                 view.main_window.delete_flow_node(self)
 
 
-    def paint(self, painter, option: QStyleOptionGraphicsItem, widget=None):
-        """
-        描述节点的样子，如输入输出节点的颜色
-        :param painter:画家
-        :param option:风格选择
-        :param widget:装饰物
-        :return:
-        """
+    def _legacy_paint(self, painter, option: QStyleOptionGraphicsItem, widget=None):
+        """★ M2a：旧版绘制已**被下方新 `paint` 取代**（保留作对照，不再被 Qt 调用）。"""
         super().paint(painter, option, widget) # 将init定义的输入输出位置和方块背景颜色等初始化
         painter.drawText(super().rect(), Qt.AlignCenter, self.name) # (rect:(length,width),居中对齐,名字(直线，圆，或者其他))
 
@@ -222,6 +235,119 @@ class NodeItem(QObject, QGraphicsRectItem):
         painter.setBrush(Qt.yellow)  # setBrush填充颜色
         painter.drawEllipse(self.out_port_1, 4, 4)  # 绘制圆形(椭圆)，圆心为out_port，(宽,高)为(4,4)
         '''
+
+    # ==================================================================================
+    # ★ 批次6 目标1-M2a：节点外观（方案 §4.2）
+    #   圆角矩形 + 左侧绿色图标块（代码自绘图标） + 竖分隔线 + 节点名 + 四个空心圆环；
+    #   四态：normal / selected（按 isSelected 现判）/ error（红）/ idle（灰）。
+    #   ★ 硬兼容：`in_port` / `out_port` 属性名与位置（上/下边中点）保持不变 ——
+    #      连线端点误差 < 1.5px 的老断言、以及 get_input_pos / get_output_pos 都依赖它。
+    # ==================================================================================
+    NODE_RADIUS = 7.0          # 圆角半径
+    BLOCK_W = 32.0             # 左侧图标块宽
+    BLOCK_RADIUS = 5.0         # 图标块圆角
+    RING_RADIUS = 5.0          # 锚点圆环半径
+    RING_WIDTH = 1.5           # 锚点圆环线宽
+    COLOR_BLOCK_NORMAL = "#2E9E4F"     # 绿（正常）
+    COLOR_BLOCK_ERROR = "#C62828"      # 红（出错）
+    COLOR_BLOCK_IDLE = "#9E9E9E"       # 灰（未运行）
+    COLOR_EDGE_NORMAL = "#B0B0B0"
+    COLOR_EDGE_IDLE = "#D8D8D8"        # ★ M2c：未运行（灰态）的描边 —— 比正常更淡，弱化"没跑过"
+    COLOR_EDGE_SELECTED = "#1E88E5"
+    COLOR_EDGE_ERROR = "#C62828"
+    COLOR_SEPARATOR = "#D0D0D0"
+    COLOR_TEXT = "#202020"
+    COLOR_RING = "#7A7A7A"
+
+    def set_state(self, kind):
+        """★ M2b 用：设置节点状态（normal / error / idle）。"selected" 由 Qt 选中态现判。"""
+        kind = str(kind or "normal")
+        if kind not in ("normal", "error", "idle", "selected"):
+            kind = "normal"
+        if kind == "selected":      # 传 selected 等价于"选中"——交给 Qt，不改底色
+            kind = "normal"
+        self._state = kind
+        self.update()
+
+    def state(self):
+        return self._state
+
+    def _block_color(self):
+        if self._state == "error":
+            return QColor(self.COLOR_BLOCK_ERROR)
+        if self._state == "idle":
+            return QColor(self.COLOR_BLOCK_IDLE)
+        return QColor(self.COLOR_BLOCK_NORMAL)
+
+    def _edge_pen(self):
+        if self._state == "error":
+            return QPen(QColor(self.COLOR_EDGE_ERROR), 2)
+        if self.isSelected():
+            pen = QPen(QColor(self.COLOR_EDGE_SELECTED), 2)
+            pen.setStyle(Qt.SolidLine)
+            return pen
+        if self._state == "idle":                  # ★ M2c：未运行 = 淡灰描边（弱视觉）
+            return QPen(QColor(self.COLOR_EDGE_IDLE), 1)
+        return QPen(QColor(self.COLOR_EDGE_NORMAL), 1)
+
+    def _ring_pen(self):
+        if self.isSelected():
+            return QPen(QColor(self.COLOR_EDGE_SELECTED), self.RING_WIDTH)
+        return QPen(QColor(self.COLOR_RING), self.RING_WIDTH)
+
+    def boundingRect(self):
+        """★ 要含画笔宽度与四个圆环（否则拖过一次就残影）。"""
+        pad = self.RING_RADIUS + self.RING_WIDTH + 2.0
+        return self.rect().adjusted(-pad, -pad, pad, pad)
+
+    def shape(self):
+        """命中区 = 圆角矩形（点击/框选都按它算）。"""
+        path = QPainterPath()
+        path.addRoundedRect(self.rect(), self.NODE_RADIUS, self.NODE_RADIUS)
+        return path
+
+    def paint(self, painter, option: QStyleOptionGraphicsItem, widget=None):
+        """★ M2a：自绘整张节点脸（不再调用 QGraphicsRectItem 的默认画法）。"""
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        r = self.rect()
+
+        # ① 圆角矩形底 + 描边
+        painter.setPen(self._edge_pen())
+        painter.setBrush(QBrush(QColor(250, 250, 250)))
+        painter.drawRoundedRect(r, self.NODE_RADIUS, self.NODE_RADIUS)
+
+        # ② 左侧图标块（圆角、按状态取色）
+        block = QRectF(r.left() + 1.5, r.top() + 1.5,
+                       self.BLOCK_W, r.height() - 3.0)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self._block_color()))
+        painter.drawRoundedRect(block, self.BLOCK_RADIUS, self.BLOCK_RADIUS)
+
+        # ③ 图标（占位：代码自绘几何，白色）
+        #   ★ M2c：未运行（idle）时**图标半透明** —— 让"没跑过"显得弱，不像"坏了"
+        if self._state == "idle":
+            painter.setOpacity(0.55)
+        draw_icon(painter, icon_key_for(self.name),
+                  block.adjusted(6.0, 7.0, -6.0, -7.0), QColor("#FFFFFF"))
+        if self._state == "idle":
+            painter.setOpacity(1.0)
+
+        # ④ 图标块与文字区之间的竖分隔线
+        sx = block.right() + 1.0
+        painter.setPen(QPen(QColor(self.COLOR_SEPARATOR), 1))
+        painter.drawLine(QPointF(sx, r.top() + 4.0), QPointF(sx, r.bottom() - 4.0))
+
+        # ⑤ 节点名（左对齐、左内边距 8；序号本批不做、位置预留）
+        painter.setPen(QPen(QColor(self.COLOR_TEXT)))
+        painter.setFont(self._font)
+        text_rect = QRectF(sx + 8.0, r.top(), r.right() - sx - 12.0, r.height())
+        painter.drawText(text_rect, int(Qt.AlignVCenter | Qt.AlignLeft), str(self.name))
+
+        # ⑥ 四个空心圆环（上/下 = 主端口；左/右本批只画）
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(self._ring_pen())
+        for p in (self.in_port, self.out_port, self.left_port, self.right_port):
+            painter.drawEllipse(p, self.RING_RADIUS, self.RING_RADIUS)
 
     def get_input_pos(self):
         """
@@ -491,7 +617,13 @@ class FlowchartView(QGraphicsView):
                         continue
                     local_pos = node.mapFromScene(scene_pos)
                     # 检查是否点击到蓝点（输出端口），感应距离为 30个像素
-                    if (local_pos - node.out_port).manhattanLength() < 30:
+                    # ★ M2e：下方输出点的"拉线起点"只认**矩形之外**那半圈 ——
+                    #   之前只判距离(30px)，而圆环有一半压在节点矩形里 ⇒ 想拖节点时在
+                    #   节点下半部按下会误进"拉线"分支。现在：矩形内即便在感应圈内也不拉线，
+                    #   落到下面"拖节点"那条分支；★ 上/左/右三个点的判定保持原样。
+                    inside_rect = node.rect().contains(local_pos)
+                    if (not inside_rect
+                            and (local_pos - node.out_port).manhattanLength() < 30):
                         clicked_node = node
                         clicked_port_type = 'out'
                         break

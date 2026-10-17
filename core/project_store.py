@@ -361,7 +361,20 @@ class ProjectStoreMixin(MainHost):
                     created[index].input_source = created[binding]
                 else:
                     created[index].input_source = None
+            # ★ 批次6 目标1-M2a 兜底：同一节点**多条入边**时只保留第一条（正常界面已禁止这么连，
+            #   但手改 .vfproj / 老文件仍可能带进来）⇒ 其余的丢弃并提示一次。
+            _seen_in = set()
             for start, end in page_model["edges"]:
+                if end in _seen_in:
+                    _hint = getattr(self, "_append_log_hint", None)
+                    if _hint is not None:
+                        try:
+                            _hint("节点「{0}」有多条输入，已保留第 1 条".format(
+                                getattr(created[end], "name", "")))
+                        except Exception:
+                            pass
+                    continue
+                _seen_in.add(end)
                 self._add_edge_to_page(page, created[start], created[end], mark_dirty=False)
 
         # 2、参数同时写进"当前图片"的存档，否则切走再切回来就被清空了
@@ -406,6 +419,19 @@ class ProjectStoreMixin(MainHost):
                 self._execute_static(self.current_static_image, "continuous")
             finally:
                 self._no_source_gallery_sync = False
+
+        # 6、★ 批次6 目标1-M2d（2026.10.17，用户口径：「对于导入的项目，设置初始未灰色」）：
+        #   第 5 步的「自动重算」会把执行到的节点刷成 normal（绿），但**导入的方案一打开应该是「未运行」** ⇒
+        #   收尾把新页所有节点**显式**置回 idle（不依赖 __init__ 默认值，免疫以后新增的自动动作）。
+        for page in new_pages:
+            for node in page.get("nodes", []):
+                setter = getattr(node, "set_state", None)
+                if setter is None:
+                    continue
+                try:
+                    setter("idle")
+                except RuntimeError:      # 节点已被销毁（极端情况）时跳过
+                    pass
 
 
 

@@ -170,6 +170,8 @@ from ops.process.BlurOps import BLUR_SPECS
 from ops.process.ThresholdOps import THRESHOLD_SPECS
 from ops.process.MorphologyOps import MORPHOLOGY_SPECS
 from ops.process.EdgeExtractOps import EDGE_SPECS
+# ★ 批次6 目标1-M2b：「警告（测试用）」—— 只用于验证"出错变红 + 错误传播一跳"，不是业务算子
+from ops.process.WarnOps import WARN_SPECS
 # 图像源类（"采集"分组）：2026.10.14 起**一个节点一个文件**
 from ops.source.ImageSourceOps import IMAGE_SOURCE_SPECS      # noqa: E402
 from ops.source.VideoSourceOps import VIDEO_SOURCE_SPECS      # noqa: E402
@@ -188,6 +190,7 @@ _register_category(BLUR_SPECS, KIND_PROCESS)         # 滤波
 _register_category(THRESHOLD_SPECS, KIND_PROCESS)    # 二值化
 _register_category(MORPHOLOGY_SPECS, KIND_PROCESS)   # 形态学
 _register_category(EDGE_SPECS, KIND_PROCESS)         # 边缘提取
+_register_category(WARN_SPECS, KIND_PROCESS)         # 警告（测试用，M2b 夹具）
 _register_category(IMAGE_SOURCE_SPECS, KIND_SOURCE)    # 图片源
 _register_category(VIDEO_SOURCE_SPECS, KIND_SOURCE)    # 视频源
 _register_category(CAMERA_SOURCE_SPECS, KIND_SOURCE)   # 相机源

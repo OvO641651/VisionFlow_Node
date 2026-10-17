@@ -325,6 +325,16 @@
           </item>
           <item>
            <property name="text">
+            <string>测试</string>
+           </property>
+           <item>
+            <property name="text">
+             <string>警告（测试用）</string>
+            </property>
+           </item>
+          </item>
+          <item>
+           <property name="text">
             <string>新建项目</string>
            </property>
           </item>

@@ -323,6 +323,7 @@
 | 处理 | 二值化 | process | 4 | 阈值方式、阈值、最大值、类型 | `ops/process/ThresholdOps.py` |
 | 处理 | 形态学 | process | 4 | 运算（7 档）、核形状、核大小（奇数）、迭代次数 | `ops/process/MorphologyOps.py` |
 | 处理 | 边缘提取 | process | 4 | 方法（Canny/Sobel/Laplacian）、低/高阈值、核大小 | `ops/process/EdgeExtractOps.py` |
+| 处理 | 警告（测试用） | process | 0 | ——（**M2b 测试夹具**：图像透传，只往结果塞 `__error__`，用于验证「节点变红 + 错误传播一跳」，不是业务算子） | `ops/process/WarnOps.py` |
 | 检测 | **直线识别** | detect | 5 | Canny 低/高阈值、累加器阈值、最小线段长度、最大线段间隙 | `ops/detect/LineDetectOps.py` |
 | 检测 | **圆识别** | detect | 5 | dp、minDist、param1、param2、minRadius（maxRadius 界面未提供 = 0 不限） | `ops/detect/CircleDetectOps.py` |
 | 识别 | **人脸识别** | **detect** | 4 | 级联文件（**不设默认值**、`per_node` 节点级参数）、缩放步长、最小邻居数、最小人脸尺寸；图像原样透传 + 绿框只画显示层；级联按 (路径, mtime, 大小) 缓存 | `ops/detect/FaceDetectOps.py` |
