@@ -446,7 +446,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             self.flow_page_mgr.mark_dirty(page)
         return node
 
-    def _add_edge_to_page(self, page, start_node, end_node, mark_dirty=True):
+    def _add_edge_to_page(self, page, start_node, end_node, start_port=None, mark_dirty=True):
         """在指定页里连一条线（同一对起终点不重复连；★ M2a：一个节点只接受**一个输入**）"""
         for edge in page["edges"]:
             if edge.start_node == start_node and edge.end_node == end_node:
@@ -460,7 +460,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
                     "节点「{0}」只接受一个输入；如需第二路数据请用『参数 → 图像源绑定』".format(
                         getattr(end_node, "name", "")))
                 return None
-        edge = EdgeItem(start_node, end_node)
+        edge = EdgeItem(start_node, end_node, start_port)
         page["view"].flow_scene.addItem(edge)
         page["edges"].append(edge)
         if mark_dirty:
@@ -586,9 +586,9 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
                 view._apply_canvas_rect()
         return node
 
-    def add_edge(self, start_node, end_node):
+    def add_edge(self, start_node, end_node, start_port=None):
         """从蓝点开始生成一条曲线（同一对起终点不重复连）"""
-        edge = self._add_edge_to_page(self.flow_page_mgr.current_page, start_node, end_node)
+        edge = self._add_edge_to_page(self.flow_page_mgr.current_page, start_node, end_node, start_port=start_port)
         self.update_all_edges()  # 刷新一次画面，刷新出曲线
         # ★ 批次6 目标1-M1：连线增删不影响画布矩形（两端都挂在节点上），这里只是兜底重算一次
         view = self.flow_page_mgr.current_page.get("view")

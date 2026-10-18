@@ -1,6 +1,6 @@
 from PySide2.QtCore import Qt, QPointF, Signal, QObject, QTimer, QRectF
 from PySide2.QtGui import (QColor, QPen, QPainterPath, QBrush, QFont,
-                           QFontMetricsF, QPainter, QPixmap)
+                           QFontMetricsF, QPainter, QPixmap, QPolygonF, QPainterPathStroker)
 
 # ★ 批次6 目标1-M2a：算子名 → 图标键（零 Qt）+ 图标的占位画法（QPainter 自绘，不用图片素材）
 from core.icon_keys import icon_key_for
@@ -58,6 +58,17 @@ GRID_COLOR_LIGHT = QColor(255, 255, 255)    # #FFFFFF 棋盘格亮格
 GRID_COLOR_DARK = QColor(230, 230, 230)     # #E6E6E6 棋盘格暗格（用户参考图观感）
 ALIGN_THRESHOLD = 30.0                       # 对齐吸附阈值（px）
 ALIGN_LINE_COLOR = QColor(30, 136, 229)     # #1E88E5（与 M3 的橙色视口框区分）
+
+
+# ★ 批次6 目标1-M6：连线（正交折线 + 转角圆角 + 入口方向箭头）相关常量
+import math
+EDGE_STUB = 5.0            # 从端口沿外法线伸出的一小段（px）
+EDGE_SIDE_MARGIN = 40.0     # 反向连接时右侧绕行的横向余量（px）
+EDGE_CORNER_RADIUS = 8.0    # 拐角圆角半径（px）
+EDGE_ARROW_SIZE = 8.0       # 入口方向箭头大小（px）
+EDGE_HIT_WIDTH = 12.0       # 连线命中区宽度（px，右键选中用）
+EDGE_GAP_MIN = 50.0          # ★ M6c：反向绕行「走两节点之间」所需的最小空隙（px），不够就退回外侧
+EDGE_GAP_NEAR = 40.0         # ★ M6e：反向连接的「近/远」阈值（px）—— 两节点水平缝隙 < 它 ⇒ 绕到目标背离源的外侧；>= 它 ⇒ 走两节点之间（用户可自行调整）
 
 
 class NodeItem(QObject, QGraphicsRectItem):
@@ -518,59 +529,230 @@ def node_topleft_for_center(name, center):
     return QPointF(float(center.x()) - node_w / 2.0, float(center.y()) - node_h / 2.0)
 
 
+# ---------------------------------------------------------------- 连线的几何（★ M6b 抽成模块级）
+def dedupe_points(pts):
+    """去掉连续重复点。"""
+    out = []
+    for p in pts:
+        if (not out) or (abs(out[-1].x() - p.x()) > 1e-6) or (abs(out[-1].y() - p.y()) > 1e-6):
+            out.append(p)
+    return out
+
+
+def rounded_path_from_points(pts):
+    """折线经过点 → 带圆角的路径（每个直角用 quadTo 换成 1/4 圆）。"""
+    path = QPainterPath()
+    if not pts:
+        return path
+    path.moveTo(pts[0])
+    for i in range(1, len(pts) - 1):
+        p0, p1, p2 = pts[i - 1], pts[i], pts[i + 1]
+        v1 = QPointF(p1.x() - p0.x(), p1.y() - p0.y())
+        v2 = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
+        l1 = math.hypot(v1.x(), v1.y())
+        l2 = math.hypot(v2.x(), v2.y())
+        if l1 < 1e-6 or l2 < 1e-6:
+            continue
+        rr = min(EDGE_CORNER_RADIUS, l1 / 2.0, l2 / 2.0)
+        a = QPointF(p1.x() - v1.x() / l1 * rr, p1.y() - v1.y() / l1 * rr)
+        b = QPointF(p1.x() + v2.x() / l2 * rr, p1.y() + v2.y() / l2 * rr)
+        path.lineTo(a)
+        path.quadTo(p1, b)
+    path.lineTo(pts[-1])
+    return path
+
+
+def _reverse_detour_x(p0, p3, first_rect, last_rect):
+    """★ M6e：反向绕行的横向位置。
+
+    用户口径（2026.10.18，源=图片源、目标=灰度）：
+      · 距离**远**（水平缝隙 gap >= EDGE_GAP_NEAR）⇒ **保持现状**：走两节点之间（缝隙中线）；
+      · 距离**近**（gap < EDGE_GAP_NEAR）⇒ **绕到「目标背离源」的那一侧**：
+          目标在右 ⇒ x = 目标右缘 + EDGE_SIDE_MARGIN；目标在左 ⇒ x = 目标左缘 - EDGE_SIDE_MARGIN。
+    不变式：① 不穿源节点 ② 不穿目标节点 ③ 目标在左/在右两种布局镜像对称。
+    """
+    m = EDGE_SIDE_MARGIN
+    if first_rect is not None and last_rect is not None:
+        src_cx = first_rect.center().x()
+        tgt_cx = last_rect.center().x()
+        if tgt_cx > src_cx:                        # 目标在右
+            gap = last_rect.left() - first_rect.right()
+            if gap >= EDGE_GAP_NEAR:               # 远距 ⇒ 走两节点之间（现状）
+                return (first_rect.right() + last_rect.left()) / 2.0
+            x_far = last_rect.right() + m          # ★ 近距 ⇒ 目标背离源的右侧
+            if x_far < first_rect.right() + EDGE_GAP_MIN:   # 保护：不穿源节点
+                x_far = first_rect.right() + EDGE_GAP_MIN
+            return x_far
+        if tgt_cx < src_cx:                        # 目标在左（镜像）
+            gap = first_rect.left() - last_rect.right()
+            if gap >= EDGE_GAP_NEAR:
+                return (last_rect.right() + first_rect.left()) / 2.0
+            x_far = last_rect.left() - m           # ★ 近距 ⇒ 目标背离源的左侧
+            if x_far > first_rect.left() - EDGE_GAP_MIN:    # 保护：不穿源节点
+                x_far = first_rect.left() - EDGE_GAP_MIN
+            return x_far
+    # 没有矩形信息（预览时鼠标尚未命中节点）⇒ 旧规则：左右外侧取总长更短，相等走右
+    if first_rect is not None and last_rect is not None:
+        right_edge = max(first_rect.right(), last_rect.right())
+        left_edge = min(first_rect.left(), last_rect.left())
+    else:
+        right_edge = max(p0.x(), p3.x())
+        left_edge = min(p0.x(), p3.x())
+    xs_right = right_edge + m
+    xs_left = left_edge - m
+    len_right = abs(xs_right - p0.x()) + abs(xs_right - p3.x())
+    len_left = abs(p0.x() - xs_left) + abs(p3.x() - xs_left)
+    return xs_right if len_right <= len_left else xs_left
+
+
+def orthogonal_points(p1, p2, start_side="out", first_rect=None, last_rect=None):
+    """p1 → p2 的正交折线经过点（全是横段/竖段）。
+
+    ★ M6b 抽成模块级：`EdgeItem` 与**拖动预览**共用同一套走法（预览时 p2 = 鼠标位置）。
+    ★ 反向绕行**选更近的一侧**：左/右各算一条候选、取总长度短的；两者相等时仍走**右侧**（保持旧行为）。
+    """
+    if start_side == "left":
+        p0 = QPointF(p1.x() - EDGE_STUB, p1.y())
+    elif start_side == "right":
+        p0 = QPointF(p1.x() + EDGE_STUB, p1.y())
+    else:
+        p0 = QPointF(p1.x(), p1.y() + EDGE_STUB)
+    p3 = QPointF(p2.x(), p2.y() - EDGE_STUB)
+    pts = [QPointF(p1), p0]
+    if abs(p0.x() - p3.x()) <= 1e-6:
+        pts.append(p3)
+    elif p0.y() < p3.y():
+        mid_y = (p0.y() + p3.y()) / 2.0
+        pts += [QPointF(p0.x(), mid_y), QPointF(p3.x(), mid_y), p3]
+    else:
+        # ★ M6c（乙）：绕行**优先走两节点之间的空隙**；没有空隙才退回"外侧取短"。
+        #   绕行余量按「节点包围盒」算（不能只按端口 x，否则会从节点身上穿过）。
+        xs = _reverse_detour_x(p0, p3, first_rect, last_rect)
+        pts += [QPointF(p0.x(), p0.y() + EDGE_STUB),
+                QPointF(xs, p0.y() + EDGE_STUB),
+                QPointF(xs, p3.y() - EDGE_STUB),
+                QPointF(p3.x(), p3.y() - EDGE_STUB),
+                p3]
+    pts.append(QPointF(p2))
+    return dedupe_points(pts)
+
+
+def build_edge_path(p1, p2, start_side="out", first_rect=None, last_rect=None):
+    """返回 (QPainterPath, pts)。★ M6b：连好后的线与「拖动预览」共用。"""
+    pts = orthogonal_points(p1, p2, start_side, first_rect, last_rect)
+    return rounded_path_from_points(pts), pts
+
+
 class EdgeItem(QGraphicsPathItem):
-    """连线（贝塞尔曲线）：S型平滑曲线"""
-    def __init__(self, start_node, end_node):
+    """连线：★ M6 起为「正交折线 + 转角圆角 + 入口方向箭头」（原为贝塞尔曲线）。"""
+
+    def __init__(self, start_node, end_node, start_port=None):
         super().__init__()
         self.start_node = start_node
         self.end_node = end_node
-        self.update_path() # 设置可更新的路径
-        self.setPen(QPen(QColor("darkGray"), 2)) # 设置画笔，即设置颜色，厚度为2
+        # ★ 起线端口：out(下) / left / right —— ★ 存档不记端口（.vfproj 仍只存两端 uid），
+        #   重启后统一下点起画；端口持久化留给 M8（端口对象化）。
+        self.start_port = start_port or "out"
+        self._arrow_polygon = QPolygonF()
+        self._pts = []
+        self.setPen(QPen(QColor("darkGray"), 2))
+        self.update_path()
+
+    def _start_point(self):
+        node = self.start_node
+        if self.start_port == "left":
+            return node.mapToScene(node.left_port)
+        if self.start_port == "right":
+            return node.mapToScene(node.right_port)
+        return node.get_output_pos()
+
+    @staticmethod
+    def _dedupe(pts):
+        out = []
+        for p in pts:
+            if (not out) or (abs(out[-1].x() - p.x()) > 1e-6) or (abs(out[-1].y() - p.y()) > 1e-6):
+                out.append(p)
+        return out
+
+    def _orthogonal_points(self):
+        """返回正交折线的经过点（★ M6b：实际算法在模块级 `orthogonal_points`，与拖动预览共用）。"""
+        try:
+            r1 = self.start_node.sceneBoundingRect()
+            r2 = self.end_node.sceneBoundingRect()
+        except Exception:
+            r1 = r2 = None
+        return orthogonal_points(self._start_point(), self.end_node.get_input_pos(),
+                                 self.start_port, r1, r2)
+
+    @staticmethod
+    def _rounded_path(pts):
+        """★ M6b：实现移到模块级 `rounded_path_from_points`（预览线也用它）。"""
+        return rounded_path_from_points(pts)
+        path.moveTo(pts[0])
+        for i in range(1, len(pts) - 1):
+            p0, p1, p2 = pts[i - 1], pts[i], pts[i + 1]
+            v1 = QPointF(p1.x() - p0.x(), p1.y() - p0.y())
+            v2 = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
+            l1 = math.hypot(v1.x(), v1.y())
+            l2 = math.hypot(v2.x(), v2.y())
+            if l1 < 1e-6 or l2 < 1e-6:
+                continue
+            rr = min(EDGE_CORNER_RADIUS, l1 / 2.0, l2 / 2.0)
+            a = QPointF(p1.x() - v1.x() / l1 * rr, p1.y() - v1.y() / l1 * rr)
+            b = QPointF(p1.x() + v2.x() / l2 * rr, p1.y() + v2.y() / l2 * rr)
+            path.lineTo(a)
+            path.quadTo(p1, b)
+        path.lineTo(pts[-1])
+        return path
+
+    def _build_arrow(self, end):
+        """入口方向箭头：末段固定自上而下 ⇒ 实心小三角，尖端贴在输入点上。"""
+        s = EDGE_ARROW_SIZE
+        return QPolygonF([QPointF(end.x(), end.y()),
+                          QPointF(end.x() - s * 0.55, end.y() - s),
+                          QPointF(end.x() + s * 0.55, end.y() - s)])
 
     def update_path(self):
-        """生成可更新路径"""
-        # 实时获取启动和终点
-        start = self.start_node.get_output_pos()
-        end = self.end_node.get_input_pos()
-
-        path = QPainterPath() # 创建一个画布
-        path.moveTo(start) # 移动到起点start
-        '''生成路径点，三次贝塞尔曲线：需要两个点ctrl1，ctrl2'''
-        '''
-        # 点在左右两条边上时使用
-        dx = abs(end.x() - start.x()) * 0.5
-        ctrl1 = QPointF(start.x() + dx, start.y())
-        ctrl2 = QPointF(end.x() - dx, end.y())
-        '''
-        # 点在上下两条边上时使用
-        dy = abs(end.y() - start.y())
-        ctrl1 = QPointF(start.x(), start.y() + dy * 0.5) # * 0.5 可以使曲线平滑，不乘也可以
-        ctrl2 = QPointF(end.x(), end.y() - dy * 0.5)
-
-        path.cubicTo(ctrl1, ctrl2, end) # 从起点出发，经过控制点1 和 控制点2，最终平滑地连接到终点end
-        self.setPath(path) # 设置在对象画布上
+        pts = self._orthogonal_points()
+        self._pts = pts
+        self._arrow_polygon = self._build_arrow(pts[-1])
+        self.setPath(self._rounded_path(pts))
 
     def update_positions(self):
-        """生成可更新位置"""
         self.update_path()
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(self.pen())
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(self.path())
+        if not self._arrow_polygon.isEmpty():
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(self.pen().color()))
+            painter.drawPolygon(self._arrow_polygon)
+
+    def shape(self):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(EDGE_HIT_WIDTH)
+        shape = stroker.createStroke(self.path())
+        if not self._arrow_polygon.isEmpty():
+            arrow = QPainterPath()
+            arrow.addPolygon(self._arrow_polygon)
+            shape = shape.united(arrow)
+        return shape
 
     def contextMenuEvent(self, event):
         """右键点击连线时弹出菜单，实现删除连线"""
-        menu = QMenu() # 创建菜单容器
-        delete_action = QAction("删除连线", menu) # 创建'删除连线'的按钮在菜单容器中
-        menu.addAction(delete_action) # 弹出菜单并等待用户点击
-
-        # 在鼠标点击的屏幕位置弹出菜单
+        menu = QMenu()
+        delete_action = QAction("删除连线", menu)
+        menu.addAction(delete_action)
         action = menu.exec_(event.screenPos())
-
         if action == delete_action:
-            # 触发删除，通过视图寻找主窗口执行删除逻辑
             if self.scene() and self.scene().views():
-                # 寻找主窗口
                 view = self.scene().views()[0]
                 if hasattr(view, 'main_window'):
-                    # 执行删除
                     view.main_window.delete_edge(self)
+
 
 
 class FlowchartView(QGraphicsView):
@@ -604,6 +786,8 @@ class FlowchartView(QGraphicsView):
         self._align_lines = []                       # 当前要对齐的线：[("v", x) / ("h", y)]
 
         self._start_node = None # 开始节点
+        self._start_port_type = "out"     # ★ M6：本次起线用的端口
+        self.last_connect_hint = None   # ★ M6：最近一次连线提示（用例可断言）
         self._temp_line = None # 灰线
 
         # 监听场景中选中节点的变化，用来在main.ui中显示当前选中(单击)的节点
@@ -873,17 +1057,20 @@ class FlowchartView(QGraphicsView):
                     if not isinstance(node, NodeItem):
                         continue
                     local_pos = node.mapFromScene(scene_pos)
-                    # 检查是否点击到蓝点（输出端口），感应距离为 30个像素
-                    # ★ M2e：下方输出点的"拉线起点"只认**矩形之外**那半圈 ——
-                    #   之前只判距离(30px)，而圆环有一半压在节点矩形里 ⇒ 想拖节点时在
-                    #   节点下半部按下会误进"拉线"分支。现在：矩形内即便在感应圈内也不拉线，
-                    #   落到下面"拖节点"那条分支；★ 上/左/右三个点的判定保持原样。
+                    # ★ M6：起线点 = 下(out) / 左 / 右 —— 三处都只认"圆环在矩形之外"那半圈
+                    #   （M2e 的规则推广；矩形内按下仍然走"拖节点"，不误拉线；上边只接收、不能起线）
                     inside_rect = node.rect().contains(local_pos)
-                    if (not inside_rect
-                            and (local_pos - node.out_port).manhattanLength() < 30):
-                        clicked_node = node
-                        clicked_port_type = 'out'
-                        break
+                    if not inside_rect:
+                        for _port_attr, _port_kind in (("out_port", "out"),
+                                                       ("left_port", "left"),
+                                                       ("right_port", "right")):
+                            if (local_pos - getattr(node, _port_attr)).manhattanLength() < 30:
+                                clicked_node = node
+                                clicked_port_type = _port_kind
+                                break
+                        if clicked_node is not None:
+                            break
+
                     # 检查是否点击到红点（输入端口）
                     if (local_pos - node.in_port).manhattanLength() < 30:
                         clicked_node = node
@@ -892,10 +1079,10 @@ class FlowchartView(QGraphicsView):
 
             if clicked_node is not None:
                 # 开始连线
-                if clicked_port_type == 'out':
+                if clicked_port_type in ('out', 'left', 'right'):
                     # 点到了蓝点，禁用抓握开始连线
                     self.setDragMode(QGraphicsView.NoDrag) # 设置模式，禁止拖到窗口NoDrag
-                    self._start_connection(clicked_node) # 创建一条跟随鼠标的虚线
+                    self._start_connection(clicked_node, clicked_port_type) # ★ M6：带上起线端口
                     event.accept()
                     return
                 elif clicked_port_type == 'in' and self._start_node is not None:
@@ -921,11 +1108,9 @@ class FlowchartView(QGraphicsView):
     def mouseMoveEvent(self, event):
         """鼠标拖拽过程中负责画面实时反馈，分为连线状态和非连线状态"""
         if self._start_node is not None:
-            # 点击蓝点进入拖出虚线状态时实现以下代码
-            pos = self.mapToScene(event.pos()) # 实时获取鼠标当前在屏幕上的坐标，并转换为画布内部真实的场景坐标
-            line = self._temp_line.line() # 获取灰线
-            line.setP2(pos) # 设置灰线的第二个点(第一个点为引出的蓝点)
-            self._temp_line.setLine(line) # 更新画面
+            # ★ M6b：预览线也用正交折线（与连好后的线共用 build_edge_path）
+            pos = self.mapToScene(event.pos())
+            self._update_temp_line(pos)
             return
         # 非连线状态时使用，交给父类处理，实现拖到方框或者拖到背景画面
         super().mouseMoveEvent(event)
@@ -953,6 +1138,24 @@ class FlowchartView(QGraphicsView):
                 self._try_finish_edge(self._start_node, target_node, event)
                 return
 
+            # ★ M6：落在左/右点上 ⇒ 明确拒绝（左/右点本批"只能引出、不能接收"）
+            _hint = None
+            if hasattr(self.main_window, 'flow_nodes'):
+                for _node in self.main_window.flow_nodes:
+                    if not isinstance(_node, NodeItem):
+                        continue
+                    _lp = _node.mapFromScene(scene_pos)
+                    if ((_lp - _node.left_port).manhattanLength() < 30
+                            or (_lp - _node.right_port).manhattanLength() < 30):
+                        _hint = "该点暂不支持接收连线（左/右点本批只能引出）"
+                        break
+            if _hint:
+                self.last_connect_hint = _hint
+                try:
+                    self.main_window._append_log_hint(_hint)
+                except Exception:
+                    pass
+
             # 没有落在红点上，连线失败，取消虚线
             self._cancel_connection()
             event.accept()
@@ -963,27 +1166,80 @@ class FlowchartView(QGraphicsView):
         #   画布外才会向右下长大，原点不动 ⇒ 其它节点的视口坐标不变、画面不跳）
         self._apply_canvas_rect()
 
-    def _start_connection(self, node):
-        """负责记录连线的起点，并在屏幕上生成一条初始的灰色虚线。"""
-        self._cancel_connection() # 清理残留状态，比如上一次未成功的虚线
-        self._start_node = node # 开始点
-        start_pos = node.get_output_pos() # 获取开始位置蓝点的位置
-        # 把一条虚线画到画布上，一开始时头尾的坐标都为(start_pos.x,start_pos.y)，gray灰色，线厚为2，DashLine虚线
-        self._temp_line = self.flow_scene.addLine(
-            start_pos.x(), start_pos.y(),
-            start_pos.x(), start_pos.y(),
-            QPen(Qt.gray, 2, Qt.DashLine)
-        )
+    def _start_connection(self, node, port_type="out"):
+        """负责记录连线的起点（含起线端口），并在屏幕上生成一条初始的灰色虚线。"""
+        self._cancel_connection()
+        self._start_node = node
+        self._start_port_type = port_type
+        if port_type == "left":
+            start_pos = node.mapToScene(node.left_port)
+        elif port_type == "right":
+            start_pos = node.mapToScene(node.right_port)
+        else:
+            start_pos = node.get_output_pos()
+        # ★ M6b：预览线改用**路径**对象（与连好后的线同一套正交折线走法）
+        self._temp_start_pos = start_pos
+        self._temp_line = QGraphicsPathItem()
+        self._temp_line.setPen(QPen(Qt.gray, 2, Qt.DashLine))
+        self.flow_scene.addItem(self._temp_line)
+        self._update_temp_line(start_pos)
+
+
+    def _update_temp_line(self, p2):
+        """★ M6b：拖动中的预览线 = 正交折线（与连好后的线同一个 `build_edge_path`）。"""
+        item = getattr(self, "_temp_line", None)
+        start = getattr(self, "_temp_start_pos", None)
+        if item is None or start is None:
+            return
+        r1 = None
+        try:
+            if self._start_node is not None:
+                r1 = self._start_node.sceneBoundingRect()
+        except Exception:
+            r1 = None
+        # ★ M6d：拖动中**命中目标节点**时，预览直接按"该节点的输入点 + 该节点矩形"算
+        #   ⇒ 预览与落定后的线**逐点一致**（用户 2026.10.18：「鼠标拉线时还是原本的远路程，
+        #     但是接线后就是短路程了」）。
+        p2_eff = QPointF(p2)
+        r2 = None
+        try:
+            hover = self._hovered_end_node(QPointF(p2))
+            if hover is not None:
+                p2_eff = hover.get_input_pos()
+                r2 = hover.sceneBoundingRect()
+        except Exception:
+            hover = None
+            r2 = None
+        path, _pts = build_edge_path(start, p2_eff,
+                                     getattr(self, "_start_port_type", "out"), r1, r2)
+        item.setPath(path)
+
+    def _hovered_end_node(self, scene_pos):
+        """★ M6d：拖动中的"可作为终点的节点"（排除源节点自身）。"""
+        try:
+            nodes = getattr(self.main_window, "flow_nodes", None) or []
+        except Exception:
+            return None
+        for node in nodes:
+            if not isinstance(node, NodeItem) or node is self._start_node:
+                continue
+            try:
+                local = node.mapFromScene(scene_pos)
+            except Exception:
+                continue
+            if (local - node.in_port).manhattanLength() < 30 or node.rect().contains(local):
+                return node
+        return None
 
     def _try_finish_edge(self, start_node, end_node, event=None):
         """将虚线变成实线，并把整个系统状态清理干净"""
         if start_node is not None and start_node != end_node:
-            # 确保确实存在一个合法的起点 and 不能自己连自己
-            self.main_window.add_edge(start_node, end_node) # 创建直线并画到画布上
-        self._cancel_connection() # 删除之前的虚线
+            self.main_window.add_edge(start_node, end_node,
+                                      getattr(self, "_start_port_type", "out"))
+        self._cancel_connection()
         if event:
-            # 完成连线，不需要再通知父类处理
             event.accept()
+
 
     def _cancel_connection(self):
         """负责把当前的连线状态彻底清空，恢复到“没有拉线”的初始状态"""
@@ -991,6 +1247,7 @@ class FlowchartView(QGraphicsView):
             # 去除灰色虚线
             self.flow_scene.removeItem(self._temp_line)
             self._temp_line = None
+        self._temp_start_pos = None
         self._start_node = None
         self.setDragMode(QGraphicsView.ScrollHandDrag) # 连线结束，回复可以拖到背景画布的功能
 
