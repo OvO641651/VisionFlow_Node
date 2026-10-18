@@ -28,6 +28,7 @@
 保存成视频（VideoWriter）、带检测叠加、每 N 帧存一张 ⇒ 留 M5-2 / M5-3（见技术方案《九、想法》）。
 """
 
+from core import log_texts as T
 import os
 import re
 import time
@@ -324,7 +325,7 @@ def _close_recording(state, reason):
         except OSError:
             pass
         return "已取消录制（一帧都没写，{0}；{1}）".format(reason, name)
-    return "录制结束（{0}），共 {1} 帧，已保存 {2}".format(reason, state["frames"], name)
+    return T.OUT_VIDEO_DONE.format(reason=reason, frames=state["frames"], name=name)
 
 
 def close_recording(node_key, reason="结束"):
@@ -353,7 +354,7 @@ def _save_image_file(img, target, params):
     if not path:
         # 用户口径（2026.10.7）：输出目录"必须每次手填"（建节点后在参数窗口里设一次）。
         # 没填不弹窗、也不偷偷写到某个默认目录，只如实写进执行日志（项目准则：执行路径绝不弹窗）。
-        return img, [{"输出图像": "未保存：{0}（请在“输出图像”节点的参数窗口里设置）".format(why)}]
+        return img, [{"输出图像": T.OUT_NOT_SAVED.format(why=why)}]
 
     try:
         folder = os.path.dirname(path)
@@ -361,14 +362,14 @@ def _save_image_file(img, target, params):
             os.makedirs(folder, exist_ok=True)      # 目录不存在就自动建
         ok = write_image(path, target)
     except Exception as exc:                        # 无权限 / 非法路径 / 磁盘满 …
-        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
+        return img, [{"__error__": True, "输出图像": T.OUT_FAIL.format(err=exc)}]
 
     if not ok:
-        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(path)}]
+        return img, [{"__error__": True, "输出图像": T.OUT_FAIL.format(err=path)}]
 
     height, width = target.shape[:2]
-    return img, [{"输出图像": "已保存 {0}（{1}×{2}）".format(
-        os.path.basename(path), width, height)}]
+    return img, [{"输出图像": T.OUT_SAVED.format(
+        name=os.path.basename(path), w=width, h=height)}]
 
 
 def _save_video_frame(img, frame, params, info):
@@ -385,7 +386,7 @@ def _save_video_frame(img, frame, params, info):
     label, ext, fourcc = _VIDEO_OF_NAME.get(params.get("video_format")) or VIDEO_FORMATS[0]
     folder = _resolve_dir(params.get("output_dir"))
     if not folder:
-        return img, [{"输出图像": "未录制：没有设置输出目录（请在“输出图像”节点的参数窗口里设置）"}]
+        return img, [{"输出图像": T.OUT_NO_DIR}]
 
     base = _sanitize_name(str(params.get("output_name") or "").strip() or current_input_name())
     policy = params.get("name_policy") or POLICY_AUTO
@@ -407,19 +408,19 @@ def _save_video_frame(img, frame, params, info):
     if key not in _RECORDINGS:
         path, why = build_output_path(params, ext=ext)
         if not path:
-            return img, [{"输出图像": "未录制：{0}（请在“输出图像”节点的参数窗口里设置）".format(why)}]
+            return img, [{"输出图像": T.OUT_NOT_RECORDED.format(why=why)}]
         try:
             os.makedirs(folder, exist_ok=True)
             writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*fourcc), fps, size)
         except Exception as exc:                    # 无权限 / 非法路径 / 磁盘满 …
-            return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
+            return img, [{"__error__": True, "输出图像": T.OUT_FAIL.format(err=exc)}]
         if not writer.isOpened():
             try:
                 writer.release()
             except Exception:
                 pass
             # 编码器不支持：如实写日志、**不弹窗**，图像照旧透传（项目准则）
-            return img, [{"__error__": True, "输出图像": "保存失败：不支持该视频格式（{0}）".format(label)}]
+            return img, [{"__error__": True, "输出图像": T.OUT_BAD_VIDEO}]
         _RECORDINGS[key] = {"writer": writer, "path": path, "size": size, "frames": 0,
                             "signature": signature, "fps": fps, "label": label}
         notes.append("开始录制 → {0}（{1:g} fps，{2}×{3}）".format(
@@ -430,7 +431,7 @@ def _save_video_frame(img, frame, params, info):
         state["writer"].write(frame)
     except Exception as exc:
         _RECORDINGS.pop(key, None)
-        return img, [{"__error__": True, "输出图像": "保存失败：{0}".format(exc)}]
+        return img, [{"__error__": True, "输出图像": T.OUT_FAIL.format(err=exc)}]
     state["frames"] += 1
     notes.append("录制中：{0}（第 {1} 帧）".format(
         os.path.basename(state["path"]), state["frames"]))

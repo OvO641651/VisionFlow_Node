@@ -16,6 +16,7 @@
     `_run_line` 传给它的始终是 ROI 的一份 `.copy()` ⇒ 绿线**永远不进数据层**，
     用户看到的绿线由 `_draw_line()` 在显示层画。
 """
+from core import log_texts as T
 import cv2
 import numpy as np
 
@@ -108,7 +109,7 @@ def _draw_line(display_img, results, params):
 
 
 def _format_line(results):
-    return "检测到{0}条直线".format(len(results))
+    return T.LINE_COUNT.format(n=len(results))
 
 
 # ----------------------------------------------------------------------

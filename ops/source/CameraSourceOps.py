@@ -8,6 +8,7 @@
     · 取不到（相机没开 / 读失败）⇒ 原样透传传入的图 + 结果里带说明（日志会写，不弹窗）；
     · 相机是**无界流**：没有帧游标 / 循环参数；结果**不进缓存**（由主窗口跳过写入）。
 """
+from core import log_texts as T
 # 主窗口注入的取帧器：() -> np.ndarray | None
 CAMERA_FRAME_PROVIDER = None
 
@@ -24,20 +25,20 @@ def run_camera(detector, img, roi, params):
     camera_type = params.get("camera_type") or "USB 相机"
     if camera_type != "USB 相机":
         # V1 只适配 USB 相机；界面里那两个预留项已经置灰，这里再兜一层（方案文件可能是手改的）
-        return img, [{"相机源": "暂不支持“{0}”（当前版本只适配 USB 相机）".format(camera_type)}]
+        return img, [{"相机源": T.CAM_UNSUPPORTED}]
     provider = CAMERA_FRAME_PROVIDER
     frame = provider() if callable(provider) else None
     if frame is None:
-        return img, [{"相机源": "没有可用的相机画面（相机未打开？编号 {0}）".format(camera_id)}]
+        return img, [{"相机源": T.CAM_NO_FRAME.format(cid=camera_id)}]
     h, w = frame.shape[:2]
     # ★ 返回副本：主窗口那个缓冲会被下一帧覆盖
-    return frame.copy(), [{"相机源": "相机 {0}（{1}×{2}）".format(camera_id, w, h)}]
+    return frame.copy(), [{"相机源": T.CAM_INFO.format(cid=camera_id, w=w, h=h)}]
 
 
 def format_camera(results):
     """执行日志"结果数据"列：短文案"""
     if results and isinstance(results[0], dict):
-        return "相机源：{0}".format(results[0].get("相机源", ""))
+        return T.CAM_PREFIX.format(text=results[0].get("相机源", ""))
     return "相机源"
 
 

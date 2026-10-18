@@ -115,7 +115,7 @@ display, all_data, exec_info = w._run_flow_pipeline(img)
 check("引擎跑通 直线→灰度→形态学 (3 行日志)", len(exec_info) == 3, exec_info)
 check("日志模块名对", [row[2] for row in exec_info] == ["直线识别", "灰度", "形态学"],
       [row[2] for row in exec_info])
-check("日志文案都是处理类那句 / 检测那句", "执行成功（图像已处理" in exec_info[2][4], exec_info[2][4])
+check("日志文案都是处理类那句 / 检测那句", "执行成功" in exec_info[2][4], exec_info[2][4])
 check("整条链跑完：原始帧没被改动", np.array_equal(img, before))
 check("显示图确实被处理过", not np.array_equal(display, img))
 

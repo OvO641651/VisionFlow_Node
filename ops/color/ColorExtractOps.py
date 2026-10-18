@@ -20,6 +20,7 @@
 另一套（当前没显示的）**不校验也不改** —— 免得提示里冒出一堆用户看不见的参数名。
 """
 
+from core import log_texts as T
 import cv2
 import numpy as np
 
@@ -85,7 +86,7 @@ def _format_extract(results):
     count = int(info.get("提取像素", 0) or 0)
     total = int(info.get("总像素", 0) or 0)
     ratio = (count * 100.0 / total) if total else 0.0
-    return "提取到 {0} 个像素（{1:.1f}%）".format(count, ratio)
+    return T.COLOR_PIXELS.format(n=count, pct=ratio)
 
 
 def validate_color_extract(params):

@@ -23,6 +23,7 @@
     坏 xml 也会 —— 引擎里没有 try/except，抛出来就是"点了执行什么都没发生"（目标4 消灭过的静默）。
 """
 
+from core import log_texts as T
 import os
 
 import cv2
@@ -94,7 +95,7 @@ def _run_face(detector, img, roi, params):
     path = str(params.get("cascade_file", "") or "").strip()
     if not path:
         # 用户 2026.10.12 定的口径：默认**不设级联文件**，直接运行就用红字把原因写清楚
-        return img, [_error("未选择级联文件，本次未检测（图像原样传给下游）")]
+        return img, [_error(T.FACE_NO_CASCADE)]
 
     cascade, reason = _load_cascade(path)
     if cascade is None:
@@ -117,7 +118,7 @@ def _run_face(detector, img, roi, params):
     except Exception as exc:
         # scaleFactor <= 1 之类会抛（窗口下限已经卡到 1.01、引擎侧还有 validate_face 兜底，
         # 这里只是最后一层"绝不把执行带崩"的保险）
-        return img, [_error("人脸检测失败：{0}".format(exc))]
+        return img, [_error(T.FACE_FAIL.format(err=exc))]
 
     boxes = [(int(fx) + x, int(fy) + y, int(fx) + x + int(fw), int(fy) + y + int(fh))
              for fx, fy, fw, fh in faces]
@@ -134,7 +135,7 @@ def _draw_face(display_img, results, params):
 
 def _format_face(results):
     """执行日志"结果数据"列的文案（短：这一列会截断）"""
-    return "检测到{0}张人脸".format(len(results or []))
+    return T.FACE_COUNT.format(n=len(results or []))
 
 
 def validate_face(params):

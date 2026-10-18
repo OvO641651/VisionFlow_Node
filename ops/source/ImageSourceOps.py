@@ -26,6 +26,7 @@
 本文件只导出声明（IMAGE_SOURCE_SPECS），**不 import NodeRegistry** —— 注册表在末尾汇总，
 这样"注册表 ←→ 节点模块"不会循环导入。
 """
+from core import log_texts as T
 import os
 
 import cv2
@@ -105,7 +106,7 @@ def run_source(detector, img, roi, params):
 
     # 老方案文件里的 "当前图像"：语义就是"用传进来的那一帧"，保持原样（不看路径），免得老方案行为变化
     if source_type == "当前图像":
-        return img, [{"图片源": "当前图像"}]
+        return img, [{"图片源": T.SRC_IMAGE_CURRENT}]
 
     # "图片"（原来的"单张图片"和"当前图像"合并成这一档，用户 2026.10.5 定的）：
     #   填了路径 → 读那个文件；没填路径 → 跟"当前图像"一样，直接透传传进来的那一帧。
@@ -113,11 +114,11 @@ def run_source(detector, img, roi, params):
         path = params.get("source_path", "")
         if not path:
             # 没填路径：用当前打开的那张图
-            return img, [{"图片源": "当前图像（未指定路径）"}]
+            return img, [{"图片源": T.SRC_IMAGE_NO_PATH}]
         loaded = _load_image(path)
         if loaded is None:
             # 读不到就原样透传，日志里如实写原因（执行路径绝不弹窗）
-            return img, [{"图片源": "读取失败：{0}".format(os.path.basename(path))}]
+            return img, [{"图片源": T.SRC_READ_FAIL.format(name=os.path.basename(path))}]
         return loaded, [{"图片源": os.path.basename(path)}]
 
     # "文件夹"：路径是一个文件夹，取里面按文件名排序的第一张图
@@ -127,23 +128,32 @@ def run_source(detector, img, roi, params):
         first = first_image_in_folder(folder)
         if first is None:
             name = os.path.basename(folder) if folder else "(未填路径)"
-            return img, [{"图片源": "文件夹里没有图片：{0}".format(name)}]
+            return img, [{"图片源": T.SRC_FOLDER_EMPTY.format(name=name)}]
         loaded = _load_image(first)
         if loaded is None:
-            return img, [{"图片源": "读取失败：{0}".format(os.path.basename(first))}]
-        return loaded, [{"图片源": "{0}（第 1 张）".format(os.path.basename(first))}]
+            return img, [{"图片源": T.SRC_READ_FAIL.format(name=os.path.basename(first))}]
+        return loaded, [{"图片源": T.SRC_FIRST_OF_DIR.format(name=os.path.basename(first))}]
 
     if source_type == "测试图":
-        return _cached_test_image(), [{"图片源": "测试图"}]
+        return _cached_test_image(), [{"图片源": T.SRC_TEST_IMAGE}]
 
     # 认不出来的值（老文件 / 手改过）：原样透传，别让流程断在这里
-    return img, [{"图片源": "当前图像"}]
+    return img, [{"图片源": T.SRC_IMAGE_CURRENT}]
 
 
 def format_source(results):
-    """执行日志"结果数据"列：短文案"""
+    """执行日志"结果数据"列：短文案
+
+    ★ 批次6 目标3-M1：**只显示文件名**（用户："只显示文件名"）—— 原样打印整条路径会把列撑爆。
+    """
     if results and isinstance(results[0], dict):
-        return "图片源：{0}".format(results[0].get("图片源", ""))
+        raw = str(results[0].get("图片源", "") or "")
+        try:
+            import os
+            base = os.path.basename(raw)
+        except Exception:
+            base = raw
+        return T.SRC_PREFIX.format(text=base or raw)
     return "图片源"
 
 

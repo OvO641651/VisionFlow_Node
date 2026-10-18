@@ -10,19 +10,20 @@
   · `results` 里带 `{"__error__": True}` ⇒ 走**通用错误通道**（日志那一行涂红）；
   · `format_result` 给执行日志"结果数据"列用。
 """
+from core import log_texts as T
 from core.NodeRegistry import KIND_PROCESS  # noqa: F401  （声明 kind 的语义说明用）
 
 
 def _run_warn(detector, img, roi, params):
     """图像原样透传，只往结果里塞一个错误标记。"""
-    return img, [{"__error__": True, "提示": "测试用：故意报错"}]
+    return img, [{"__error__": True, "提示": T.WARN_TEXT}]
 
 
 WARN_SPECS = [
     {
         "name": "警告（测试用）",
         "run": _run_warn,
-        "format_result": lambda results: "测试用：故意报错（下游第一个节点会被标红）",
+        "format_result": lambda results: T.WARN_TEXT_DOWNSTREAM,
         "param_specs": [],            # 没有可调参数
     },
 ]

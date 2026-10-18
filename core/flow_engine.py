@@ -5,8 +5,10 @@
 由 `main.py` 的 `MainWindow` 多重继承本 Mixin —— `self` 仍是主窗口，方法之间照旧 `self.xxx` 互调。
 """
 
+from core import log_texts as T
 from collections import deque  # 拓扑排序要用到的队列（数据流引擎按连线顺序执行）
 from PySide2 import QtWidgets
+from PySide2.QtCore import Qt  # ★ 目标3-M1：日志单元格/表头居中用
 from PySide2.QtGui import QBrush, QColor  # QIcon设置图标，QImage显示图像；QBrush/QColor 给日志红字用（目标5-M2）
 import cv2
 import time
@@ -17,6 +19,29 @@ from ops.sink.OutputOps import SAVE_OVERLAY, SOURCE_CAMERA, SOURCE_IMAGE, SOURCE
 from core.param_store import VIDEO_ROI_KEY
 from core.host_contract import MainHost   # ★ 宿主契约（只为静态检查；运行时是空类），见《批次5 技术方案》§11.6
 from core.result_cache import evict as _evict_result_cache, touch as _touch_result_cache  # ★ 目标4：两池 LRU
+
+
+def _log_time_text():
+    """★ 3.1.3（2026.10.18）：日志「时间」列带年月日、用 . 分隔。
+    用户：「修改日志中的时间，添加年月日，使用(.)隔开，比如 2026.10.18 22:37」
+    ⇒ 统一 %Y.%m.%d %H:%M（到分钟）；普通行与提示/汇总行共用这一处。
+    """
+    return time.strftime("%Y.%m.%d %H:%M")
+
+def _set_log_cell(table, row, col, text, error_brush=None):
+    """往执行日志表写一个单元格：**一律居中**（表头与单元格风格统一）。
+
+    ★ 批次6 目标3-M1 第 2 次修改（3.1.2）：用户实测「没有序号的文本没有居中」
+      —— 根因是「提示 / 汇总行」走的是 _append_log_hint()，那条路径**没有**设对齐。
+      现在普通行与提示行都走这一个 helper，以后不会再出现“某行没居中”。
+    """
+    item = QtWidgets.QTableWidgetItem(str(text))
+    item.setTextAlignment(Qt.AlignCenter)
+    # ★ 3.1.4：带上 tooltip（悬停可看全文）—— 结果列再窄也不会丢信息
+    item.setToolTip(str(text))
+    if error_brush is not None:
+        item.setForeground(error_brush)
+    table.setItem(row, col, item)
 
 
 class FlowEngineMixin(MainHost):
@@ -564,19 +589,17 @@ class FlowEngineMixin(MainHost):
             return "ROI 尺寸为 0，已跳过（图像原样传给下游）"
         if spec is None:
             return "模块未实现，图像原样传给下游"
-        text = spec.format_result(results)
-        # 缺省也是"继承上游"（2026.10.5 起），所以这里要用 True 兜底，
-        # 否则默认继承的节点不会把"继承到没继承到"写进日志，用户就看不出来了。
-        if node.params.get("roi_inherit", True):
-            # 勾了"继承上游"之后到底继承到了什么，必须让用户看见（否则会以为继承生效了）。
-            # 注意：单步执行 / 视频每帧都会走到这里，所以只能用日志文案、不能弹窗；
-            # 文案也要尽量短——"结果数据"那一列显示不全会被截断。
-            if roi_info[6] == "roi":
-                text += "  ← 继承上游ROI框"
-            elif roi_info[6] == "result":
-                text += "  ← 继承上游结果框"
-            else:
-                text += "  ← 继承未生效（改用本节点 ROI）"
+        # ★ 批次6 目标3-M1（2026.10.18）：结果文案精简 ——
+        #   检测类（直线 / 圆 / 人脸）保持算子自己的"检测到 N 条直线 / 个圆"形式；
+        #   其余节点一律显示「执行成功」（用户："其他的先按照「执行成功」的文案"）。
+        raw_text = spec.format_result(results)
+        # ★ 只把「执行成功（图像已处理，下游可见）」这一族**长后缀**压成「执行成功」；
+        #   其余文案（检测类的"检测到 N 条直线 / 个圆 / 人脸"、图像源的"文件名"、
+        #   颜色提取的"提取到 N 个像素"、输出类的"已保存 …"）**本身就是结果，一律保留**。
+        text = T.OK if raw_text.startswith(T.OK + "（") else raw_text
+        # ★ 批次6 目标3-M1 第 2 次修改（3.1.2）：**去掉「← 继承上游ROI框 / 结果框」短注**
+        #   —— 用户实测："「← 继承上游ROI框」短注去掉。"（那几句在"结果数据"列里容易把正文挤掉）
+        #   ROI 继承是否生效仍可从参数窗口与画面上的洋红框判断，必要时再单独加回来。
         # ★ 这一轮这个节点的参数被自动纠正过（批次4 目标4）：追一句短说明。
         #   不写的话用户会以为"我填的就是生效值"，而这恰恰是目标4 要消灭的"静默"。
         corrections = getattr(self, "_param_corrections", {}).get(id(node)) or []
@@ -651,7 +674,7 @@ class FlowEngineMixin(MainHost):
         order, parents, skipped = self._build_execution_order(self.flow_nodes, self.flow_edges)
         if not order:
             # 有方框，但一条能跑的链路都没有：给一行提示，而不是静默什么都不做
-            return img, [], [("-", time.strftime("%H:%M:%S"), "提示", "-",
+            return img, [], [("-", _log_time_text(), "提示", "-",
                               "没有可执行的流程：请先用连线把模块连起来")]
         # 真正的执行 + 渲染都在 _run_nodes 里：
         # 连续执行 = 选中节点 + 它的上游（其余不跑）；单步执行 = 只跑选中的那一个节点（见 _run_flow_pipeline_step）
@@ -779,21 +802,21 @@ class FlowEngineMixin(MainHost):
             # 3、汇总结果 + 记一行日志（图像源也记下来，方便排查数据流走向）
             if results:
                 all_data.extend(results)
-            exec_info.append((seq, time.strftime("%H:%M:%S"), node.name, source_label,
+            exec_info.append((seq, _log_time_text(), node.name, source_label,
                               self._format_result_text(node, results, roi_info, spec)))
             seq += 1
 
             # ★ M2b「出错即停」开关（**默认关**，用户 2026.10.17 拍板 C：默认"出错只标红、流程继续"）：
             #   打开后，首个出错节点之后不再执行后续节点，并在日志里说明。
             if getattr(self, "stop_on_error", False) and _results_have_error(results):
-                exec_info.append((seq, time.strftime("%H:%M:%S"), "提示", "-",
+                exec_info.append((seq, _log_time_text(), "提示", "-",
                                   "「出错即停」已开启：节点「{0}」出错，后续节点未执行".format(node.name)))
                 break
 
         if skipped:
             # 孤立方框、或者连线成环的方框：如实告诉用户它们没有执行
             names = "、".join(node.name for node in skipped)
-            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
+            exec_info.append(("-", _log_time_text(), "提示", "-",
                               "以下节点未执行（没有连线，或者连线成环）：" + names))
 
         if not_run:
@@ -801,7 +824,7 @@ class FlowEngineMixin(MainHost):
             # 措辞按"上游链"口径写（决策 e，目标5-M1）：不是"截断到某节点"，而是"只跑它和它的上游"，
             # 所以名单里既可能有它的下游，也可能有与它无关的分支。
             names = "、".join(node.name for node in not_run)
-            exec_info.append(("-", time.strftime("%H:%M:%S"), "提示", "-",
+            exec_info.append(("-", _log_time_text(), "提示", "-",
                               "连续执行：只跑「{0}」和它的上游；以下节点本次未执行：{1}".format(
                                   stop_at.name, names)))
 
@@ -1007,7 +1030,7 @@ class FlowEngineMixin(MainHost):
 
         # 单步执行也产出一行日志：否则切图回来会出现"画面有结果、日志表却是空的"，
         # 缓存里的（画面 + 结果数据 + 日志）三者就对不上了。
-        exec_info = [(1, time.strftime("%H:%M:%S"), target_node.name, source_label,
+        exec_info = [(1, _log_time_text(), target_node.name, source_label,
                       self._format_result_text(target_node, results, roi_info, spec))]
         return display, results, exec_info
 
@@ -1057,13 +1080,9 @@ class FlowEngineMixin(MainHost):
 
             # 遍历当前行的每一列，col 为列号（0~4）
             for col, text in enumerate(values):
-                # 创建一个新的表格项，存储该单元格的文本内容
-                item = QtWidgets.QTableWidgetItem(text)
-                if is_error:
-                    item.setForeground(error_brush)
-                # 将表格项放入指定行和列的单元格中
-                # 如果该单元格已有内容，会自动替换；如果之前没有，会创建新单元格
-                self.execution_log.setItem(offset + row, col, item)
+                # ★ 目标3-M1（3.1.2）：统一走 helper ⇒ 一律居中（错误行另给红色前景）
+                _set_log_cell(self.execution_log, offset + row, col, text,
+                              error_brush if is_error else None)
         # ★ 批次5 目标4：写完**自动滚到最后一行**。用户 2026.10.15 提问："前面的执行日志太长会不会影响观看"
         #   —— 实测全工程原来**没有** scrollToBottom() ⇒ "运行全部"跑几十张后，新行写在**底部**、
         #   而视图还停在**顶部**，这才是"看不见"的真症结（不是日志太长）。
@@ -1104,8 +1123,9 @@ class FlowEngineMixin(MainHost):
             return
         row = self.execution_log.rowCount()
         self.execution_log.insertRow(row)
-        for col, value in enumerate(["-", time.strftime("%H:%M:%S"), "提示", "-", text]):
-            self.execution_log.setItem(row, col, QtWidgets.QTableWidgetItem(str(value)))
+        # ★ 目标3-M1（3.1.2）：提示行也走同一个 helper ⇒ **也居中**（用户："没有序号的文本没有居中"）
+        for col, value in enumerate(["-", _log_time_text(), "提示", "-", text]):
+            _set_log_cell(self.execution_log, row, col, value)
         # ★ 批次5 目标4：提示行也一样滚到最后（否则"用户停止 / 出错跳过 / 共执行 N/N 张"这些
         #   关键提示在批量跑几十张后全在视野外）。
         self.execution_log.scrollToBottom()

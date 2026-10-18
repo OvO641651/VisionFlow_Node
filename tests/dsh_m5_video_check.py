@@ -373,8 +373,8 @@ w10.selected_node = o10
 w10.btn_continuous.click()
 texts10 = [w10.execution_log.item(r, 4).text() for r in range(w10.execution_log.rowCount())
            if w10.execution_log.item(r, 4)]
-check("⑩ 没填输出目录 ⇒ 日志写「未录制：没有设置输出目录」，不生成文件",
-      any("未录制" in t and "没有设置输出目录" in t for t in texts10)
+check("⑩ 没填输出目录 ⇒ 日志写「未设置输出目录」，不生成文件",
+      any("未设置输出目录" in t for t in texts10)
       and ops.recording_count() == 0, texts10)
 
 # ----------------------------------------------------------------------

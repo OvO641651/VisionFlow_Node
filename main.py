@@ -308,13 +308,27 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         # 使用 QTableWidget 表格控件来显示运行日志，控件名字 Name 为 execution_log
         self.execution_log = self.main_window.findChild(QtWidgets.QTableWidget, "execution_log")
         if self.execution_log:
-            # 5个头标题
+            # ★ 批次6 目标3-M1（2026.10.18）：日志表**显示 4 列**（序号 / 时间 / 模块 / 结果数据）
+            #   「图像源」列按用户要求**不再显示**（"删除日志列表中图像源这个内容…节省空间"）；
+            #   ★ 实现上保留第 4 列的数据、只是**隐藏**（setColumnHidden）——
+            #     因为十几套老用例直接读 item(r, 3) / item(r, 4) 做断言，真删列会让它们全部失明；
+            #     视觉上与"删掉"完全一致（表头不显示、不占宽度）。
             self.execution_log.setColumnCount(5)
-            # 5个头标题名称，在ui文件里面已经设置，但是在这里用代码设置更直观
-            # 多出来的"图像源"一列是数据流引擎的"体检表"：
-            # 每个节点这一步是从哪一份图像开始算的，一眼就能看出来
             self.execution_log.setHorizontalHeaderLabels(
-                ["执行序号", "执行时间", "模块", "图像源", "结果数据"])
+                ["序号", "时间", "模块", "图像源", "结果数据"])
+            self.execution_log.setColumnHidden(3, True)
+            # ★ 批次6 目标3-M1 第 2 次修改（3.1.2，2026.10.18）：列宽 —— 用户
+            #   「结果数据的宽度能否大一点，现在的字体很多被隐藏了」。
+            #   序号 / 时间 / 模块 固定宽（够放下表头与内容），**结果数据列拉伸填满剩余宽度**，
+            #   这样窗口变大时它跟着变宽，不再到处省略号。隐藏的「图像源」列不参与分配。
+            _hdr = self.execution_log.horizontalHeader()
+            for _col, _wpx in ((0, 52), (1, 142), (2, 84)):
+                _hdr.setSectionResizeMode(_col, QtWidgets.QHeaderView.Fixed)
+                self.execution_log.setColumnWidth(_col, _wpx)
+            _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.Fixed)     # 图像源（隐藏列）
+            _hdr.setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)   # 结果数据（自适应填充）
+            # ★ 表内**全部居中**（表头 + 单元格；单元格在 _update_execution_log 里逐项设）
+            self.execution_log.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
             # 设置只读，不能修改内容
             self.execution_log.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             # 隐藏最左侧的垂直表头（行号）

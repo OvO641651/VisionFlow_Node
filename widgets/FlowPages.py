@@ -918,6 +918,84 @@ def _activate_parent_layout(widget):
         pass
 
 
+def _side_by_side_layout(panel):
+    """★ 批次6 目标3-M1：找「直接装着 panel 的那个横向布局」（找不到返回 None）。
+
+    ★ 实测（2026.10.18）：`centralwidget` 的 QHBoxLayout 只有 **1 个 item（嵌套布局）**，
+    真正的横向分栏在**下一层嵌套布局**里 ⇒ 必须递归进嵌套布局找，不能只看 parent().layout()。
+    ★ 只动 stretch，不搬控件、不嵌套（2026.10.18 的析构崩溃教训）。
+    """
+    try:
+        from PySide2.QtWidgets import QHBoxLayout
+    except Exception:
+        return None
+    root = panel.parent() if panel is not None else None
+    first = root.layout() if root is not None else None
+    queue = [first]
+    guard = 0
+    while queue and guard < 50:
+        guard += 1
+        lay = queue.pop(0)
+        if lay is None:
+            continue
+        try:
+            count = lay.count()
+        except RuntimeError:
+            continue
+        for i in range(count):
+            it = lay.itemAt(i)
+            if it is None:
+                continue
+            wd = it.widget()
+            if wd is panel and isinstance(lay, QHBoxLayout):
+                return lay
+            sub = it.layout()
+            if sub is not None:
+                queue.append(sub)
+    return None
+
+
+def _apply_collapse_ratio(layout, closed):
+    """折叠时把「中间画布」与「最右侧区域」设成 1:1；展开时还原原值。
+
+    跳过「工具箱」与 14px 折叠把手本身，把剩下的两项（画布标签页、右侧容器）
+    stretch 都设 1 ⇒ 两者等分剩余宽度（用户："折叠后按 1:1 布局"）。
+    """
+    try:
+        count = layout.count()
+        if count < 2:
+            return
+        if closed:
+            if not hasattr(layout, "_m1_saved_stretches"):
+                layout._m1_saved_stretches = [layout.stretch(i) for i in range(count)]
+            visible = []
+            for i in range(count):
+                it = layout.itemAt(i)
+                if it is None:
+                    continue
+                wd = it.widget()
+                if wd is not None and wd.objectName() in ("tool_tab_widget", "btn_collapse_toolbox"):
+                    continue          # 工具箱本身与 14px 把手不参与等分
+                visible.append(i)     # ★ 右侧区域在 .ui 里是「嵌套布局」而不是控件 ⇒ 也要算进来
+            if len(visible) >= 2:
+                for i in visible:
+                    layout.setStretch(i, 0)
+                layout.setStretch(visible[0], 1)      # 中间：流程图画布
+                layout.setStretch(visible[-1], 1)     # 右侧：图像 / 日志
+        else:
+            saved = getattr(layout, "_m1_saved_stretches", None)
+            if saved is not None:
+                for i, v in enumerate(saved):
+                    if i < count:
+                        layout.setStretch(i, v)
+                try:
+                    del layout._m1_saved_stretches
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 class _ToolboxCollapseHost(QObject):
     """左面板折叠开关：一个按钮切换「工具箱」Tab 的显示 / 隐藏。"""
 
@@ -934,6 +1012,8 @@ class _ToolboxCollapseHost(QObject):
             if self._closed:
                 self._panel.setVisible(True)
                 self._closed = False
+                # ★ 目标3-M1：展开 ⇒ 还原折叠前的伸缩比例
+                _apply_collapse_ratio(_side_by_side_layout(self._panel), False)
                 # ★ 还原折叠前宽度：布局按 stretch 给的宽度可能差几像素 ⇒ 用最小宽兜住
                 if self._saved_width > 0:
                     self._panel.setMinimumWidth(self._saved_width)
@@ -946,6 +1026,8 @@ class _ToolboxCollapseHost(QObject):
                     self._saved_width = w
                 self._panel.setMinimumWidth(0)
                 self._panel.setVisible(False)
+                # ★ 目标3-M1：折叠后 中间画布 : 右侧区域 = 1:1（用户：不要再把工具箱的位置全给画布）
+                _apply_collapse_ratio(_side_by_side_layout(self._panel), True)
                 _activate_parent_layout(self._panel)
                 self._closed = True
                 self._button.setText(COLLAPSE_ARROW_CLOSED)

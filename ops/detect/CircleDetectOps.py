@@ -7,6 +7,7 @@
 引擎入口 `_run_circle` + 显示层绘制 `_draw_circle` + 日志文案 `_format_circle` +
 参数校验 `validate_circle` + 声明表 `CIRCLE_SPECS`。
 """
+from core import log_texts as T
 import cv2
 import numpy as np
 
@@ -85,7 +86,7 @@ def _draw_circle(display_img, results, params):
 
 
 def _format_circle(results):
-    return "检测到{0}个圆".format(len(results))
+    return T.CIRCLE_COUNT.format(n=len(results))
 
 
 # ----------------------------------------------------------------------

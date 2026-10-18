@@ -96,7 +96,10 @@ _out2, _res2, roi2, spec2 = w._execute_node(n_inv, HOUGH, None, src_roi)
 check("缺省情况下：下游节点继承上游的 ROI 框（roi_info 与上游一致、标记为 roi）",
       (roi2[0], roi2[1], roi2[2], roi2[3]) == (src_roi[0], src_roi[1], src_roi[2], src_roi[3])
       and roi2[6] == "roi", roi2)
-check("日志里写明是继承来的", "继承上游ROI框" in w._format_result_text(n_inv, _res2, roi2, spec2),
+# ★ 批次6 目标3-M1 第 2 次修改（3.1.2）：用户要求去掉「← 继承上游ROI框」短注
+#   ⇒ 这里改断言"日志里**不再**写这句"；继承是否生效仍由上一条 roi_info 断言证明。
+check("日志里不再追「继承上游ROI框」短注（3.1.2 起）",
+      "继承上游" not in w._format_result_text(n_inv, _res2, roi2, spec2),
       w._format_result_text(n_inv, _res2, roi2, spec2))
 
 # 明确选"绘制"（roi_inherit=False）+ 自己的 ROI → 就用自己的
@@ -123,8 +126,8 @@ rows = []
 for r in range(w.execution_log.rowCount()):
     rows.append((w.execution_log.item(r, 2).text() if w.execution_log.item(r, 2) else "",
                  w.execution_log.item(r, 4).text() if w.execution_log.item(r, 4) else ""))
-check("连续执行：取反那一行写着'← 继承上游ROI框'",
-      any(n == "取反" and "继承上游ROI框" in t for n, t in rows), rows)
+check("连续执行：取反那行不再带「← 继承上游ROI框」短注（3.1.2 起）",
+      not any(n == "取反" and "继承上游" in t for n, t in rows), rows)
 
 print()
 print("失败项：", fails if fails else "无")
