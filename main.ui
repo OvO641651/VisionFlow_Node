@@ -425,6 +425,37 @@
          </widget>
         </item>
         <item>
+         <widget class="QToolButton" name="btn_collapse_toolbox">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="minimumSize">
+           <size>
+            <width>14</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>14</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>折叠工具箱</string>
+          </property>
+          <property name="text">
+           <string>&lt;</string>
+          </property>
+          <property name="autoRaise">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QTabWidget" name="flowWidget">
           <property name="currentIndex">
            <number>0</number>

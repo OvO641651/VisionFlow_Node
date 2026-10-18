@@ -887,3 +887,122 @@ if __name__ == '__main__':
 
     window.show()
     sys.exit(app.exec_())
+
+# ===================== 批次6 目标2-M3：左面板折叠 / 展开 =====================
+# ★ 为什么放在本文件：用户拍板「main.py 只允许加 1~2 行调用，稍大逻辑一律先写成
+#   widgets/ 或 core/ 的模块级函数」；折叠逻辑 = 纯界面行为 ⇒ 落 widgets/。
+# ★ 信号接线用 QObject 子对象（parent=按钮）的绑定方法，**不用 lambda / 闭包**
+#   （2026.10.18 的教训：lambda/闭包在控件析构时会偶发崩 0xC0000409）。
+COLLAPSE_ARROW_OPEN = "<"
+COLLAPSE_ARROW_CLOSED = ">"
+
+
+def _activate_parent_layout(widget):
+    """★ 显示 / 隐藏面板后**立刻让父布局重新分配空间**（真机上有 resize 事件会自然触发，
+    无头环境不会 ⇒ 这里显式激活一次；对真机只是"提前生效"，行为一致）。"""
+    try:
+        from PySide2.QtWidgets import QLayout, QApplication
+        win = widget.window()
+        # ★ 面板所在的 QHBoxLayout 嵌在 QVBoxLayout 里 ⇒ 只激活 parentWidget().layout()
+        #   是不够的（那是外层竖布局）⇒ 把窗口里**所有布局**都激活一次（幂等、代价可忽略）。
+        # ★ 要**跑两遍**：外层布局先给"页面/TabWidget"新宽度，内层布局（tab 页 → 画布视图）
+        #   才会跟着重新分配；中间让事件循环跑一次（实测一遍只更新到 flowWidget 层）。
+        for _ in range(2):
+            for lay in win.findChildren(QLayout):
+                lay.activate()
+            try:
+                QApplication.processEvents()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+class _ToolboxCollapseHost(QObject):
+    """左面板折叠开关：一个按钮切换「工具箱」Tab 的显示 / 隐藏。"""
+
+    def __init__(self, button, panel, parent=None):
+        super().__init__(parent if parent is not None else button)
+        self._button = button
+        self._panel = panel
+        self._saved_width = 0
+        self._closed = False
+        button.clicked.connect(self.toggle)
+
+    def toggle(self, *_args):
+        try:
+            if self._closed:
+                self._panel.setVisible(True)
+                self._closed = False
+                # ★ 还原折叠前宽度：布局按 stretch 给的宽度可能差几像素 ⇒ 用最小宽兜住
+                if self._saved_width > 0:
+                    self._panel.setMinimumWidth(self._saved_width)
+                _activate_parent_layout(self._panel)
+                self._button.setText(COLLAPSE_ARROW_OPEN)
+                self._button.setToolTip("折叠工具箱")
+            else:
+                w = self._panel.width()
+                if w > 0:
+                    self._saved_width = w
+                self._panel.setMinimumWidth(0)
+                self._panel.setVisible(False)
+                _activate_parent_layout(self._panel)
+                self._closed = True
+                self._button.setText(COLLAPSE_ARROW_CLOSED)
+                self._button.setToolTip("展开工具箱")
+        except RuntimeError:
+            pass                      # 窗口正在销毁 ⇒ 忽略
+
+
+def install_toolbox_collapse(host):
+    """把「工具箱」折叠开关接到 main.ui 里的 btn_collapse_toolbox 上（找不到就什么都不做）。"""
+    try:
+        from PySide2.QtWidgets import QToolButton
+    except Exception:
+        return None
+    mw = getattr(host, "main_window", host)
+    panel = mw.findChild(QTabWidget, "tool_tab_widget")
+    button = mw.findChild(QToolButton, "btn_collapse_toolbox")
+    if panel is None or button is None:
+        return None
+    try:
+        button.setAutoRaise(True)
+        button.setFixedWidth(14)
+        # ★ 把手一直可见（折叠后它就是唯一的"展开"入口）
+        button.setVisible(True)
+    except RuntimeError:
+        return None
+    obj = _ToolboxCollapseHost(button, panel, parent=button)
+    mw._toolbox_collapse = obj       # 存一份强引用，防被回收
+    return obj
+
+
+def block_group_drag(tree):
+    """★ 批次6 目标2-M3c：**树干（顶层项）不许被拖拽到画布上建节点**。
+
+    做法 = 从顶层项的 flags 里摘掉 `Qt.ItemIsDragEnabled`：
+    Qt 的 `QAbstractItemView` 在**没有这个标志**时根本不会启动拖拽 ⇒ 从源头拖不动，
+    不依赖 `startDrag` 子类/事件过滤器（树控件是在 `main.ui` 里声明的，换子类代价大）。
+    ★ 只摘**顶层**项：子项（真实节点）照旧可以拖 ✓；用户自己加的测试树干也是顶层 ⇒ 同样被挡住 ✓
+    ★ `QTreeWidgetItem` 只是 C++ 指针 ⇒ 这里**当场遍历、当场改**，不保存任何 item 引用。
+    返回被处理的顶层项数（找不到树就返回 0，不抛异常）。
+    """
+    if tree is None:
+        return 0
+    count = 0
+    try:
+        top_count = tree.topLevelItemCount()
+    except RuntimeError:
+        return 0
+    for i in range(top_count):
+        try:
+            item = tree.topLevelItem(i)
+            if item is None:
+                continue
+            flags = item.flags()
+            if flags & Qt.ItemIsDragEnabled:
+                item.setFlags(flags & ~Qt.ItemIsDragEnabled)
+                count += 1
+        except RuntimeError:
+            continue                 # 项已被销毁 ⇒ 跳过
+    return count

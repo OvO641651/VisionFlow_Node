@@ -4,6 +4,7 @@ from PySide2.QtGui import (QColor, QPen, QPainterPath, QBrush, QFont,
 
 # ★ 批次6 目标1-M2a：算子名 → 图标键（零 Qt）+ 图标的占位画法（QPainter 自绘，不用图片素材）
 from core.icon_keys import icon_key_for
+from core.NodeRegistry import get_spec
 # ★ 批次6 目标1-M4：右键画布「添加节点」两级菜单的清单（零 Qt；目标2 的树搜索以后共用这一份）
 from core import node_catalog
 from widgets.node_visuals import draw_icon
@@ -1251,6 +1252,13 @@ class FlowchartView(QGraphicsView):
 
         # 检查数据有效，并开始执行落地操作
         if text and self.main_window:
+            # ★ 批次6 目标2-M3c：**树干 / 非节点项不许拖进画布**
+            #   判据与树双击 / 右键建节点**同源**（都是 "名字不在注册表就拒绝"）。
+            #   ★ 闸门放在**用户入口**（dropEvent），不放 `add_flow_node`
+            #     —— 那是底层 API，用例会用它造任意名字的节点来量尺寸。
+            if get_spec(text) is None:
+                event.ignore()
+                return
             pos = self.mapToScene(event.pos())
             self.main_window.add_flow_node(text, pos)
             event.acceptProposedAction()

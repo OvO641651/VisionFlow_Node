@@ -12,7 +12,7 @@ import os
 
 from core.Detector import DetectorShape
 from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView, node_topleft_for_center
-from widgets.FlowPages import FlowPageManager
+from widgets.FlowPages import FlowPageManager, block_group_drag
 from ui.LineParamsDialog import LineParamsDialog
 from ui.CircleParamsDialog import CircleParamsDialog
 from ui.GrayParamsDialog import GrayParamsDialog
@@ -266,6 +266,13 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         # ★ M1c：「无匹配节点」提示控件**已删除**（用户：无匹配时下方不显示节点即可，不需提示，避免挤变形）
         _install_tree_search(self.main_window, self.tree)
 
+        # ★ 批次6 目标2-M3：左面板折叠把手（逻辑在 widgets\FlowPages.py，这里只挂一行）
+        try:
+            from widgets.FlowPages import install_toolbox_collapse
+            install_toolbox_collapse(self.main_window)
+        except Exception:
+            pass
+
 
         # 流程图初始化，按照 FlowChart 中的 TestWindow 类的内容进行初始化和编写具体内容
         # 初始化节点和连线列表
@@ -277,6 +284,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         # 启用左侧树控件的拖拽功能
         self.main_window.tree.setDragEnabled(True) # 拖动使能，可以拖动里面树枝控件
         self.main_window.tree.setDefaultDropAction(Qt.CopyAction) # 拖拽时的行为是“复制”，而不是“剪切”
+        block_group_drag(self.main_window.tree) # ★ 目标2-M3c：树干(顶层项)不许拖到画布（逻辑在 widgets\FlowPages.py）
 
         # 改为"浏览器式"多页面流程图
         """页面管理（标签页、添加/删除页面、每页自己的方框和连线）都封装在 FlowPages.py 的FlowPageManager 类里，
@@ -589,7 +597,11 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         dialog.exec_()
 
     def add_flow_node(self, name, pos):
-        """拖拽 / 双击添加节点：加到"当前页"（真正建节点在 _add_node_to_page）"""
+        """拖拽 / 双击添加节点：加到"当前页"（真正建节点在 _add_node_to_page）
+
+        ★ 本方法是**底层 API**（用例会用它造任意名字的节点来量尺寸）⇒ **此处不校验名字**；
+          "树干 / 非节点项不许建节点"的闸门设在**用户入口**（树双击 / 右键菜单 / `dropEvent`）。
+        """
         node = self._add_node_to_page(self.flow_page_mgr.current_page, name, pos)
         self._undo_note("add_node", node)   # ★ 目标4：记一条"新建节点"命令
         # ★ 批次6 目标1-M1：画布 = 固定大画布；这一页**还没"跟过内容"**且已经有节点
@@ -661,22 +673,28 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
 
     def _on_tree_double_click(self, _item, _column):
-        """双击左侧树节点时触发（数据抓取阶段）"""
-        # 获取当前项的 QModelIndex
-        index = self.tree.currentIndex()
-        if not index.isValid():
-            return
+        """双击左侧树节点时触发（数据抓取阶段）。
 
-        # 判断是否是根节点（一级标题），如果是则不放行，即只双击树枝使才创建方框
-        parent = index.parent()
-        if not parent.isValid():
+        ★ 批次6 目标2-M3：加**两层判据**，树干 / 非节点项（如「新建项目」）**不许建节点**：
+          ① 顶层项（树干）= 交给 Qt 默认的展开 / 折叠；
+          ② 名字不在注册表里 ⇒ 直接返回（兜住测试树干、以后任何非节点项）。
+        ★ 名称**当场拷成 Python 字符串**再延迟传给创建函数（QTreeWidgetItem 只是 C++ 指针，
+          槽函数执行前可能已被销毁 ⇒ 不能长期持有，见 2026.10.2 的教训）。
+        """
+        if _item is None:
             return
-
-        # 直接通过 index 获取节点名称
-        node_name = index.data(0)
+        # ① 顶层 = 树干 ⇒ 不建节点（双击行为 = Qt 的展开 / 折叠）
+        try:
+            if _item.parent() is None:
+                return
+            node_name = str(_item.text(0) or "")
+        except RuntimeError:
+            return                      # 项已被销毁
         if not node_name:
             return
-
+        # ② 不在注册表里 ⇒ 不是节点（树干 / 「新建项目」/ 未知项）
+        if get_spec(node_name) is None:
+            return
         # 延迟 1 毫秒的，把“文本数据”而不是“C++对象”传给创建函数，然后触发创建方框的功能
         QTimer.singleShot(1, lambda: self._create_node_from_name(node_name))
 
@@ -690,6 +708,10 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
                     给了坐标 = **右键画布建节点**：用户拍板"**节点中心对齐鼠标点击处**"，
                     建完还要**自动选中 + 滚动到可见**。
         """
+        # ★ 批次6 目标2-M3：**未注册的名字一律不建节点**（树干 / 「新建项目」/ 拼错的名字）
+        #   —— 与 `_on_tree_double_click` 的第 ② 层判据同源；右键菜单的清单本来就来自注册表 ✓
+        if get_spec(name) is None:
+            return None
         if pos is not None:
             node = self.add_flow_node(name, node_topleft_for_center(name, pos))
             # ★ M4：自动选中（`setSelected` 会触发 selectionChanged → `on_node_selected`，
