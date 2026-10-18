@@ -1,6 +1,6 @@
 from PySide2.QtCore import Qt, QPointF, Signal, QObject, QTimer, QRectF
 from PySide2.QtGui import (QColor, QPen, QPainterPath, QBrush, QFont,
-                           QFontMetricsF, QPainter)
+                           QFontMetricsF, QPainter, QPixmap)
 
 # ★ 批次6 目标1-M2a：算子名 → 图标键（零 Qt）+ 图标的占位画法（QPainter 自绘，不用图片素材）
 from core.icon_keys import icon_key_for
@@ -39,6 +39,25 @@ FOLLOW_MARGIN = 24
 FOLLOW_FACTOR = 0.35      # 每帧只追"差距"的 35%（越大跟得越紧；0.2~0.5 之间调手感）
 FOLLOW_MAX_STEP = 24      # 单帧最多滚多少像素（防瞬移）
 FOLLOW_MIN_STEP = 1       # 差距小于它就别动（防抖）
+
+# ★ 批次6 目标1-M5（2026.10.18，用户口径）：
+#   ① 网格 20px（**默认开启、不加开关**；大小以后看效果再调）
+#   ② 网格吸附（**默认开、不加开关**）：坐标吸附到 20 的倍数
+#   ③ 对齐辅助线 + 吸附（阈值 6px）
+#   ④ 对中：右键画布空白菜单顶部「居中所选」「居中全部」
+#   ★ 不做：一键对齐 / 整理流程（已移入想法，见《批次6 技术方案》§十三 第 24 条）
+#
+# ★★ 第 2 次修改（M5b，2026.10.18 用户实机报三条）：
+#   ① "网格基本看不到" ⇒ 1px 灰点对比太弱 ⇒ 改成**一白一灰棋盘格**（照用户参考图）；
+#   ② "每移动一下都吸附，一卡一卡" ⇒ 拖动中**不再吸附**，只显示对齐提示线；**松手时才吸附**；
+#   ③ "对齐线不在中间，应与引出/接收线点同一高度" ⇒ 线改取**锚点坐标**：
+#      旧实现用 `boundingRect().center()`，而 `boundingRect()` 是 `rect()` 外扩 8.5px（圆环 5 + 线宽 1.5 + 2）
+#      ⇒ 线偏了 8.5px（实测出现 178.5 这种半像素就是奇数宽 + 外扩造成的）。
+GRID_SIZE = 20                              # 网格间距（px）
+GRID_COLOR_LIGHT = QColor(255, 255, 255)    # #FFFFFF 棋盘格亮格
+GRID_COLOR_DARK = QColor(230, 230, 230)     # #E6E6E6 棋盘格暗格（用户参考图观感）
+ALIGN_THRESHOLD = 30.0                       # 对齐吸附阈值（px）
+ALIGN_LINE_COLOR = QColor(30, 136, 229)     # #1E88E5（与 M3 的橙色视口框区分）
 
 
 class NodeItem(QObject, QGraphicsRectItem):
@@ -158,9 +177,114 @@ class NodeItem(QObject, QGraphicsRectItem):
         except RuntimeError:
             return None
 
+    def _anchor_center_scene(self):
+        """本节点的**锚点中心**（场景坐标）= `pos + (上/下锚点 x, 左/右锚点 y)`。
+
+        ★ M5b 第 ③ 条（用户："对齐吸附出现的线不是在中间的，应该与引出/接收线点在同一个
+          高度上才对"）：算中心**不能用 `boundingRect()`** —— 它为了让圆环/描边不留残影
+          `rect().adjusted(-8.5, -8.5, 8.5, 8.5)` 外扩了一圈，`boundingRect().center()`
+          比真正中心**偏 8.5px**（实测线坐标出现 178.5 这种半像素）。
+          ⇒ 直接取**锚点**：上/下锚点 x == 节点中线 x；左/右锚点 y == 节点中线 y。
+        """
+        p = self.pos()
+        return QPointF(float(p.x()) + float(self.in_port.x()),
+                       float(p.y()) + float(self.left_port.y()))
+
+    def _align_targets(self):
+        """★ M5b：找**对齐目标**（只算视口内、排除自己）；返回 `(锚点 x, 锚点 y)`（None = 没命中）。
+
+        与旧实现 `_apply_snap` 的区别：**只算、不动** ——
+        拖动中由 `_update_align_hints()` 拿它画提示线；松手时由 `_snap_on_release()` 拿它真正吸附
+        （用户："现在的吸附是每移动一下都会吸附，一卡一卡的" ⇒ 拖动中必须不吸）。
+        """
+        view = self._flow_view()
+        if view is None or not getattr(view, "snap_enabled", True):
+            return None, None
+        try:
+            mine = self._anchor_center_scene()
+            vrect = view.mapToScene(view.viewport().rect()).boundingRect()
+            others = [it for it in view.flow_scene.items(vrect)
+                      if isinstance(it, NodeItem) and it is not self]
+        except RuntimeError:
+            return None, None
+        thr = float(getattr(view, "align_threshold", ALIGN_THRESHOLD))
+        best_x = None
+        best_y = None
+        for other in others:
+            try:
+                oc = other._anchor_center_scene()
+            except RuntimeError:
+                continue
+            dx = abs(oc.x() - mine.x())
+            dy = abs(oc.y() - mine.y())
+            if dx < thr and (best_x is None or dx < abs(best_x - mine.x())):
+                best_x = float(oc.x())
+            if dy < thr and (best_y is None or dy < abs(best_y - mine.y())):
+                best_y = float(oc.y())
+        return best_x, best_y
+
+    def _update_align_hints(self):
+        """★ M5b：拖动中**只显示**对齐虚线（提示"松手会吸到这里"），**不移动节点** ⇒ 手感顺滑。"""
+        view = self._flow_view()
+        if view is None:
+            return
+        bx, by = self._align_targets()
+        lines = []
+        if bx is not None:
+            lines.append(("v", bx))
+        if by is not None:
+            lines.append(("h", by))
+        try:
+            if list(view._align_lines) != lines:
+                view._align_lines = lines
+                view.viewport().update()
+        except RuntimeError:
+            pass
+
+    def _snap_on_release(self):
+        """★ M5b：**松手时一次性吸附**（对齐优先、否则网格），仍走 `setPos` ⇒ 四边夹取照旧。
+
+        ★ 必须在 `positionChanged.emit()` **之前**完成 —— 撤销栈记的"这次拖动的终点"就是
+          吸附后的位置（否则 undo/redo 会停在没吸附的零碎坐标上）。
+        """
+        view = self._flow_view()
+        try:
+            pos = self.pos()
+        except RuntimeError:
+            return
+        x, y = float(pos.x()), float(pos.y())
+        bx = by = None
+        g = 0.0
+        if view is not None and getattr(view, "snap_enabled", True):
+            bx, by = self._align_targets()
+            try:
+                g = float(getattr(view, "grid_size", GRID_SIZE) or 0)
+            except (TypeError, ValueError):
+                g = 0.0
+        # 对齐优先（用户要"与引出/接收线点同高"），没命中才吸网格
+        if bx is not None:
+            x = float(bx) - float(self.in_port.x())        # 锚点 x == 一半宽 ⇒ 换回左上角
+        elif g > 0:
+            x = round(x / g) * g
+        if by is not None:
+            y = float(by) - float(self.left_port.y())
+        elif g > 0:
+            y = round(y / g) * g
+        try:
+            if (x, y) != (float(pos.x()), float(pos.y())):
+                self.setPos(QPointF(x, y))                 # `setPos` 自带 `_clamp_point`（四边夹取）
+            if view is not None and view._align_lines:
+                view._align_lines = []
+                view.viewport().update()
+        except RuntimeError:
+            pass
+
     def mouseMoveEvent(self, event):
         """实时拖拽响应"""
         super().mouseMoveEvent(event) # 先让底层把方块真正拖拽过去
+        # ★ M5b（第 2 次修改）：拖动中**不吸附**（旧版每步都吸 ⇒ 一卡一卡），只**显示**对齐虚线作提示；
+        #   真正的吸附留到松手（`mouseReleaseEvent` 里的 `_snap_on_release()`）。
+        self._update_align_hints()
         self._clamp_into_canvas()     # ★ 丙：拖动时也不许出画布（四个边界全固定）
         # ★ 第 6 次修改（甲 = 丙 + 只复活乙的 B）：让视口跟着节点滚，节点始终留在视野里。
         #   · 只调 follow_item（ensureVisible）—— **绝不调 `_apply_canvas_rect()`**（那会让矩形无限增长）
@@ -180,6 +304,9 @@ class NodeItem(QObject, QGraphicsRectItem):
         """鼠标松开"""
         super().mouseReleaseEvent(event)  # 鼠标松开时更新最后一次位置
         self._clamp_into_canvas()         # ★ 丙：松手时再夹一次（保险）
+        # ★ M5b：**松手时才吸附**（对齐优先、否则网格），顺带清掉对齐虚线。
+        #   ★ 必须在下面的 `positionChanged.emit()` **之前** —— 撤销栈记的终点就是吸附后的位置。
+        self._snap_on_release()
         # ★ 第 7 次修改：限速跟随期间节点可能短暂贴边 ⇒ 松手时**不限速**拉回可见（同样持重入锁）
         if not self._in_follow:
             view = self._flow_view()
@@ -469,6 +596,13 @@ class FlowchartView(QGraphicsView):
         self._content_positioned = False   # 这一页的视口是否已经"跟过内容"（导入方案时用）
         self._apply_canvas_rect(goto_topleft=True)
 
+        # ★ 批次6 目标1-M5：点阵网格 / 网格吸附 / 对齐辅助线（用户：默认全开、不加开关）
+        self.grid_enabled = True                     # 是否画点阵网格
+        self.grid_size = float(GRID_SIZE)            # 网格间距（px）
+        self.snap_enabled = True                     # 网格吸附 + 对齐吸附的总开关（默认开）
+        self.align_threshold = float(ALIGN_THRESHOLD)  # 对齐吸附阈值（px）
+        self._align_lines = []                       # 当前要对齐的线：[("v", x) / ("h", y)]
+
         self._start_node = None # 开始节点
         self._temp_line = None # 灰线
 
@@ -513,6 +647,88 @@ class FlowchartView(QGraphicsView):
             v = self.verticalScrollBar()
             h.setValue(h.minimum())
             v.setValue(v.minimum())
+
+    def _grid_brush(self):
+        """★ M5b：**一白一灰棋盘格**纹理（2×2 格 = 40×40 小图，做 `QBrush` 平铺）。
+
+        为什么用纹理而不是逐格 `fillRect`：整块画布 4000×3000 / 20 = **200×150 = 3 万格**，
+        逐格填会明显拖慢重绘；纹理平铺是**一次 `drawRect`**，实测不影响拖动帧率。
+        小图做缓存（`grid_size` 变了才重建）。
+        """
+        try:
+            g = int(round(float(self.grid_size)))
+        except (TypeError, ValueError):
+            return None
+        if g <= 0:
+            return None
+        cached = getattr(self, "_grid_brush_cache", None)
+        if cached is not None and getattr(self, "_grid_brush_size", None) == g:
+            return cached
+        pix = QPixmap(g * 2, g * 2)
+        pix.fill(GRID_COLOR_LIGHT)
+        p = QPainter(pix)
+        try:
+            p.fillRect(QRectF(0, 0, g, g), GRID_COLOR_DARK)                 # 左上 暗
+            p.fillRect(QRectF(g, g, g, g), GRID_COLOR_DARK)                 # 右下 暗
+        finally:
+            p.end()
+        brush = QBrush(pix)
+        self._grid_brush_cache = brush
+        self._grid_brush_size = g
+        return brush
+
+    def drawBackground(self, painter, rect):
+        """★ M5b：**一白一灰棋盘格**背景（20px 格）—— 用户："点阵基本看不到，要图 2 那种棋盘格"。
+
+        · 只画**背景**、不往场景加任何图元 ⇒ **不影响命中/连线/小地图/存档**；
+        · 先把 `rect` 与"当前视口覆盖的场景矩形"求交 —— 否则 Qt 有时会传整块 4000×3000；
+        · 平铺起点对齐到 **2×2 格的整数倍**（`setBrushOrigin`）⇒ 否则起点随 rect 变化会"爬格子"。
+        """
+        super().drawBackground(painter, rect)
+        if not self.grid_enabled:
+            return
+        try:
+            brush = self._grid_brush()
+            if brush is None:
+                return
+            area = QRectF(rect).intersected(self.mapToScene(self.viewport().rect()).boundingRect())
+            if area.isEmpty():
+                return
+            g = float(self.grid_size)
+            step = g * 2.0
+            left = int(area.left() // step) * step
+            top = int(area.top() // step) * step
+            painter.save()
+            try:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(brush)
+                painter.setBrushOrigin(QPointF(left, top))
+                painter.drawRect(QRectF(left, top,
+                                        float(area.right()) - left,
+                                        float(area.bottom()) - top))
+            finally:
+                painter.restore()
+        except (RuntimeError, ValueError):
+            return
+
+    def drawForeground(self, painter, rect):
+        """★ 批次6 目标1-M5：**对齐辅助线**（拖动时临时虚线，蓝色）。
+
+        画在**前景**而不是往场景里加 `QGraphicsLineItem` ⇒ 不污染场景、不进 `.vfproj` 存档、
+        也不会被框选/命中到（松手即清空）。
+        """
+        super().drawForeground(painter, rect)
+        if not self._align_lines:
+            return
+        try:
+            painter.setPen(QPen(ALIGN_LINE_COLOR, 1, Qt.DashLine))
+            for kind, value in self._align_lines:
+                if kind == "v":
+                    painter.drawLine(QPointF(value, rect.top()), QPointF(value, rect.bottom()))
+                else:
+                    painter.drawLine(QPointF(rect.left(), value), QPointF(rect.right(), value))
+        except (RuntimeError, ValueError):
+            return
 
     def follow_item(self, item):
         """★ 第 7 次修改（2026.10.17）：**限速平滑跟随**（第 6 次是 `ensureVisible` 一次滚到位 ⇒ 太快）。
@@ -817,6 +1033,15 @@ class FlowchartView(QGraphicsView):
         一级 = 树干（顺序与左侧树一致），二级 = 节点名；**不含测试夹具**（清单见 `core/node_catalog.py`）。
         """
         menu = QMenu(self)
+        # ★ 批次6 目标1-M5：**工具项放菜单最顶部**（用户 2026.10.18：节点类型一多，“添加节点”会很长，
+        #   工具项若放下面会被挤到底部、越来越难找 ⇒ 固定在顶部，永远看得见）。
+        act_center_sel = QAction("居中所选", menu)
+        act_center_sel.triggered.connect(self._center_selected)
+        menu.addAction(act_center_sel)
+        act_center_all = QAction("居中全部", menu)
+        act_center_all.triggered.connect(self._center_all)
+        menu.addAction(act_center_all)
+        menu.addSeparator()
         if scene_pos is None:
             center = self.mapToScene(self.viewport().rect().center())
         else:
@@ -840,6 +1065,41 @@ class FlowchartView(QGraphicsView):
     def create_menu_structure(self, registered=None):
         """菜单结构快照 `[(树干, [节点名…]), …]`（给门禁用例核对"与左侧树逐项一致"用）"""
         return node_catalog.groups(registered)
+
+    # ------------------------------------------------------------------ 对中（M5）
+    def _center_selected(self):
+        """★ 批次6 目标1-M5「居中所选」：把**当前选中的节点**居中到视口。
+
+        ★ 放在 `FlowchartView` 而不是 `MainWindow`：不用新增 MainWindow 方法
+        （门禁 `dsh_t5g2_api_check` 只允许白名单里的那几个），也就不碰 main.py。
+        """
+        try:
+            items = [it for it in self.flow_scene.selectedItems() if isinstance(it, NodeItem)]
+        except RuntimeError:
+            return
+        if not items:
+            return
+        try:
+            self.centerOn(items[0].sceneBoundingRect().center())
+        except RuntimeError:
+            pass
+
+    def _center_all(self):
+        """★ 批次6 目标1-M5「居中全部」：把**整页内容**（包围盒中心）居中到视口；空页 ⇒ 回左上角。"""
+        try:
+            rect = self.flow_scene.itemsBoundingRect()
+        except RuntimeError:
+            return
+        if rect.isNull() or rect.isEmpty():
+            h = self.horizontalScrollBar()
+            v = self.verticalScrollBar()
+            h.setValue(h.minimum())
+            v.setValue(v.minimum())
+            return
+        try:
+            self.centerOn(rect.center())
+        except RuntimeError:
+            pass
 
     def on_selection_changed(self):
         """当场景中的选中节点发生变化时触发"""

@@ -75,14 +75,19 @@ def tree_structure(win):
 
 
 def collect_menu(menu):
-    """把 `QMenu` 摊平成 `[(一级, [二级…]), …]`（子菜单里取 action 文本）"""
+    """把 `QMenu` 摊平成 `[(一级, [二级…]), …]`（子菜单里取 action 文本）。
+
+    ★ 批次6 目标1-M5（2026.10.18）后：右键空白菜单**顶部多了两项工具**
+      （「居中所选」「居中全部」+ 一条分隔线，见方案 §4.5）。
+      本用例关心的是「**添加节点**」那一部分 ⇒ 只取**带子菜单**的动作（= 各树干），
+      工具项 / 分隔线一律跳过 —— 这样 M5 加工具不会把 M4 的判据打红。
+    """
     out = []
     for act in menu.actions():
         sub = act.menu()
         if sub is not None:
             out.append((act.text(), [a.text() for a in sub.actions()]))
-        else:
-            out.append((act.text(), []))
+        # 无子菜单的动作（工具项 / 分隔线）不计入"添加节点"结构
     return out
 
 
