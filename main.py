@@ -5,7 +5,7 @@ from PySide2.QtWidgets import (
 # 打开主窗口，显示小窗口，模体ui窗口，设置流程图画布，导入文件
 from PySide2.QtUiTools import QUiLoader # 导入ui
 from PySide2.QtGui import QIcon    # QIcon 设置图标、QImage 显示图像（QBrush/QColor 随"日志红字"搬去 core/flow_engine.py）
-from PySide2.QtCore import QTimer, Qt, QPointF # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死
+from PySide2.QtCore import QTimer, Qt, QPointF, QObject # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死（QObject：批次6 目标2-M1 信号宿主用）
 
 import cv2
 import os
@@ -245,8 +245,19 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
         # 创建树控件
         self.tree = self.main_window.tree
+        # ★ 批次6 目标2-M1c：树按**像素平滑滚动**（与执行日志表格一致）
+        try:
+            self.tree.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+            self.tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        except Exception:
+            pass
         # 树控件 tree 绑定双击事件，双击实现在画布view中创建方框流程图
         self.main_window.tree.itemDoubleClicked.connect(self._on_tree_double_click)
+
+        # ★ 批次6 目标2-M1：树上方「展开/折叠 + 搜索框」（★ 控件**在 main.ui 的「工具箱」Tab 页里**，此处只接线；
+        #   过滤/折叠逻辑都写成**模块级函数**，不新增 MainWindow 方法 ⇒ 不碰 dsh_t5g2_api_check 白名单）
+        # ★ M1c：「无匹配节点」提示控件**已删除**（用户：无匹配时下方不显示节点即可，不需提示，避免挤变形）
+        _install_tree_search(self.main_window, self.tree)
 
 
         # 流程图初始化，按照 FlowChart 中的 TestWindow 类的内容进行初始化和编写具体内容
@@ -1014,6 +1025,157 @@ def main():
     # window.main_window.show() # 只显示，不最大化
 
     app.exec_()
+
+# ==================== 批次6 目标2-M1：树状图搜索 + 展开/折叠（模块级，不新增 MainWindow 方法） ====================
+def _layout_directly_containing(widget):
+    """找到**直接**装着该控件的那个 QLayout（会递归进子 layout）。找不到返回 None。"""
+    parent = widget.parentWidget()
+    if parent is None:
+        return None
+    root = parent.layout()
+    if root is None:
+        return None
+
+    def walk(lay):
+        for i in range(lay.count()):
+            item = lay.itemAt(i)
+            if item is None:
+                continue
+            if item.widget() is widget:
+                return lay
+            sub = item.layout()
+            if sub is not None:
+                found = walk(sub)
+                if found is not None:
+                    return found
+        return None
+
+    return walk(root)
+
+
+def _tree_group_items(tree):
+    return [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+
+
+def _sync_tree_expand_button(tree, button):
+    groups = _tree_group_items(tree)
+    all_expanded = bool(groups) and all(g.isExpanded() for g in groups)
+    button.setText("展开" if all_expanded else "折叠")
+
+
+def _toggle_tree_expand(tree, button=None):
+    """一键展开 / 折叠**全部**分组（一个按钮切换，文字随状态变）。"""
+    groups = _tree_group_items(tree)
+    all_expanded = bool(groups) and all(g.isExpanded() for g in groups)
+    for g in groups:
+        g.setExpanded(not all_expanded)
+    if button is not None:
+        _sync_tree_expand_button(tree, button)
+
+
+def _filter_node_tree(tree, text):
+    """按「**子串**」过滤树：匹配**节点名 + 分组名**，**不区分大小写**。
+
+    · 命中**分组名** ⇒ 该组全部节点显示；
+    · 命中**节点名** ⇒ 显示该节点，并让其分组**可见且自动展开**；
+    · **清空** ⇒ 全部恢复，且**折叠状态回到搜索前**（搜索开始那一刻记下的快照）；
+    · **无匹配** ⇒ **全部隐藏即可**（★ M1c：**不显示任何提示**、不弹窗，避免把窗口挤变形）。
+    返回当前可见的节点名列表（供用例断言）。
+    """
+    kw = (text or "").strip().lower()
+    groups = _tree_group_items(tree)
+
+    if not kw:                                     # 清空 ⇒ 恢复
+        states = getattr(tree, "_search_pre_expanded", None)
+        for i, g in enumerate(groups):
+            g.setHidden(False)
+            for j in range(g.childCount()):
+                g.child(j).setHidden(False)
+            if states is not None and i < len(states):
+                g.setExpanded(bool(states[i]))
+        tree._search_pre_expanded = None
+        return []
+
+    if getattr(tree, "_search_pre_expanded", None) is None:   # 首次输入 ⇒ 记下折叠态快照
+        tree._search_pre_expanded = [g.isExpanded() for g in groups]
+
+    visible = []
+    for g in groups:
+        group_hit = kw in (g.text(0) or "").lower()
+        child_hit = False
+        for j in range(g.childCount()):
+            child = g.child(j)
+            hit = group_hit or (kw in (child.text(0) or "").lower())
+            child.setHidden(not hit)
+            if hit:
+                child_hit = True
+                visible.append(child.text(0))
+        g.setHidden(not (group_hit or child_hit))
+        if child_hit and not group_hit:
+            g.setExpanded(True)                    # 命中节点 ⇒ 自动展开其分组（★ 当场用 item，不缓存）
+    return visible
+
+
+class _TreeSearchHost(QObject):
+    """树搜索/展开折叠的**信号宿主**：以树为 parent，Qt 父子关系保证析构顺序确定。
+
+    ★ 为什么不用 lambda/闭包直接 connect：纯 Python 可调用挂在 C++ 信号上时，
+    窗口/解释器析构阶段会偶发 0xC0000409（实测 lambda 6 次崩 1、weakref 闭包 16 次崩 3；
+    把连接去掉 16 次全零）。用 QObject 子对象 + 绑定方法后稳定 ✓
+    """
+
+    def __init__(self, tree, button, search):
+        QObject.__init__(self, tree)
+        self._tree = tree
+        self._button = button
+        self._search = search
+
+    def on_expand_clicked(self, *_args):
+        _toggle_tree_expand(self._tree, self._button)
+
+    def on_search_changed(self, text):
+        _filter_node_tree(self._tree, text)
+
+
+def _install_tree_search(host, tree):
+    """接线：[展开/折叠] + [搜索框] 两个控件**来自 main.ui 的「工具箱」Tab 页**（★ M1c 已删除「无匹配提示」）。
+
+    ★★ 为什么不用「把树包一层 QWidget」的做法（更"正上方"，但**必须放弃**）：
+       嵌套/搬动树会让 Qt 在窗口或解释器析构阶段**偶发 0xC0000409**（实测 16 次崩 3 次；
+       而不动树结构时 16 次全零）。现在只往**已有的顶部按钮行**里 `insertWidget`，
+       **不改任何现有控件的父子关系、不改 main.ui** ⇒ 稳定 ✓
+       视觉上这一行本来就在树的**正上方那一带**（`verticalLayout_4` 的第一行）✓
+    """
+    from PySide2.QtWidgets import QToolButton, QLineEdit
+
+    def _child(name, cls):
+        """优先在树所在页里找，其次在主窗口里找（★ 控件现在来自 main.ui）。"""
+        try:
+            w = tree.findChild(cls, name)
+        except Exception:
+            w = None
+        if w is None:
+            try:
+                w = host.findChild(cls, name)
+            except Exception:
+                w = None
+        return w
+
+    button = _child("btn_tree_expand", QToolButton)
+    search = _child("edit_tree_search", QLineEdit)
+    hint = None                                  # ★ M1c：提示控件已删除
+    if button is None or search is None:              # .ui 里没有 ⇒ 不装（不崩）
+        return None
+
+    tree._search_pre_expanded = None
+
+    # ★ 接线：宿主是 QObject 子对象（parent=tree）⇒ 析构顺序确定
+    search_host = _TreeSearchHost(tree, button, search)
+    button.clicked.connect(search_host.on_expand_clicked)
+    search.textChanged.connect(search_host.on_search_changed)
+    _sync_tree_expand_button(tree, button)
+    return button
+
 
 if __name__ == '__main__':
     main()
