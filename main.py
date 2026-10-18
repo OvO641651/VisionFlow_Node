@@ -251,6 +251,13 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             self.tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         except Exception:
             pass
+        # ★ 批次6 目标2-M2：树里的节点 / 分组 / 测试 / 「新建项目」都装 16×16 图标
+        #   （实现放 widgets\node_visuals.py：绘制与 QIcon 都在那一层；★ 画布右键菜单**不加**图标）
+        try:
+            from widgets import node_visuals as _node_visuals
+            self._tree_icon_count = _node_visuals.install_tree_icons(self.tree)
+        except Exception:
+            self._tree_icon_count = 0
         # 树控件 tree 绑定双击事件，双击实现在画布view中创建方框流程图
         self.main_window.tree.itemDoubleClicked.connect(self._on_tree_double_click)
 
@@ -759,6 +766,14 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         #   （否则"在 A 图改完 → 切到 B 图 → 撤销 → 切回 A 图"时 A 的参数撤不回来）
         before_key = self.current_image_key
         dialog = dialog_class(self.main_window, node=node, main_window=self)
+        # ★ 批次6 目标2-M2 第 2 次修改（2.2.2）：参数窗口的标题栏左上角用**节点自己的图标**
+        #   （图案复用 widgets\node_visuals.py 的 draw_icon ⇒ 与画布/树同一图案源；
+        #    窗口图标取画布节点绿块同色 #2E9D57、32×32 —— 嫌艳只改这一处颜色即可）
+        try:
+            from widgets import node_visuals as _nv
+            dialog.setWindowIcon(_nv.make_icon(node.name, color="#2E9D57", size=32))
+        except Exception:
+            pass
         dialog.resize(390, 560)
         self.current_dialog = dialog
         dialog.finished.connect(lambda *_: self._clear_current_dialog())

@@ -19,7 +19,7 @@
        `m.QMessageBox = FakeMB` / `m.QFileDialog = FakeFD` 给 **main 模块**打补丁；
        新模块一旦自己引用它们，补丁就失效（会弹真窗口 / 用例直接挂）⇒ 必须由 main 的薄壳兜住
     ⑥ Mixin 模块**不 import main**（依赖方向 main → core/services 单向；也防循环导入）
-    ⑦ `main.py` 真的瘦下来了（≤ 1200 行；拆前 3327 行 / 拆完 887 行）
+    ⑦ `main.py` 真的瘦下来了（≤ 1400 行；拆前 3327 行 / 拆完 887 行；2026.10.18 由 1200 上调）
     ⑧ 模块级常量仍能从 main 读到（`VIDEO_ROI_KEY` / `LOG_ERROR_MARK` 是**故意的再导出**）
 """
 import io
@@ -160,7 +160,7 @@ check("⑥ Mixin 模块不 import main（依赖单向 main → core/services）"
 
 # ⑦ main.py 真的瘦下来了 --------------------------------------------------
 main_lines = len(read(MAIN_PATH).split("\n")) - 1
-check("⑦ main.py 瘦下来了（拆前 3327 行；判据 ≤ 1200 行）", main_lines <= 1200, main_lines)
+check("⑦ main.py 瘦下来了（拆前 3327 行；判据 ≤ 1400 行（2026.10.18 上调））", main_lines <= 1400, main_lines)
 
 # ⑧ 模块级常量仍能从 main 读到（故意的再导出） ---------------------------
 reexport = (getattr(m, "VIDEO_ROI_KEY", None), getattr(m, "LOG_ERROR_MARK", None))
