@@ -112,6 +112,9 @@ class NodeItem(QObject, QGraphicsRectItem):
 
         # ★ 第 6 次修改：拖动时"视图跟随"的重入锁（`ensureVisible` 会同步重投 mouseMoveEvent）
         self._in_follow = False
+        # ★ 批次6 目标1-M7：多选整组拖动（其它选中节点跟着一起走）
+        self._group_drag = []      # [(其它节点, 它的起始 pos)]
+        self._group_anchor = None  # 本节点按下时的 pos（算 delta 用）
 
         self.setPos(QPointF(max(0.0, pos.x()), max(0.0, pos.y())))  # ★ 甲：构造入口就夹在画布内（≥0,0）
         self.setBrush(QBrush(QColor(250, 250, 250))) # QBrush画刷，方块的内颜色(r,g,b),QBrush为填充颜色
@@ -214,8 +217,17 @@ class NodeItem(QObject, QGraphicsRectItem):
         try:
             mine = self._anchor_center_scene()
             vrect = view.mapToScene(view.viewport().rect()).boundingRect()
+            # ★ M7b（用户报「两块一起选着拖，中线一直亮」）：对齐候选**必须排除同组被拖的节点** ——
+            #   它们本来就跟着一起动（还常常本来就对齐）⇒ 留在候选里会让提示线常亮、吸附目标也错。
+            mate_ids = set()
+            for mate, _start in (self._group_drag or []):
+                try:
+                    mate_ids.add(id(mate))
+                except RuntimeError:
+                    continue
             others = [it for it in view.flow_scene.items(vrect)
-                      if isinstance(it, NodeItem) and it is not self]
+                      if isinstance(it, NodeItem) and it is not self
+                      and id(it) not in mate_ids]
         except RuntimeError:
             return None, None
         thr = float(getattr(view, "align_threshold", ALIGN_THRESHOLD))
@@ -252,17 +264,17 @@ class NodeItem(QObject, QGraphicsRectItem):
         except RuntimeError:
             pass
 
-    def _snap_on_release(self):
-        """★ M5b：**松手时一次性吸附**（对齐优先、否则网格），仍走 `setPos` ⇒ 四边夹取照旧。
+    def _snap_delta(self):
+        """★ M7b：算出「松手吸附」要让**本节点**移动的位移（对齐优先、否则网格）；**不改位置**。
 
-        ★ 必须在 `positionChanged.emit()` **之前**完成 —— 撤销栈记的"这次拖动的终点"就是
-          吸附后的位置（否则 undo/redo 会停在没吸附的零碎坐标上）。
+        抽出来是为了让「单个节点松手吸附」与「整组松手吸附」共用同一份判定 ——
+        整组时把这份位移原样加给组里每个节点，**组内相对位置一分不变**。
         """
         view = self._flow_view()
         try:
             pos = self.pos()
         except RuntimeError:
-            return
+            return None
         x, y = float(pos.x()), float(pos.y())
         bx = by = None
         g = 0.0
@@ -281,14 +293,91 @@ class NodeItem(QObject, QGraphicsRectItem):
             y = float(by) - float(self.left_port.y())
         elif g > 0:
             y = round(y / g) * g
+        return QPointF(x - float(pos.x()), y - float(pos.y()))
+
+    def _snap_on_release(self):
+        """★ M5b：**松手时一次性吸附**（对齐优先、否则网格），仍走 `setPos` ⇒ 四边夹取照旧。
+
+        ★ 必须在 `positionChanged.emit()` **之前**完成 —— 撤销栈记的"这次拖动的终点"就是
+          吸附后的位置（否则 undo/redo 会停在没吸附的零碎坐标上）。
+        """
+        delta = self._snap_delta()
+        view = self._flow_view()
         try:
-            if (x, y) != (float(pos.x()), float(pos.y())):
-                self.setPos(QPointF(x, y))                 # `setPos` 自带 `_clamp_point`（四边夹取）
+            if delta is not None and (abs(delta.x()) > 1e-9 or abs(delta.y()) > 1e-9):
+                self.setPos(QPointF(self.pos().x() + delta.x(),
+                                    self.pos().y() + delta.y()))
             if view is not None and view._align_lines:
                 view._align_lines = []
                 view.viewport().update()
         except RuntimeError:
             pass
+
+    def _snap_group_on_release(self):
+        """★ M7b：**整组松手吸附**（用户："有中线但不吸附"）。
+
+        做法：用**被拖节点**的吸附位移（`_snap_delta()`）作为整组的统一位移 ——
+        被拖节点吸到位、其余节点同量平移 ⇒ **组内相对位置不变**；
+        仍用 `_clamp_point` 预判压缩（谁先到画布边界就整组少走一点，不各自夹取变形）。
+        """
+        delta = self._snap_delta()
+        if delta is None:
+            return
+        gdx, gdy = float(delta.x()), float(delta.y())
+        if abs(gdx) < 1e-9 and abs(gdy) < 1e-9:
+            self._clear_align_lines()
+            return
+        # 先按"每个节点都还能走这么多"压缩一次
+        group = list(self._group_drag or [])
+        for other, _start in group:
+            try:
+                cur = other.pos()
+                fixed = other._clamp_point(QPointF(cur.x() + gdx, cur.y() + gdy))
+                if abs(gdx) > 0.01 and abs(fixed.x() - cur.x()) < abs(gdx):
+                    gdx = fixed.x() - cur.x()
+                if abs(gdy) > 0.01 and abs(fixed.y() - cur.y()) < abs(gdy):
+                    gdy = fixed.y() - cur.y()
+            except RuntimeError:
+                continue
+        try:
+            self.setPos(QPointF(self.pos().x() + gdx, self.pos().y() + gdy))
+            for other, _start in group:
+                try:
+                    cur = other.pos()
+                    other.setPos(QPointF(cur.x() + gdx, cur.y() + gdy))
+                    other.positionChanged.emit()   # setPos 不发信号 ⇒ 显式发，撤销一起回位
+                except RuntimeError:
+                    continue
+        except RuntimeError:
+            pass
+        self._clear_align_lines()
+
+    def _clear_align_lines(self):
+        """清掉对齐虚线并重绘（松手后提示线消失）。"""
+        view = self._flow_view()
+        try:
+            if view is not None and view._align_lines:
+                view._align_lines = []
+                view.viewport().update()
+        except RuntimeError:
+            pass
+
+    def mousePressEvent(self, event):
+        """★ M7：多选时记下整组起点（配合 mouseMoveEvent 让它们一起移动）"""
+        self._group_drag = []
+        self._group_anchor = None
+        try:
+            if event.button() == Qt.LeftButton and self.isSelected():
+                scene = self.scene()
+                others = [it for it in (scene.selectedItems() if scene is not None else [])
+                          if isinstance(it, NodeItem) and it is not self]
+                if others:
+                    self._group_anchor = QPointF(self.pos())
+                    self._group_drag = [(n, QPointF(n.pos())) for n in others]
+        except RuntimeError:
+            self._group_drag = []
+            self._group_anchor = None
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         """实时拖拽响应"""
@@ -309,6 +398,32 @@ class NodeItem(QObject, QGraphicsRectItem):
                 finally:
                     self._in_follow = False
         # 立即通知外界位置变了
+        # ★ M7：多选 ⇒ 整组一起移动。用「被拖节点实际允许的位移」压缩 delta，
+        #   保证整组保持相对位置（谁先到边界就整组少走一点，不各自夹取变形）。
+        if self._group_anchor is not None and self._group_drag:
+            gdx = self.pos().x() - self._group_anchor.x()
+            gdy = self.pos().y() - self._group_anchor.y()
+            for other, start in self._group_drag:
+                try:
+                    probe = QPointF(start.x() + gdx, start.y() + gdy)
+                    fixed = other._clamp_point(probe)
+                    if abs(gdx) > 0.01 and abs(fixed.x() - start.x()) < abs(gdx):
+                        gdx = fixed.x() - start.x()
+                    if abs(gdy) > 0.01 and abs(fixed.y() - start.y()) < abs(gdy):
+                        gdy = fixed.y() - start.y()
+                except RuntimeError:
+                    continue
+            try:
+                self.setPos(QPointF(self._group_anchor.x() + gdx,
+                                    self._group_anchor.y() + gdy))
+            except RuntimeError:
+                pass
+            for other, start in self._group_drag:
+                try:
+                    other.setPos(QPointF(start.x() + gdx, start.y() + gdy))
+                    other.positionChanged.emit()   # setPos 不发信号 ⇒ 显式发，撤销才能一起回位
+                except RuntimeError:
+                    continue
         self.positionChanged.emit() # type:ignore
 
     def mouseReleaseEvent(self, event):
@@ -317,7 +432,12 @@ class NodeItem(QObject, QGraphicsRectItem):
         self._clamp_into_canvas()         # ★ 丙：松手时再夹一次（保险）
         # ★ M5b：**松手时才吸附**（对齐优先、否则网格），顺带清掉对齐虚线。
         #   ★ 必须在下面的 `positionChanged.emit()` **之前** —— 撤销栈记的终点就是吸附后的位置。
-        self._snap_on_release()
+        #   ★ M7b（用户报"有中线但不吸附"）：整组拖动**也要吸附** —— 用被拖节点的吸附位移
+        #     整组平移 ⇒ 被拖节点吸到位、**组内相对位置不变**（旧版整组直接跳过吸附 ✗）。
+        if self._group_drag:
+            self._snap_group_on_release()
+        else:
+            self._snap_on_release()
         # ★ 第 7 次修改：限速跟随期间节点可能短暂贴边 ⇒ 松手时**不限速**拉回可见（同样持重入锁）
         if not self._in_follow:
             view = self._flow_view()
@@ -327,6 +447,8 @@ class NodeItem(QObject, QGraphicsRectItem):
                     view.snap_item_visible(self)
                 finally:
                     self._in_follow = False
+        self._group_drag = []      # ★ M7：松手清组
+        self._group_anchor = None
         self.positionChanged.emit() # type:ignore
 
     def mouseDoubleClickEvent(self, event):
@@ -765,17 +887,27 @@ class FlowchartView(QGraphicsView):
     #   视图**不直接建节点**：建节点要碰 `main.py` 的 `add_flow_node`（撤销栈、脏标记、画布重算都在那儿）
     node_create_requested = Signal(str, QPointF)
 
+    # ★ 批次6 目标1-M7：缩放百分比变化（状态栏滑块 ↔ 视图双向同步）
+    zoom_changed = Signal(int)
+
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
         self.main_window = main_window # 主窗口
         self.setAcceptDrops(True) # 允许在画布内进行拖拽
-        self.setDragMode(QGraphicsView.ScrollHandDrag) # 设置鼠标在空白处按住左键拖动时的行为
+        # ★ 批次6 目标1-M7：左键改为「框选」（画布平移改到中键，见 mousePressEvent）
+        self.setDragMode(QGraphicsView.RubberBandDrag) # 左键在空白处拖动 = 框选
+        self.setRubberBandSelectionMode(Qt.IntersectsItemShape) # 部分相交也算选中
         # 注意：这个属性不能叫 self.scene——QGraphicsView 自己有个 scene() 方法，
         # 用同名属性会把它遮蔽掉，Python 侧就再也调不到 scene() 了
         self.flow_scene = QGraphicsScene() # 创建一个画布，专门用来存放方框（NodeItem）和连线（EdgeItem）。
         self.setScene(self.flow_scene) # 讲画布放到场景视图里面
         # ★ 批次6 目标1-M1：固定大画布（原点恒 (0,0)）+ 初始停在左上角
         self._content_positioned = False   # 这一页的视口是否已经"跟过内容"（导入方案时用）
+        # ★ 批次6 目标1-M7：缩放 + 中键平移
+        self._zoom = 1.0       # 缩放比例（1.0 = 100%）
+        self._in_pan = False   # 中键平移重入锁（改滚动条会回投鼠标事件，M1 踩过栈溢出）
+        self._pan_start = None
+        self._pan_scroll = (0, 0)
         self._apply_canvas_rect(goto_topleft=True)
 
         # ★ 批次6 目标1-M5：点阵网格 / 网格吸附 / 对齐辅助线（用户：默认全开、不加开关）
@@ -832,6 +964,90 @@ class FlowchartView(QGraphicsView):
             h.setValue(h.minimum())
             v.setValue(v.minimum())
 
+    def showEvent(self, event):
+        """
+        ★ 批次6 目标1-M7c：页面**第一次真正显示**时，确保"固定大画布"已经生效。
+
+        用户实测过一条**无头环境复现不出来**的现象：点「+」新建的页面里，
+        滚动条滑块占满整条轨道（= `maximum() == minimum()`，没有可滚动范围）。
+        方向是"新页在某个创建路径上没走到 `_apply_canvas_rect()`"，
+        但真机与无头的差异无法在无头里重现 ⇒ 这里做**幂等自愈**（覆盖所有建页路径：
+        「+」号 / 打开方案追加页 / 以后新增的入口）：
+          · 只在"场景矩形明显不是固定大画布"（宽/高 < 1000，或原点 ≠ 0）时才补一次；
+          · 健康状态下**一个字节都不动**（`_canvas_healed == 0`，判据钉住）。
+        """
+        super().showEvent(event)
+        if getattr(self, "_in_show_heal", False):
+            return                              # 防重入（自愈里可能触发重绘/布局）
+        self._in_show_heal = True
+        try:
+            try:
+                rect = self.flow_scene.sceneRect()
+            except RuntimeError:
+                return                          # 场景已销毁（关窗口 / 删页瞬间）
+            too_small = float(rect.width()) < 1000.0 or float(rect.height()) < 1000.0
+            bad_origin = abs(float(rect.x())) > 0.5 or abs(float(rect.y())) > 0.5
+            if too_small or bad_origin:
+                self._apply_canvas_rect()
+                self._canvas_healed = int(getattr(self, "_canvas_healed", 0)) + 1
+        finally:
+            self._in_show_heal = False
+
+    # ------------------------------------------------------------------ 缩放（M7）
+    def _grid_step_scene(self):
+        """★ M7：网格的**场景**步长 = 20px / 缩放比 ⇒ 屏幕上视觉恒 20px。"""
+        try:
+            z = float(self._zoom)
+        except (TypeError, ValueError):
+            z = 1.0
+        if z <= 0.01:
+            z = 0.01
+        try:
+            base = float(self.grid_size)
+        except (TypeError, ValueError):
+            base = 20.0
+        return base / z
+
+    def zoom_percent(self):
+        """当前缩放（百分比整数）。"""
+        try:
+            return int(round(float(self._zoom) * 100.0))
+        except (TypeError, ValueError):
+            return 100
+
+    def set_zoom(self, percent):
+        """★ M7：设置缩放（20%~400%），以视口中心为锚点，并发出 zoom_changed。
+
+        用 resetTransform() + scale() 控制（不是 scale() 累乘 —— 累乘会漂移）。
+        """
+        try:
+            z = float(percent) / 100.0
+        except (TypeError, ValueError):
+            return
+        z = max(0.2, min(4.0, z))
+        if abs(z - float(self._zoom)) < 1e-6:
+            return
+        try:
+            center = self.mapToScene(self.viewport().rect()).boundingRect().center()
+        except RuntimeError:
+            return
+        self._zoom = z
+        self.resetTransform()
+        self.scale(z, z)
+        try:
+            self.centerOn(center)
+        except RuntimeError:
+            pass
+        self._grid_brush_cache = None      # 纹理尺寸随缩放变化 ⇒ 重建
+        try:
+            self.viewport().update()
+        except RuntimeError:
+            pass
+        try:
+            self.zoom_changed.emit(int(round(z * 100.0)))
+        except RuntimeError:
+            pass
+
     def _grid_brush(self):
         """★ M5b：**一白一灰棋盘格**纹理（2×2 格 = 40×40 小图，做 `QBrush` 平铺）。
 
@@ -840,7 +1056,7 @@ class FlowchartView(QGraphicsView):
         小图做缓存（`grid_size` 变了才重建）。
         """
         try:
-            g = int(round(float(self.grid_size)))
+            g = int(round(self._grid_step_scene()))   # ★ M7：网格按缩放换算 ⇒ 屏幕上恒 20px
         except (TypeError, ValueError):
             return None
         if g <= 0:
@@ -878,7 +1094,7 @@ class FlowchartView(QGraphicsView):
             area = QRectF(rect).intersected(self.mapToScene(self.viewport().rect()).boundingRect())
             if area.isEmpty():
                 return
-            g = float(self.grid_size)
+            g = self._grid_step_scene()   # ★ M7：网格保持屏幕 20px
             step = g * 2.0
             left = int(area.left() // step) * step
             top = int(area.top() // step) * step
@@ -1043,6 +1259,14 @@ class FlowchartView(QGraphicsView):
 
     def mousePressEvent(self, event):
         """实现计算鼠标点击时点击的点到蓝点的距离"""
+        # ★ 批次6 目标1-M7：中键拖动画布（左键已让给框选）
+        if event.button() == Qt.MiddleButton:
+            self._pan_start = event.pos()
+            self._pan_scroll = (self.horizontalScrollBar().value(),
+                                self.verticalScrollBar().value())
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
         if event.button() == Qt.LeftButton:
             # 拦截鼠标左键点击时间，获取鼠标点击时的场景坐标，如果点击的是右键则无视
             scene_pos = self.mapToScene(event.pos()) # mapToScene将屏幕坐标转换为画布真实坐标(map:地图，Scene:事件)
@@ -1107,6 +1331,21 @@ class FlowchartView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         """鼠标拖拽过程中负责画面实时反馈，分为连线状态和非连线状态"""
+        # ★ M7：中键平移（带重入锁 —— 改滚动条会同步回投本事件）
+        if self._in_pan:
+            event.accept()
+            return
+        if self._pan_start is not None and (event.buttons() & Qt.MiddleButton):
+            try:
+                self._in_pan = True
+                dx = event.pos().x() - self._pan_start.x()
+                dy = event.pos().y() - self._pan_start.y()
+                self.horizontalScrollBar().setValue(int(self._pan_scroll[0] - dx))
+                self.verticalScrollBar().setValue(int(self._pan_scroll[1] - dy))
+            finally:
+                self._in_pan = False
+            event.accept()
+            return
         if self._start_node is not None:
             # ★ M6b：预览线也用正交折线（与连好后的线共用 build_edge_path）
             pos = self.mapToScene(event.pos())
@@ -1117,6 +1356,13 @@ class FlowchartView(QGraphicsView):
 
     def mouseReleaseEvent(self, event):
         """判断终点是否在红点上，如果在红点上则完成连线，如果不在则曲线这次连线"""
+        # ★ M7：中键平移结束（复原光标）
+        if event.button() == Qt.MiddleButton and self._pan_start is not None:
+            self._pan_start = None
+            self._pan_scroll = (0, 0)
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+            return
         if event.button() == Qt.LeftButton and self._start_node is not None:
             # 确定左键是抬起的 并且 有连线
 
@@ -1249,7 +1495,7 @@ class FlowchartView(QGraphicsView):
             self._temp_line = None
         self._temp_start_pos = None
         self._start_node = None
-        self.setDragMode(QGraphicsView.ScrollHandDrag) # 连线结束，回复可以拖到背景画布的功能
+        self.setDragMode(QGraphicsView.RubberBandDrag) # ★ M7：连线结束恢复「左键框选」
 
     # ------------------------------------------------------------------ 右键画布建节点（M4）
     def contextMenuEvent(self, event):

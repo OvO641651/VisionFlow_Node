@@ -1,10 +1,25 @@
 from PySide2.QtWidgets import (QWidget, QVBoxLayout, QLabel, QTabWidget,
                                QGraphicsView, QMenu, QMessageBox, QLineEdit,
-                               QToolButton, QTabBar)
+                               QToolButton, QTabBar, QSlider, QStyle,
+                               QStyleOptionSlider, QHBoxLayout)
 from PySide2.QtCore import QObject, Qt, QEvent, QTimer
 
 # ★ 批次6 目标1-M3：画布右下角小地图（全局一个，换页重绑）
 from widgets.flow_minimap import FlowMiniMap
+
+# ★ 批次6 目标1-M7b：缩放滑块在 100% 附近的"吸附区"
+#   用户口径："比如到 98%-102% 之间都直接吸附变成 100%"
+ZOOM_SNAP_LOW, ZOOM_SNAP_HIGH, ZOOM_SNAP_VALUE = 98, 102, 100
+
+# ★ 批次6 目标1-M7e：**所有页的底部行统一规格**（用户："flow 页面的布局和其他的页面会有
+#   细微的差别，切换页面时会有大小不一的感觉，下方的滑块大小也不一样"）——
+#   把 main.ui 那套（边距 11 / 滑块 224 / 标签 35）换成与"代码搭的新页"完全一致的一套：
+#   边距 9 · 行距 6 · 百分比标签固定 46 · 滑块固定 140。两边都走这个常量，切页不再跳变。
+PAGE_MARGINS = (9, 9, 9, 9)      # 页面最外层 QVBoxLayout 的四周留白
+PAGE_SPACING = 6                 # 画布与底部行之间的间距
+FOOTER_SPACING = 6               # 底部行内部的间距
+ZOOM_LABEL_WIDTH = 46            # 百分比标签固定宽（放得下 "400%"）
+ZOOM_SLIDER_WIDTH = 140          # 缩放滑块固定宽
 
 
 class FlowPageManager(QObject):
@@ -70,7 +85,12 @@ class FlowPageManager(QObject):
         # 1、第一页：main.ui 里已经有一页（标题 Flow），把里面的 flowView 换成自定义画布
         first_widget = self.tab_widget.widget(0)
         first_view = self._make_view(first_widget)
-        first_label = first_widget.findChild(QLabel, "lbl_current_node")
+        # ★ M7e：第 1 页的底部行原本是 main.ui 搭的（边距 11 / 滑块 224 / 标签 35），与代码搭的
+        #   新页（9 / 140 / 46）不一致 ⇒ 切页时画布与滑块大小会跳。这里**原位统一**成同一套规格。
+        first_label = self._normalize_first_footer(first_widget)
+        # ★ M7：状态栏右端的缩放滑块 / 百分比标签（只新增控件，未改任何现有控件名）
+        self.zoom_slider = first_widget.findChild(QSlider, "zoom_slider")
+        self.zoom_percent_label = first_widget.findChild(QLabel, "zoom_percent_label")
         self.current_page = self._register_page(first_widget, first_view, first_label)
 
         # 2、右键标签栏 → 弹出"添加页面 / 重命名页面 / 删除页面"
@@ -104,6 +124,7 @@ class FlowPageManager(QObject):
         # 7、★ 批次6 目标1-M3：画布右下角小地图（全局一个，换页时重绑到新页的 view）
         self.minimap = FlowMiniMap()
         self._bind_minimap(self.current_page)
+        self._bind_zoom_slider(self.current_page)
         return self.current_page
 
     def _create_add_tab(self):
@@ -163,11 +184,11 @@ class FlowPageManager(QObject):
         """添加一页流程图，并自动切换到新页面，返回新页记录"""
         page_widget = QWidget()
         layout = QVBoxLayout(page_widget)
-        # 新页面里也放一个"当前选中节点"的提示 label，和第一页保持一致
-        label = QLabel("未选中节点")
         view = self._create_view(page_widget)
         layout.addWidget(view)
-        layout.addWidget(label)
+        # ★ M7d：底部那行也要带「缩放滑块 + 百分比」（第 1 页这组控件在 main.ui 里；
+        #         新建页必须自己建一份，否则换页后缩放滑块就"消失"了 —— 用户实测现象）
+        label = self._add_page_footer(layout, page_widget)
 
         # 用页面标识来编号；再用 _unique_title 挡一下"用户手动改过名字"造成的重名
         title = self._unique_title("Flow{0}".format(self._seq + 1))
@@ -194,10 +215,9 @@ class FlowPageManager(QObject):
         for title in titles or []:
             page_widget = QWidget()
             layout = QVBoxLayout(page_widget)
-            label = QLabel("未选中节点")
             view = self._create_view(page_widget)
             layout.addWidget(view)
-            layout.addWidget(label)
+            label = self._add_page_footer(layout, page_widget)   # ★ M7d（打开方案追加的页同样要有）
             # 插在"+"标签前面；标题重名时自动加 (2)(3)…，避免出现两个一模一样的标签
             self.tab_widget.insertTab(self._add_tab_index(), page_widget,
                                       self._unique_title(str(title)))
@@ -451,6 +471,84 @@ class FlowPageManager(QObject):
         view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         return view
 
+    def _add_page_footer(self, layout, page_widget):
+        """★ M7d：给一页补上"底部那一行"：当前选中节点提示 + 缩放百分比 + 缩放滑块。
+
+        第 1 页这三个控件在 main.ui 里就有；之后新建的页（「+」号 / 打开方案追加）
+        必须在代码里补一份 —— 否则换页后**缩放滑块会消失**（用户实测：只有启动页有滑块）。
+        控件对象名与 main.ui 保持一致，`_bind_zoom_slider()` 用 findChild 就能取到。
+
+        ★ M7e（用户："flow 页面的布局和其他的页面会有细微的差别……下方的滑块大小也不一样"）：
+        这里用**统一常量**决定边距 / 间距 / 标签宽 / 滑块宽，并且**第 1 页也走这里**
+        （`setup()` 里先把 main.ui 那套拆掉再重建）⇒ 所有页的底部行与画布尺寸完全一致。
+        """
+        # 外层布局的留白与行距：所有页统一（main.ui 原本是 11，代码默认是 9 ⇒ 统一成 9）
+        try:
+            layout.setContentsMargins(*PAGE_MARGINS)
+            layout.setSpacing(PAGE_SPACING)
+        except (AttributeError, TypeError):
+            pass
+        label = QLabel("未选中节点", page_widget)
+        label.setObjectName("lbl_current_node")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(FOOTER_SPACING)
+        row.addWidget(label)
+        row.addStretch(1)
+        zoom_label = QLabel("{0}%".format(ZOOM_SNAP_VALUE), page_widget)
+        zoom_label.setObjectName("zoom_percent_label")
+        zoom_label.setFixedWidth(ZOOM_LABEL_WIDTH)
+        row.addWidget(zoom_label)
+        slider = QSlider(Qt.Horizontal, page_widget)
+        slider.setObjectName("zoom_slider")
+        slider.setMinimum(20)
+        slider.setMaximum(400)
+        slider.setValue(ZOOM_SNAP_VALUE)
+        slider.setFixedWidth(ZOOM_SLIDER_WIDTH)
+        row.addWidget(slider)
+        layout.addLayout(row)
+        return label
+
+    def _normalize_first_footer(self, page_widget):
+        """★ M7e：把 main.ui 搭出来的第 1 页底部行**原位统一**到与代码搭的新页完全一致。
+
+        ★ 为什么不拆掉重建（原计划的"甲"）：`main.py` 在 `flow_page_mgr.setup()`
+        **之前**（L187）就 `findChild("lbl_current_node")` 存了引用；若这里删除重建，
+        那个引用会指向已销毁的 C++ 对象 ⇒ 之后 `setText` 会 RuntimeError（用户会看到"点节点没反应"）✗
+        所以改成**原位规范化**：只改属性、不换对象 —— 边距 9 / 行距 6 / 百分比标签固定 46 /
+        滑块固定 140，与 `_add_page_footer()` 用的是**同一套常量** ⇒ 切页不再跳变 ✓
+        """
+        try:
+            layout = page_widget.layout()
+            if layout is not None:
+                layout.setContentsMargins(*PAGE_MARGINS)
+                layout.setSpacing(PAGE_SPACING)
+            row = page_widget.findChild(QHBoxLayout, "statusZoomLayout")
+            if row is not None:
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(FOOTER_SPACING)
+                # ★ .ui 里那个 spacer 的 sizeHint 带 height=20 ⇒ 会把底部行整体撑高 1px
+                #   （实测：上游 20 / 代码版 19 ⇒ 切页时画布高度差 1px）。换成 h=0 的 stretch，
+                #   与 `_add_page_footer()` 里的 `addStretch(1)` 等价 ⇒ 行高一致 ✓
+                for i in range(row.count()):
+                    item = row.itemAt(i)
+                    if item is not None and item.spacerItem() is not None:
+                        row.removeItem(item)
+                        row.insertStretch(i, 1)
+                        break
+            label = page_widget.findChild(QLabel, "lbl_current_node")
+            zoom_label = page_widget.findChild(QLabel, "zoom_percent_label")
+            if zoom_label is not None:
+                zoom_label.setFixedWidth(ZOOM_LABEL_WIDTH)
+            slider = page_widget.findChild(QSlider, "zoom_slider")
+            if slider is not None:
+                slider.setFixedWidth(ZOOM_SLIDER_WIDTH)
+                slider.setMinimum(20)
+                slider.setMaximum(400)
+            return label
+        except RuntimeError:
+            return None
+
     def _make_view(self, page_widget):
         """
         让一页里有一个自定义画布：
@@ -523,6 +621,11 @@ class FlowPageManager(QObject):
                     self.rename_page(index)
                     # 这个双击已经处理掉了，不再传给标签栏
                     return True
+
+            # 3、★ M7b：缩放滑块尺寸/显示状态变化 ⇒ 重新摆「100% 刻度线」
+            if watched is getattr(self, "zoom_slider", None) and event.type() in (QEvent.Resize, QEvent.Show):
+                self._ensure_zoom_marker()
+                return False
         except RuntimeError:
             # 底层 C++ 对象已经被销毁（关窗口 / 退出程序时会出现），
             # 这时不用再处理事件，安静放行，避免往终端打印 Traceback
@@ -579,6 +682,112 @@ class FlowPageManager(QObject):
             self.current_page = page
             self._notify_switched(old_page)
 
+    def _bind_zoom_slider(self, page):
+        """★ M7：把状态栏右端的缩放滑块绑到当前页画布（换页重绑，先断旧连接）。"""
+        view = None if page is None else page.get("view")
+        # ★ M7d：取"这一页自己的"滑块/标签（第 1 页来自 main.ui，新页由 _add_page_footer 建），
+        #   并把引用同步到 self 上，供 `_ensure_zoom_marker()` / 事件过滤器使用。
+        page_widget = None if page is None else page.get("widget")
+        slider = page_widget.findChild(QSlider, "zoom_slider") if page_widget is not None else None
+        label = page_widget.findChild(QLabel, "zoom_percent_label") if page_widget is not None else None
+        self.zoom_slider = slider
+        self.zoom_percent_label = label
+        if view is None or slider is None:
+            return
+        for sig in (getattr(slider, "valueChanged", None), getattr(view, "zoom_changed", None)):
+            try:
+                if sig is not None:
+                    sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        try:
+            pct = int(view.zoom_percent())
+            slider.blockSignals(True)
+            slider.setValue(pct)
+            slider.blockSignals(False)
+            if label is not None:
+                label.setText("{0}%".format(pct))
+        except RuntimeError:
+            return
+
+        def _on_slider(val):
+            # ★ M7b（用户："98%-102% 之间都直接吸附变成 100%"）—— 拖动过程中就吸
+            try:
+                val = int(val)
+                if ZOOM_SNAP_LOW <= val <= ZOOM_SNAP_HIGH and val != ZOOM_SNAP_VALUE:
+                    slider.blockSignals(True)
+                    slider.setValue(ZOOM_SNAP_VALUE)
+                    slider.blockSignals(False)
+                    val = ZOOM_SNAP_VALUE
+                    if label is not None:
+                        label.setText("{0}%".format(ZOOM_SNAP_VALUE))
+            except RuntimeError:
+                return
+            try:
+                view.set_zoom(val)
+            except RuntimeError:
+                pass
+
+        def _on_zoom(pct):
+            try:
+                slider.blockSignals(True)
+                slider.setValue(int(pct))
+                slider.blockSignals(False)
+                if label is not None:
+                    label.setText("{0}%".format(int(pct)))
+            except RuntimeError:
+                pass
+
+        try:
+            slider.valueChanged.connect(_on_slider)
+            view.zoom_changed.connect(_on_zoom)
+        except RuntimeError:
+            return
+        # ★ M7b：滑块上的「100% 刻度线」—— 装一次事件过滤器（跟随尺寸变化），再摆一次位置
+        try:
+            if not getattr(slider, "_zoom_filter_installed", False):   # ★ M7d：每个滑块的标记各装一次
+                slider.installEventFilter(self)
+                slider._zoom_filter_installed = True
+        except RuntimeError:
+            pass
+        self._ensure_zoom_marker()
+
+    def _ensure_zoom_marker(self):
+        """★ M7b：在缩放滑块上给 **100%** 画一条固定刻度线（自绘子控件，不改 QSlider 外观）。
+
+        用户口径："对于滑动条，能否在 100% 处加个标记" ⇒ 选乙（自绘一条线）。
+        Qt 的 `setTickPosition/setTickInterval` 只能按**固定间隔**画刻度（20~400 落不到只标 100 ✗），
+        所以用一个 1~2px 宽的小 `QWidget` 贴在滑块上，位置按 `QStyle.SC_SliderGroove` 的几何换算。
+        """
+        slider = getattr(self, "zoom_slider", None)
+        if slider is None:
+            return
+        try:
+            marker = getattr(slider, "_marker_100", None)   # ★ M7d：标记按“当前页的滑块”各存一份
+            if marker is None:
+                marker = QWidget(slider)
+                marker.setObjectName("zoom_100_marker")
+                marker.setAttribute(Qt.WA_TransparentForMouseEvents, True)   # 不挡滑块拖动
+                marker.setStyleSheet("background-color: #D08A20;")           # 与橙色视口框同色系
+                self._zoom_marker = marker
+                slider._marker_100 = marker
+            option = QStyleOptionSlider()
+            option.initFrom(slider)
+            option.minimum = slider.minimum()
+            option.maximum = slider.maximum()
+            option.sliderPosition = slider.value()
+            option.orientation = Qt.Horizontal
+            groove = slider.style().subControlRect(
+                QStyle.CC_Slider, option, QStyle.SC_SliderGroove, slider)
+            lo, hi = float(slider.minimum()), float(slider.maximum())
+            ratio = 0.0 if hi <= lo else (float(ZOOM_SNAP_VALUE) - lo) / (hi - lo)
+            x = float(groove.left()) + ratio * float(groove.width())
+            marker.setGeometry(int(round(x)) - 1, groove.top() - 2, 2, groove.height() + 4)
+            marker.raise_()
+            marker.show()
+        except RuntimeError:
+            return
+
     def _bind_minimap(self, page):
         """把全局唯一的小地图重绑到某一页的画布（★ 批次6 目标1-M3：换页重绑，不残留旧页）。"""
         mm = getattr(self, "minimap", None)
@@ -592,8 +801,43 @@ class FlowPageManager(QObject):
     def _notify_switched(self, old_page):
         """通知调用方：当前页换了（调用方在这里切换节点表、参数，并刷新画面）"""
         self._bind_minimap(self.current_page)   # ★ M3：换页重绑小地图
+        self._bind_zoom_slider(self.current_page)   # ★ M7：换页重绑缩放滑块
+        self._ensure_canvas_ready(self.current_page)   # ★ M7b：换页后兜底（画布矩形异常才补）
         if self.on_page_switched is not None:
             self.on_page_switched(self.current_page, old_page)
+
+    def _ensure_canvas_ready(self, page):
+        """★ M7b：换页后**条件自愈** —— 只有当前页画布的 sceneRect 真的不是"固定大画布"时才补。
+
+        用户报："我更换页面后滚动条就消失了，只有第一页才能看到滚动条"。
+        无头环境三轮（含 show + 事件循环 + 3 页来回切）**复现不出**：每页都是
+        `sceneRect=(0,0,4000x3000)`、`h[0..3527]`、`v[0..2449]` ⇒ 滚动条都在。
+        因此这里**不做"每页都重设一遍"的创可贴**，只在真的发现矩形异常时才调
+        M1 的 `_apply_canvas_rect()`（幂等：原点恒 (0,0)、只向右下扩）。
+
+        ★ 注意：**滚动条范围 = 0 不一定算异常** —— 缩放到 20% 时整块画布可能正好装进视口，
+          那时没有滚动条是**正确**表现。所以判据只看 sceneRect。
+        """
+        view = None if page is None else page.get("view")
+        if view is None:
+            return
+        try:
+            sr = view.sceneRect()
+            bad = (sr.width() < 1000.0 or sr.height() < 1000.0
+                   or abs(float(sr.x())) > 0.5 or abs(float(sr.y())) > 0.5)
+            if not bad:
+                return                      # 正常页面一律不动
+            apply_rect = getattr(view, "_apply_canvas_rect", None)
+            if apply_rect is None:
+                return
+            apply_rect()
+            try:
+                view.viewport().update()
+            except RuntimeError:
+                pass
+            self.canvas_healed = int(getattr(self, "canvas_healed", 0)) + 1
+        except (RuntimeError, AttributeError):
+            return
 
 
 # ---------- 独立测试：不启动主程序，单独试用多页面标签 ----------

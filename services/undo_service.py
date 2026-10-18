@@ -29,7 +29,7 @@ from PySide2.QtCore import QPointF, QTimer            # 坐标拷贝 + 拖动"�
 from PySide2.QtWidgets import QAction, QPushButton    # 只用于 findChild 找 .ui 里的四个控件
 
 from core.host_contract import MainHost
-from core.commands import (UNDO_LIMIT, AddEdgeCommand, AddNodeCommand, MoveNodeCommand,
+from core.commands import (UNDO_LIMIT, AddEdgeCommand, AddNodeCommand, MoveNodeCommand, MoveNodesCommand,
                            RemoveEdgeCommand, RemoveNodeCommand, SetParamsCommand, UndoStack,
                            snapshot_params)
 
@@ -331,6 +331,8 @@ class UndoMixin(MainHost):
             self._pending_moves[ctx.ensure_uid(payload)] = True
             self._move_timer.start(MOVE_COMMIT_DELAY_MS)
             return None
+        elif kind == "move_nodes":
+            command = MoveNodesCommand(payload, ctx)
         elif kind == "move_node":
             uid, old, new = payload
             node = ctx.resolve(uid)
@@ -343,6 +345,7 @@ class UndoMixin(MainHost):
     def _commit_pending_moves(self):
         """把"攒着的拖动"提交成命令（一次拖动一条：起点 → 终点）"""
         pending, self._pending_moves = self._pending_moves, {}
+        items = []           # ★ M7：先收集，>1 个就推一条批量命令
         for uid in list(pending):
             node = self._undo_ctx.resolve(uid)
             if node is None:                   # 节点已被销毁（比如这一拖之后又删了它）
@@ -355,8 +358,14 @@ class UndoMixin(MainHost):
             if abs(old.x() - new.x()) < 0.5 and abs(old.y() - new.y()) < 0.5:
                 continue                       # 位置几乎没变：不算一次动作
             self._pos_committed[uid] = new
-            self._undo_note("move_node", (uid, old, new))
+            items.append((uid, getattr(node, "name", "节点"), old, new))
 
+        # ★ M7：一次拖动选中的多个节点 ⇒ 只推一条「批量移动」命令（撤销一次全回位）
+        if len(items) == 1:
+            uid0, name0, old0, new0 = items[0]
+            self._undo_note("move_node", (uid0, old0, new0))
+        elif len(items) > 1:
+            self._undo_note("move_nodes", items)
     def _undo_remember_node(self, node):
         """
         记下节点"上一次提交过的坐标"（拖动撤销要知道拖动前在哪），顺便给它发一个 uid。

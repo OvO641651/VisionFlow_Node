@@ -205,6 +205,32 @@ class MoveNodeCommand(Command):
         self.ctx.move_node(self.uid, self.old_pos)
 
 
+class MoveNodesCommand(Command):
+    """
+    ★ 批次6 目标1-M7：一次移动多个节点（多选拖动）—— 撤销一次全部回位。
+
+    items = [(uid, 节点名, 旧坐标, 新坐标), …]；与 MoveNodeCommand 一样只存 uid，
+    坐标是宿主给的不透明对象（QPointF），本文件不 import Qt。
+    """
+
+    def __init__(self, items, ctx):
+        self.ctx = ctx
+        self.items = [(uid, name or "节点", ctx.copy_pos(old), ctx.copy_pos(new))
+                      for (uid, name, old, new) in items]
+
+    @property
+    def text(self):
+        return "移动 {0} 个节点".format(len(self.items))
+
+    def do(self):
+        for uid, _name, _old, new in self.items:
+            self.ctx.move_node(uid, new)
+
+    def undo(self):
+        for uid, _name, old, _new in self.items:
+            self.ctx.move_node(uid, old)
+
+
 class UndoStack(object):
     """
     撤销 / 重做栈。
