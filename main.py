@@ -13,6 +13,8 @@ import os
 from core.Detector import DetectorShape
 from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView, node_topleft_for_center
 from widgets.FlowPages import FlowPageManager, block_group_drag
+# ★ 批次6 目标3-M2：帮助页（逻辑全在 widgets\help_panel.py，这里只 import 两个入口）
+from widgets.help_panel import install_help_panel, refresh_help
 from ui.LineParamsDialog import LineParamsDialog
 from ui.CircleParamsDialog import CircleParamsDialog
 from ui.GrayParamsDialog import GrayParamsDialog
@@ -270,6 +272,12 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         try:
             from widgets.FlowPages import install_toolbox_collapse
             install_toolbox_collapse(self.main_window)
+        except Exception:
+            pass
+
+        # ★ 批次6 目标3-M2：帮助页（「当前结果」Tab 的第 2 页；逻辑在 widgets\help_panel.py）
+        try:
+            install_help_panel(self)
         except Exception:
             pass
 
@@ -886,6 +894,8 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
             self.current_node_label.setText(f"当前选中的节点为：{node.name}")
         else:
             self.current_node_label.setText("未选中节点")
+        # ★ 批次6 目标3-M2：帮助页跟着选中节点走（逻辑在 widgets\help_panel.py）
+        refresh_help(self)
 
     def run_flow_step(self, target_node):
         """

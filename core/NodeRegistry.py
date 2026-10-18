@@ -36,9 +36,11 @@
 # 零件抽出去是因为窗口层（LineParamsDialog）与引擎层（main.py::_execute_node）
 # 都要用，而且各"分类 / 节点模块"不能反向 import 本文件（会循环导入）。
 
+# ★ 批次6 目标3-M2：节点说明文本的集中文案表（纯数据、零依赖 ⇒ 不会引起循环导入）
+from core import help_texts as _help_texts
+
 # 全局图像源的标识：流程图的起点（就是用户导入的那一帧原图）
-SOURCE_KEY = "__global_source__"
-# "图像源"参数 = 自动（沿连线继承上游的图像输出）
+SOURCE_KEY = "__global_source__"# "图像源"参数 = 自动（沿连线继承上游的图像输出）
 AUTO_SOURCE = "__auto__"
 
 
@@ -64,7 +66,7 @@ class NodeSpec(object):
     """一个算子的能力声明"""
 
     def __init__(self, name, kind, run, draw=None, format_result=None, whole_image_param=None,
-                 param_specs=None, validate=None):
+                 param_specs=None, validate=None, help_text=""):
         """
         :param name: 算子名字（和左侧树、流程图上方框里的文字一致）
         :param kind: KIND_PROCESS 或 KIND_DETECT
@@ -95,6 +97,9 @@ class NodeSpec(object):
         self.whole_image_param = whole_image_param
         self.param_specs = param_specs
         self.validate = validate
+        # ★ 批次6 目标3-M2：节点说明文本（帮助页用）。内容集中在 core/help_texts.py，
+        #   这里只存"已经取到的那一段"，NodeSpec 的字段结构不变。
+        self.help_text = help_text
 
     @property
     def modifies_image(self):
@@ -159,6 +164,8 @@ def _register_category(entries, kind):
             whole_image_param=entry.get("whole_image_param"),
             param_specs=entry.get("param_specs"),
             validate=entry.get("validate"),      # 参数校验规则（批次4 目标4），没有就 None
+            # ★ 批次6 目标3-M2：说明文本从核心文案表取（节点没写说明就是空串，不崩）
+            help_text=_help_texts.HELP.get(entry["name"], ""),
         )
 
 

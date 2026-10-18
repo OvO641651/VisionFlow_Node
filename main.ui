@@ -719,6 +719,33 @@
               </item>
              </layout>
             </widget>
+            <widget class="QWidget" name="tab_help">
+             <attribute name="title">
+              <string>帮助</string>
+             </attribute>
+             <layout class="QVBoxLayout" name="verticalLayout_help">
+              <item>
+               <widget class="QLabel" name="lbl_help_title">
+                <property name="text">
+                 <string>帮助</string>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QTextEdit" name="text_help_body">
+                <property name="readOnly">
+                 <bool>true</bool>
+                </property>
+                <property name="plainText">
+                 <string>请选择节点</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
            </widget>
           </item>
          </layout>
