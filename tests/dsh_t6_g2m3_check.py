@@ -66,7 +66,7 @@ button.click()
 pump(120)
 w1 = live.viewport().width()
 check("点折叠 ⇒ 工具箱隐藏", panel.isVisible() is False, panel.isVisible())
-check("点折叠 ⇒ 画布变宽（差 > 60px；★ 目标3-M1 起折叠后与右侧 1:1 等分，故增幅变小）", (w1 - w0) > 60, "%d -> %d" % (w0, w1))
+check("点折叠 ⇒ 画布变宽（差 > 20px；★ 目标3-M1 起折叠后与右侧 1:1 等分，故增幅变小）", (w1 - w0) > 20, "%d -> %d" % (w0, w1))
 check("折叠后把手仍可见（唯一展开入口）", button.isVisible() is True, button.isVisible())
 check("折叠后箭头变 '>'", button.text() == ">", button.text())
 

@@ -44,6 +44,19 @@ class ImageGraphicsView(QGraphicsView):
         self._zoom_states = {}
         # 当前正在显示的图片标识；None 表示当前是视频/摄像头帧，或者还没显示过静态图片
         self._current_key = None
+        # ★ 批次6 目标4-M1（图片信息条）：当前这张图的 numpy 数组（读鼠标像素颜色用）；
+        #   None 表示界面上没有图。只是"引用"，不复制数据。
+        self._current_cv_img = None
+        # 信息条的两个回调：鼠标移动（payload）/ 换图（numpy 数组）
+        self._info_callback = None
+        self._size_callback = None
+
+        # ★ 批次6 目标4-M1 第 2 次修改（4.1.2）：主界面实例用的"中键拖动 + 鼠标跟踪"开关。
+        #   ★★ 默认全 False ⇒ 本类其它实例（参数窗口里画 ROI 的那个）行为一个字节不变。
+        self.enable_middle_pan = False
+        self._pan_start = None          # 中键按下时的视口坐标
+        self._pan_scroll = None         # 中键按下时的 (h, v) 滚动条值
+        self._in_pan = False            # 重入锁：改滚动条会同步回投 mouseMove
 
     def set_image(self, cv_img, image_key=None):
         """
@@ -61,6 +74,8 @@ class ImageGraphicsView(QGraphicsView):
                 self.scene().removeItem(self.pixmap_item)
                 self.pixmap_item = None
             self._current_key = None
+            self._current_cv_img = None
+            self._emit_size(None)
             return
 
         # 颜色空间转换
@@ -84,6 +99,11 @@ class ImageGraphicsView(QGraphicsView):
         else:
             # 如果已经存在，直接更新它的 pixmap
             self.pixmap_item.setPixmap(pixmap)
+
+        # ★ 批次6 目标4-M1：记住当前图（信息条读像素用）并通知尺寸变化。
+        #   放在这里而不是 return 之前，是因为下面有几处提前 return（视频帧 / 同一张图）。
+        self._current_cv_img = cv_img
+        self._emit_size(cv_img)
 
         # 设置场景的矩形边界与图像尺寸一致（使视图能正确居中显示）
         self.setSceneRect(0, 0, w, h)
@@ -114,6 +134,137 @@ class ImageGraphicsView(QGraphicsView):
             self.centerOn(w / 2.0, h / 2.0)
 
         self._current_key = image_key
+
+    # --------------------------------------------------------------
+    # ★ 批次6 目标4-M1（图片信息条）：对外暴露的回调 + 鼠标事件
+    # --------------------------------------------------------------
+    def set_info_callbacks(self, on_mouse=None, on_image_changed=None):
+        """注册信息条回调（由 widgets.image_info_bar 安装）。
+
+        :param on_mouse: 收到 `(w, h, x, y, rgb, single)`；鼠标移出 / 点在图外 ⇒ None
+        :param on_image_changed: 换图时收到 numpy 数组（无图时 None）
+        """
+        self._info_callback = on_mouse
+        self._size_callback = on_image_changed
+
+    def _emit_size(self, img):
+        """换图时通知一次（信息条据此更新尺寸）。"""
+        cb = self._size_callback
+        if cb is None:
+            return
+        try:
+            cb(img)
+        except Exception:
+            pass
+
+    def _info_payload_at(self, view_pos):
+        """把视口坐标换算成"原图像素 + 像素颜色"的 payload。
+
+        场景坐标就是原图像素坐标（`setSceneRect(0, 0, w, h)`），
+        所以 `mapToScene` 已经把缩放 / 平移一起算进去了，这里只需取整 + 判边界。
+        """
+        img = self._current_cv_img
+        if img is None:
+            return (None, None, None, None, None, False)
+        try:
+            h = int(img.shape[0])
+            w = int(img.shape[1])
+            single = (len(img.shape) == 2 or
+                      (len(img.shape) == 3 and img.shape[2] == 1))
+            pos = self.mapToScene(view_pos)
+            x = int(np.floor(pos.x()))
+            y = int(np.floor(pos.y()))
+            # 点在图片外（四周黑边）⇒ 当"没有坐标"
+            if not (0 <= x < w and 0 <= y < h):
+                return (w, h, None, None, None, single)
+            px = img[y, x]
+            if single:
+                value = int(px) if np.isscalar(px) else int(px.reshape(-1)[0])
+                return (w, h, x, y, (value,), True)
+            b = int(px[0]); g = int(px[1]); r = int(px[2])   # numpy 里是 BGR
+            return (w, h, x, y, (r, g, b), False)
+        except Exception:
+            return (None, None, None, None, None, False)
+
+    def _emit_info(self, view_pos):
+        """把当前位置的 payload 发给信息条。"""
+        cb = self._info_callback
+        if cb is None:
+            return
+        try:
+            cb(self._info_payload_at(view_pos))
+        except Exception:
+            pass
+
+    # --------------------------------------------------------------
+    # ★ 批次6 目标4-M1 第 2 次修改（4.1.2）：左键解放（中键拖动）+ 鼠标跟踪
+    #   ★★ 只在**主界面这个实例**上调用 enable_main_interaction()；
+    #     本类的默认行为（左键 ScrollHandDrag）保持不变，参数窗口的 ROI 左键画框不受影响。
+    # --------------------------------------------------------------
+    def enable_main_interaction(self):
+        """主界面图片视图专用：左键腾出来 ⇒ 拖动改中键；并开启鼠标跟踪（鼠标划过就刷新信息条）。"""
+        self.enable_middle_pan = True
+        # 左键不再平移画面（拖动交给中键），光标从"手掌"变回普通箭头
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setCursor(Qt.ArrowCursor)
+        # ★ 关键：不开鼠标跟踪时，Qt 在"没按键"的情况下根本不发 mouseMoveEvent，
+        #   于是鼠标划过图片不会刷新信息条（这就是用户报的那个现象）。
+        #   view 与 viewport 两个都要设（事件实际落在 viewport 上）。
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def mousePressEvent(self, event):
+        """中键按下 ⇒ 开始拖动画面（只在本实例启用中键拖动时生效）。"""
+        if self.enable_middle_pan and event.button() == Qt.MiddleButton:
+            self._pan_start = event.pos()
+            self._pan_scroll = (self.horizontalScrollBar().value(),
+                                self.verticalScrollBar().value())
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super(ImageGraphicsView, self).mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """中键松开 ⇒ 结束拖动、光标复原。"""
+        if self.enable_middle_pan and event.button() == Qt.MiddleButton:
+            self._pan_start = None
+            self._pan_scroll = None
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+            return
+        super(ImageGraphicsView, self).mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """中键拖动时平移画面；其它情况交给父类（保留原有滚轮缩放等），最后刷新信息条。"""
+        # 重入锁：setValue 改滚动条会同步回投 mouseMoveEvent，不锁会无限递归
+        if self._in_pan:
+            event.accept()
+            return
+        if (self.enable_middle_pan and self._pan_start is not None
+                and (event.buttons() & Qt.MiddleButton)):
+            try:
+                self._in_pan = True
+                dx = event.pos().x() - self._pan_start.x()
+                dy = event.pos().y() - self._pan_start.y()
+                self.horizontalScrollBar().setValue(int(self._pan_scroll[0] - dx))
+                self.verticalScrollBar().setValue(int(self._pan_scroll[1] - dy))
+            finally:
+                self._in_pan = False
+            self._emit_info(event.pos())
+            event.accept()
+            return
+        super(ImageGraphicsView, self).mouseMoveEvent(event)
+        self._emit_info(event.pos())
+
+    def leaveEvent(self, event):
+        """鼠标离开图片视图 ⇒ 坐标 / 颜色清空。"""
+        super(ImageGraphicsView, self).leaveEvent(event)
+        cb = self._info_callback
+        if cb is not None:
+            try:
+                cb(None)
+            except Exception:
+                pass
 
     def reset_zoom(self):
         """

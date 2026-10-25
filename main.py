@@ -183,6 +183,17 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
                 # 保存新控件的引用
                 self.image_view = new_view
 
+        # ★ 批次6 目标4-M1：图片信息条（尺寸 | 坐标 | RGB），挂在图片视图的鼠标/换图回调上
+        try:
+            from widgets.image_info_bar import install_image_info_bar
+            # ★ 4.1.2：左键解放（拖动改中键）+ 开鼠标跟踪 —— ★ 只在这个主界面实例上启用，
+            #   ImageGraphicsView 的类默认行为不变（参数窗口的 ROI 左键画框照旧）。
+            if getattr(self, "image_view", None) is not None:
+                self.image_view.enable_main_interaction()
+            install_image_info_bar(self)
+        except Exception:
+            pass
+
 
         # 通过 findChild 获取文本 label 控件
         # 显示当前选中的流程图节点文本 lbl_current_node

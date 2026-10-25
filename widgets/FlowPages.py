@@ -902,6 +902,15 @@ COLLAPSE_ARROW_CLOSED = ">"
 # ★ 结构在 main.ui 里**静态**建于 QSplitter（**绝不运行时 setParent 已有控件** ——
 #   2026.10.18 那次运行时"包一层"导致析构偶发崩溃 0xC0000409 的教训）。
 SPLITTER_HANDLE_WIDTH = 10
+
+# ★ 批次6 目标4-M1（4.1.3，2026.10.26）：**启动初始布局**也做成可调常量。
+#   用户反馈「右侧上下的初始布局与 M1 之前不一致」—— M3 引入 right_splitter 后，
+#   初始尺寸由 sizeHint 决定（不再是原来的 stretch 14,0,2,6）⇒ 现改为**显式给定**，
+#   并让「启动初始 = 双击 handle 复位目标」共用同一份数字 ✓
+#   ★ 可自行调整：改这两个列表里的数字（单位 px，之和不必等于窗口宽/高，会按比例缩放）。
+MAIN_SPLITTER_DEFAULT = [174, 719, 569]    # 左 树 / 中 画布 / 右 列 —— 启动初始布局（可调）
+RIGHT_SPLITTER_DEFAULT = [724, 312]        # 右列上下：图像区 / 结果+帮助 —— 启动初始布局（可调）
+
 MAIN_SPLITTER_NAME = "main_splitter"
 RIGHT_SPLITTER_NAME = "right_splitter"
 _MAIN_WEIGHTS = (1, 3, 3)       # 左 : 中 : 右 的默认比例（沿用改造前 stretch 1,3,3）
@@ -937,6 +946,40 @@ def _proportional_sizes(sp, name):
     return out
 
 
+def _defaults_of(name):
+    """★ 4.1.3：启动初始布局的常量（左中右 / 右列上下），没配就返回 None 走兜底。"""
+    if name == MAIN_SPLITTER_NAME:
+        return list(MAIN_SPLITTER_DEFAULT)
+    if name == RIGHT_SPLITTER_NAME:
+        return list(RIGHT_SPLITTER_DEFAULT)
+    return None
+
+
+def _apply_default_sizes(sp, name):
+    """把常量默认值按「当前总长」等比缩放后套到 splitter 上（窗口大小变了也不走形）。
+
+    ★ 为什么等比缩放：常量是按 1400×900 实测的，窗口更大/更小时直接把绝对值塞进去
+      会让比例失真（Qt 也会自己夹）⇒ 先缩放再 setSizes，保证「启动」与「双击复位」
+      在任何窗口尺寸下都得到**同一比例** ✓
+    """
+    dflt = _defaults_of(name)
+    if not dflt:
+        return False
+    try:
+        total = sum(sp.sizes()) or (sp.width() or sp.height())
+        if total <= 0:
+            sp.setSizes(dflt)
+            return True
+        s = sum(dflt) or 1
+        out = [int(total * v / s) for v in dflt]
+        if out:
+            out[-1] += total - sum(out)
+        sp.setSizes(out)
+        return True
+    except RuntimeError:
+        return False
+
+
 def capture_splitter_defaults(host):
     """把两个 splitter 当前 sizes 记成"默认比例"（双击 handle 复位用）。"""
     done = []
@@ -955,13 +998,16 @@ def capture_splitter_defaults(host):
 
 
 def reset_splitters(host):
-    """双击分界线 ⇒ 回到默认比例（记过默认值就精确还原，否则按默认权重分配）。"""
+    """双击分界线 ⇒ 回到**启动初始布局**（★ 4.1.3 起与 `MAIN/RIGHT_SPLITTER_DEFAULT` 共用同一份数字）。"""
     done = []
     for name in (MAIN_SPLITTER_NAME, RIGHT_SPLITTER_NAME):
         sp = _find_splitter(host, name)
         if sp is None:
             continue
         try:
+            if _apply_default_sizes(sp, name):          # ★ 以常量为准
+                done.append(name)
+                continue
             total = sum(sp.sizes())
             dflt = getattr(sp, "_m3_default_sizes", None)
             if dflt and total > 0 and abs(sum(dflt) - total) <= max(4, total // 20):
@@ -992,7 +1038,17 @@ class _SplitterResetHost(QObject):
         return False
 
     def capture(self):
-        """布局跑完之后再记默认比例（安装那一刻 layout 还没算出来）。"""
+        """布局跑完之后再记默认比例（安装那一刻 layout 还没算出来）。
+
+        ★ 4.1.3：**启动初始布局**也在这里套常量 —— 因为 `install_main_splitter()` 在
+          窗口 `show()` / `resize()` 之前调用，那时 `setSizes` 会被随后的布局重算覆盖
+          （实测：安装时设 [274,519,569]，show 之后变成 [226,373,763] ✗）。
+          放到本回调（`QTimer.singleShot(0, …)`）里，布局已稳定 ⇒ 才真正生效 ✓
+        """
+        for name in (MAIN_SPLITTER_NAME, RIGHT_SPLITTER_NAME):
+            sp = _find_splitter(self._host, name)
+            if sp is not None:
+                _apply_default_sizes(sp, name)
         return capture_splitter_defaults(self._host)
 
 
@@ -1015,6 +1071,8 @@ def install_main_splitter(host):
                 handle = sp.handle(i)
                 if handle is not None:
                     handle.installEventFilter(obj)
+            # ★ 4.1.3：**启动初始布局**用常量显式给定（不再只靠 sizeHint 决定）
+            _apply_default_sizes(sp, name)
             installed.append(name)
         except RuntimeError:
             continue

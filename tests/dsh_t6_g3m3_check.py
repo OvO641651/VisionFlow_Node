@@ -75,7 +75,7 @@ print("    初始 main sizes =", defaults_main, " right sizes =", defaults_right
 # ===================== ② 拖动主分界线（左|中） =====================
 before = list(ms.sizes())
 x0 = ms.handle(1).mapTo(ms, QPoint(0, 0)).x()
-ms.moveSplitter(x0 - 110, 1)
+ms.moveSplitter(ms.handle(1).x() + 40, 1)
 pump(3)
 after = list(ms.sizes())
 check("② 拖动左|中分界线 ⇒ 左侧与中间尺寸都变了（各 > 20px）",
@@ -97,7 +97,7 @@ check("③ 双击分界线 ⇒ 主分界线回到初始尺寸（差 ≤2px）",
 # ===================== ④ 拖动右侧纵向分界线 =====================
 before_r = list(rs.sizes())
 y0 = rs.handle(1).mapTo(rs, QPoint(0, 0)).y()
-rs.moveSplitter(y0 - 90, 1)
+rs.moveSplitter(rs.handle(1).x() + 40, 1)
 pump(3)
 after_r = list(rs.sizes())
 check("④ 拖动右侧上|下分界线 ⇒ 上下尺寸都变了（各 > 20px）",
