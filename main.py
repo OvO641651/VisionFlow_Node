@@ -281,6 +281,13 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         except Exception:
             pass
 
+        # ★ 批次6 目标3-M3：可拖分界线（左树 | 画布 | 右侧两个 QSplitter；逻辑在 widgets\FlowPages.py）
+        try:
+            from widgets.FlowPages import install_main_splitter
+            install_main_splitter(self.main_window)
+        except Exception:
+            pass
+
 
         # 流程图初始化，按照 FlowChart 中的 TestWindow 类的内容进行初始化和编写具体内容
         # 初始化节点和连线列表

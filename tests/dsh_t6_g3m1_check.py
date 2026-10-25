@@ -143,8 +143,9 @@ from PySide2.QtWidgets import QHeaderView                                 # noqa
 _hdr = log.horizontalHeader()
 check("⑨ 结果数据列（第 5 列）是自适应拉伸（Stretch）",
       _hdr.sectionResizeMode(4) == QHeaderView.Stretch, int(_hdr.sectionResizeMode(4)))
-check("⑨ 结果数据列实际宽度 ≥ 295px（时间列加宽后仍足够宽）",
-      log.columnWidth(4) >= 300, log.columnWidth(4))
+check("⑨ 结果数据列实际宽度占表格宽度的大头（≥45%，不再到处省略号）",
+      log.columnWidth(4) >= int(log.width() * 0.45) and log.columnWidth(4) >= 240,
+      (log.columnWidth(4), log.width()))
 check("⑨ 序号/时间/模块 三列是固定宽",
       all(_hdr.sectionResizeMode(c) == QHeaderView.Fixed for c in (0, 1, 2)),
       [int(_hdr.sectionResizeMode(c)) for c in (0, 1, 2)])

@@ -896,6 +896,141 @@ if __name__ == '__main__':
 COLLAPSE_ARROW_OPEN = "<"
 COLLAPSE_ARROW_CLOSED = ">"
 
+# ===================== 批次6 目标3-M3：可拖分界线（QSplitter） =====================
+# ★ 用户拍板：只做**左中右三个区域**（上下不做）；分界线宽 23、禁止拖成 0、
+#   拖动比例不记忆、**双击 handle 复位**、折叠后仍保持「中 : 右 = 1 : 1」。
+# ★ 结构在 main.ui 里**静态**建于 QSplitter（**绝不运行时 setParent 已有控件** ——
+#   2026.10.18 那次运行时"包一层"导致析构偶发崩溃 0xC0000409 的教训）。
+SPLITTER_HANDLE_WIDTH = 10
+MAIN_SPLITTER_NAME = "main_splitter"
+RIGHT_SPLITTER_NAME = "right_splitter"
+_MAIN_WEIGHTS = (1, 3, 3)       # 左 : 中 : 右 的默认比例（沿用改造前 stretch 1,3,3）
+_RIGHT_WEIGHTS = (16, 6)        # 图像区 : 结果区（沿用改造前 14+0+2 : 6）
+_MAIN_STRETCH = (0, 1, 1)       # 窗口变大时，多出来的空间给中间与右侧（左侧保持）
+
+
+def _find_splitter(host, name):
+    """按对象名找 QSplitter（host 既可能是 MainWindow，也可能是主窗口 QWidget）。"""
+    try:
+        from PySide2.QtWidgets import QSplitter
+    except Exception:
+        return None
+    mw = getattr(host, "main_window", host)
+    try:
+        return mw.findChild(QSplitter, name)
+    except RuntimeError:
+        return None
+
+
+def _weights_of(name):
+    return _MAIN_WEIGHTS if name == MAIN_SPLITTER_NAME else _RIGHT_WEIGHTS
+
+
+def _proportional_sizes(sp, name):
+    """按权重把当前总宽（总高）分配成一组 sizes（最后一项吃掉余数，保证总和不变）。"""
+    total = sum(sp.sizes()) or (sp.width() or sp.height())
+    weights = list(_weights_of(name))[:max(1, sp.count())]
+    s = sum(weights) or 1
+    out = [int(total * w / s) for w in weights]
+    if out:
+        out[-1] += total - sum(out)
+    return out
+
+
+def capture_splitter_defaults(host):
+    """把两个 splitter 当前 sizes 记成"默认比例"（双击 handle 复位用）。"""
+    done = []
+    for name in (MAIN_SPLITTER_NAME, RIGHT_SPLITTER_NAME):
+        sp = _find_splitter(host, name)
+        if sp is None:
+            continue
+        try:
+            sizes = list(sp.sizes())
+            if sum(sizes) > 0:
+                sp._m3_default_sizes = sizes
+                done.append((name, sizes))
+        except RuntimeError:
+            continue
+    return done
+
+
+def reset_splitters(host):
+    """双击分界线 ⇒ 回到默认比例（记过默认值就精确还原，否则按默认权重分配）。"""
+    done = []
+    for name in (MAIN_SPLITTER_NAME, RIGHT_SPLITTER_NAME):
+        sp = _find_splitter(host, name)
+        if sp is None:
+            continue
+        try:
+            total = sum(sp.sizes())
+            dflt = getattr(sp, "_m3_default_sizes", None)
+            if dflt and total > 0 and abs(sum(dflt) - total) <= max(4, total // 20):
+                sp.setSizes(list(dflt))
+            else:
+                sp.setSizes(_proportional_sizes(sp, name))
+            done.append(name)
+        except RuntimeError:
+            continue
+    return done
+
+
+class _SplitterResetHost(QObject):
+    """双击分界线复位 + 延迟捕获默认比例（★ 用 QObject 子对象的绑定方法，不用 lambda）。"""
+
+    def __init__(self, host, parent=None):
+        super().__init__(parent if parent is not None else host)
+        self._host = host
+
+    def eventFilter(self, obj, event):
+        try:
+            from PySide2.QtCore import QEvent
+            if event.type() == QEvent.MouseButtonDblClick:
+                reset_splitters(self._host)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def capture(self):
+        """布局跑完之后再记默认比例（安装那一刻 layout 还没算出来）。"""
+        return capture_splitter_defaults(self._host)
+
+
+def install_main_splitter(host):
+    """把「左树 | 画布 | 右侧」与「图像区 / 结果区」两条分界线装好（找不到就什么都不做）。"""
+    obj = _SplitterResetHost(host)
+    installed = []
+    for name, stretch in ((MAIN_SPLITTER_NAME, _MAIN_STRETCH),
+                          (RIGHT_SPLITTER_NAME, (0, 0))):
+        sp = _find_splitter(host, name)
+        if sp is None:
+            continue
+        try:
+            sp.setHandleWidth(SPLITTER_HANDLE_WIDTH)
+            sp.setChildrenCollapsible(False)
+            for i, v in enumerate(stretch):
+                if i < sp.count():
+                    sp.setStretchFactor(i, v)
+            for i in range(1, sp.count()):
+                handle = sp.handle(i)
+                if handle is not None:
+                    handle.installEventFilter(obj)
+            installed.append(name)
+        except RuntimeError:
+            continue
+    mw = getattr(host, "main_window", host)
+    try:
+        mw._splitter_reset_host = obj       # 强引用，防被回收
+    except Exception:
+        pass
+    if installed:
+        try:
+            from PySide2.QtCore import QTimer
+            QTimer.singleShot(0, obj.capture)
+        except Exception:
+            pass
+    return obj
+
 
 def _activate_parent_layout(widget):
     """★ 显示 / 隐藏面板后**立刻让父布局重新分配空间**（真机上有 resize 事件会自然触发，
@@ -997,18 +1132,64 @@ def _apply_collapse_ratio(layout, closed):
 
 
 class _ToolboxCollapseHost(QObject):
-    """左面板折叠开关：一个按钮切换「工具箱」Tab 的显示 / 隐藏。"""
+    """左面板折叠开关：一个按钮切换「工具箱」Tab 的显示 / 隐藏。
 
-    def __init__(self, button, panel, parent=None):
+    ★ 目标3-M3：有 `main_splitter` 时走 **`setSizes`**（折叠后 中:右 = 1:1），
+      没有时退回原来的 stretch 方案（老 .ui 也能跑）。
+    """
+
+    def __init__(self, button, panel, parent=None, host=None):
         super().__init__(parent if parent is not None else button)
         self._button = button
         self._panel = panel
+        self._host = host
         self._saved_width = 0
+        self._saved_sizes = None
         self._closed = False
         button.clicked.connect(self.toggle)
 
+    def _splitter(self):
+        if self._host is None:
+            return None
+        return _find_splitter(self._host, MAIN_SPLITTER_NAME)
+
+    def _toggle_with_splitter(self, sp):
+        """折叠 ⇒ sizes=[把手宽, w, w]（中:右 = 1:1）；展开 ⇒ 精确还原折叠前的 sizes。"""
+        handle = 14                       # 折叠把手常驻宽度（就 14px）
+        total = sum(sp.sizes()) or sp.width()
+        if self._closed:                  # 展开
+            self._panel.setVisible(True)
+            self._closed = False
+            if self._saved_sizes and len(self._saved_sizes) == sp.count():
+                sp.setSizes(list(self._saved_sizes))
+            else:
+                w = max(0, total - handle)
+                left = self._saved_width if self._saved_width > 0 else int(w * 0.18)
+                rest = max(0, w - left)
+                sp.setSizes([left, rest // 2, rest - rest // 2])
+            self._button.setText(COLLAPSE_ARROW_OPEN)
+            self._button.setToolTip("折叠工具箱")
+        else:                             # 折叠
+            try:
+                self._saved_sizes = list(sp.sizes())
+            except RuntimeError:
+                self._saved_sizes = None
+            self._saved_width = max(handle, sp.sizes()[0] if sp.count() else self._panel.width())
+            self._panel.setMinimumWidth(0)
+            self._panel.setVisible(False)
+            w = max(0, total - handle)
+            sp.setSizes([handle, w // 2, w - w // 2])
+            self._closed = True
+            self._button.setText(COLLAPSE_ARROW_CLOSED)
+            self._button.setToolTip("展开工具箱")
+        _activate_parent_layout(self._panel)
+
     def toggle(self, *_args):
         try:
+            sp = self._splitter()
+            if sp is not None:
+                self._toggle_with_splitter(sp)
+                return
             if self._closed:
                 self._panel.setVisible(True)
                 self._closed = False
@@ -1054,7 +1235,7 @@ def install_toolbox_collapse(host):
         button.setVisible(True)
     except RuntimeError:
         return None
-    obj = _ToolboxCollapseHost(button, panel, parent=button)
+    obj = _ToolboxCollapseHost(button, panel, parent=button, host=host)
     mw._toolbox_collapse = obj       # 存一份强引用，防被回收
     return obj
 

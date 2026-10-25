@@ -225,308 +225,344 @@
        </layout>
       </item>
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="1,3,3">
-        <item>
-         <widget class="QTabWidget" name="tool_tab_widget">
-          <property name="font">
-           <font>
-            <pointsize>12</pointsize>
-           </font>
-          </property>
-          <property name="documentMode">
-           <bool>true</bool>
-          </property>
-          <widget class="QWidget" name="tab_toolbox">
-           <attribute name="title">
-            <string>工具箱</string>
-           </attribute>
-           <layout class="QVBoxLayout" name="verticalLayout_toolbox">
-            <property name="spacing">
-             <number>0</number>
-            </property>
-            <property name="leftMargin">
-             <number>0</number>
-            </property>
-            <property name="topMargin">
-             <number>0</number>
-            </property>
-            <property name="rightMargin">
-             <number>0</number>
-            </property>
-            <property name="bottomMargin">
-             <number>0</number>
-            </property>
-            <item>
-             <layout class="QHBoxLayout" name="horizontalLayout_toolbox_search">
-              <property name="spacing">
-               <number>6</number>
-              </property>
-              <property name="leftMargin">
-               <number>0</number>
-              </property>
-              <property name="topMargin">
-               <number>0</number>
-              </property>
-              <property name="rightMargin">
-               <number>0</number>
-              </property>
-              <property name="bottomMargin">
-               <number>0</number>
-              </property>
-              <item>
-               <widget class="QToolButton" name="btn_tree_expand">
-                <property name="toolTip">
-                 <string>展开 / 折叠全部分组</string>
-                </property>
-                <property name="text">
-                 <string>折叠</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QLineEdit" name="edit_tree_search">
-                <property name="minimumSize">
-                 <size>
-                  <width>150</width>
-                  <height>0</height>
-                 </size>
-                </property>
-                <property name="placeholderText">
-                 <string>搜索节点 / 分组</string>
-                </property>
-                <property name="clearButtonEnabled">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
-            <item>
-             <widget class="QTreeWidget" name="tree">
-              <property name="font">
-               <font>
-                <pointsize>12</pointsize>
-               </font>
-              </property>
-              <column>
-               <property name="text">
-                <string>节点算子</string>
+        <widget class="QSplitter" name="main_splitter">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="handleWidth">
+          <number>23</number>
+         </property>
+         <property name="childrenCollapsible">
+          <bool>false</bool>
+         </property>
+         <widget class="QWidget" name="left_panel">
+          <layout class="QHBoxLayout" name="horizontalLayout_left_panel">
+           <property name="spacing">
+            <number>0</number>
+           </property>
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+         <item>
+          <widget class="QTabWidget" name="tool_tab_widget">
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+            </font>
+           </property>
+           <property name="documentMode">
+            <bool>true</bool>
+           </property>
+           <widget class="QWidget" name="tab_toolbox">
+            <attribute name="title">
+             <string>工具箱</string>
+            </attribute>
+            <layout class="QVBoxLayout" name="verticalLayout_toolbox">
+             <property name="spacing">
+              <number>0</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <layout class="QHBoxLayout" name="horizontalLayout_toolbox_search">
+               <property name="spacing">
+                <number>6</number>
                </property>
-              </column>
-              <item>
-               <property name="text">
-                <string>采集</string>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
                </property>
                <item>
-                <property name="text">
-                 <string>图片源</string>
-                </property>
+                <widget class="QToolButton" name="btn_tree_expand">
+                 <property name="toolTip">
+                  <string>展开 / 折叠全部分组</string>
+                 </property>
+                 <property name="text">
+                  <string>折叠</string>
+                 </property>
+                </widget>
                </item>
                <item>
-                <property name="text">
-                 <string>视频源</string>
-                </property>
+                <widget class="QLineEdit" name="edit_tree_search">
+                 <property name="minimumSize">
+                  <size>
+                   <width>150</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="placeholderText">
+                  <string>搜索节点 / 分组</string>
+                 </property>
+                 <property name="clearButtonEnabled">
+                  <bool>true</bool>
+                 </property>
+                </widget>
                </item>
-               <item>
-                <property name="text">
-                 <string>相机源</string>
-                </property>
-               </item>
-               <item>
-                <property name="text">
-                 <string>输出图像</string>
-                </property>
-               </item>
-              </item>
-              <item>
-               <property name="text">
-                <string>处理</string>
+              </layout>
+             </item>
+             <item>
+              <widget class="QTreeWidget" name="tree">
+               <property name="font">
+                <font>
+                 <pointsize>12</pointsize>
+                </font>
                </property>
+               <column>
+                <property name="text">
+                 <string>节点算子</string>
+                </property>
+               </column>
                <item>
                 <property name="text">
-                 <string>灰度</string>
+                 <string>采集</string>
                 </property>
+                <item>
+                 <property name="text">
+                  <string>图片源</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>视频源</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>相机源</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>输出图像</string>
+                 </property>
+                </item>
                </item>
                <item>
                 <property name="text">
-                 <string>取反</string>
+                 <string>处理</string>
                 </property>
+                <item>
+                 <property name="text">
+                  <string>灰度</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>取反</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>滤波</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>二值化</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>形态学</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>边缘提取</string>
+                 </property>
+                </item>
                </item>
                <item>
                 <property name="text">
-                 <string>滤波</string>
+                 <string>检测识别</string>
                 </property>
+                <item>
+                 <property name="text">
+                  <string>直线识别</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>圆识别</string>
+                 </property>
+                </item>
+                <item>
+                 <property name="text">
+                  <string>人脸识别</string>
+                 </property>
+                </item>
                </item>
                <item>
                 <property name="text">
-                 <string>二值化</string>
+                 <string>颜色处理</string>
                 </property>
+                <item>
+                 <property name="text">
+                  <string>颜色提取</string>
+                 </property>
+                </item>
                </item>
                <item>
                 <property name="text">
-                 <string>形态学</string>
+                 <string>测试</string>
                 </property>
+                <item>
+                 <property name="text">
+                  <string>警告（测试用）</string>
+                 </property>
+                </item>
                </item>
                <item>
                 <property name="text">
-                 <string>边缘提取</string>
+                 <string>新建项目</string>
                 </property>
                </item>
-              </item>
-              <item>
-               <property name="text">
-                <string>检测识别</string>
-               </property>
-               <item>
-                <property name="text">
-                 <string>直线识别</string>
-                </property>
-               </item>
-               <item>
-                <property name="text">
-                 <string>圆识别</string>
-                </property>
-               </item>
-               <item>
-                <property name="text">
-                 <string>人脸识别</string>
-                </property>
-               </item>
-              </item>
-              <item>
-               <property name="text">
-                <string>颜色处理</string>
-               </property>
-               <item>
-                <property name="text">
-                 <string>颜色提取</string>
-                </property>
-               </item>
-              </item>
-              <item>
-               <property name="text">
-                <string>测试</string>
-               </property>
-               <item>
-                <property name="text">
-                 <string>警告（测试用）</string>
-                </property>
-               </item>
-              </item>
-              <item>
-               <property name="text">
-                <string>新建项目</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-           </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
           </widget>
-         </widget>
-        </item>
-        <item>
-         <widget class="QToolButton" name="btn_collapse_toolbox">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="minimumSize">
-           <size>
-            <width>14</width>
-            <height>0</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>14</width>
-            <height>16777215</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>折叠工具箱</string>
-          </property>
-          <property name="text">
-           <string>&lt;</string>
-          </property>
-          <property name="autoRaise">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QTabWidget" name="flowWidget">
-          <property name="currentIndex">
-           <number>0</number>
-          </property>
-          <widget class="QWidget" name="flow">
-           <attribute name="title">
-            <string>Flow</string>
-           </attribute>
-           <layout class="QVBoxLayout" name="verticalLayout_3">
-            <item>
-             <widget class="QGraphicsView" name="flowView"/>
-            </item>
-            <item>
-             <layout class="QHBoxLayout" name="statusZoomLayout">
-              <item>
-               <widget class="QLabel" name="lbl_current_node">
-                <property name="text">
-                 <string>未选中节点</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <spacer name="zoomStatusSpacer">
-                <property name="orientation">
-                 <enum>Qt::Horizontal</enum>
-                </property>
-                <property name="sizeHint" stdset="0">
-                 <size>
-                  <width>40</width>
-                  <height>20</height>
-                 </size>
-                </property>
-               </spacer>
-              </item>
-              <item>
-               <widget class="QLabel" name="zoom_percent_label">
-                <property name="text">
-                 <string>100%</string>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QSlider" name="zoom_slider">
-                <property name="minimumSize">
-                 <size>
-                  <width>140</width>
-                  <height>0</height>
-                 </size>
-                </property>
-                <property name="minimum">
-                 <number>20</number>
-                </property>
-                <property name="maximum">
-                 <number>400</number>
-                </property>
-                <property name="value">
-                 <number>100</number>
-                </property>
-                <property name="orientation">
-                 <enum>Qt::Horizontal</enum>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
-           </layout>
+         </item>
+         <item>
+          <widget class="QToolButton" name="btn_collapse_toolbox">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>14</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>14</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>折叠工具箱</string>
+           </property>
+           <property name="text">
+            <string>&lt;</string>
+           </property>
+           <property name="autoRaise">
+            <bool>true</bool>
+           </property>
           </widget>
+         </item>
+          </layout>
          </widget>
-        </item>
-        <item>
-         <layout class="QVBoxLayout" name="verticalLayout_2" stretch="14,0,2,6">
+        <widget class="QTabWidget" name="flowWidget">
+         <property name="currentIndex">
+          <number>0</number>
+         </property>
+         <widget class="QWidget" name="flow">
+          <attribute name="title">
+           <string>Flow</string>
+          </attribute>
+          <layout class="QVBoxLayout" name="verticalLayout_3">
+           <item>
+            <widget class="QGraphicsView" name="flowView"/>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="statusZoomLayout">
+             <item>
+              <widget class="QLabel" name="lbl_current_node">
+               <property name="text">
+                <string>未选中节点</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="zoomStatusSpacer">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+             <item>
+              <widget class="QLabel" name="zoom_percent_label">
+               <property name="text">
+                <string>100%</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QSlider" name="zoom_slider">
+               <property name="minimumSize">
+                <size>
+                 <width>140</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="minimum">
+                <number>20</number>
+               </property>
+               <property name="maximum">
+                <number>400</number>
+               </property>
+               <property name="value">
+                <number>100</number>
+               </property>
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </widget>
+         <widget class="QSplitter" name="right_splitter">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="handleWidth">
+           <number>23</number>
+          </property>
+          <property name="childrenCollapsible">
+           <bool>false</bool>
+          </property>
+          <widget class="QWidget" name="right_top_panel">
+           <layout class="QVBoxLayout" name="verticalLayout_right_top" stretch="14,0,2">
           <item>
            <widget class="QTabWidget" name="tabWidget">
             <property name="currentIndex">
@@ -675,82 +711,81 @@
             </property>
            </widget>
           </item>
-          <item>
-           <widget class="QTabWidget" name="result_tab">
-            <property name="currentIndex">
-             <number>0</number>
-            </property>
-            <widget class="QWidget" name="tab_2">
-             <attribute name="title">
-              <string>当前结果</string>
-             </attribute>
-             <layout class="QVBoxLayout" name="verticalLayout">
-              <item>
-               <widget class="QTableWidget" name="execution_log">
-                <property name="columnCount">
-                 <number>5</number>
-                </property>
-                <column>
-                 <property name="text">
-                  <string>执行序号</string>
-                 </property>
-                </column>
-                <column>
-                 <property name="text">
-                  <string>执行时间</string>
-                 </property>
-                </column>
-                <column>
-                 <property name="text">
-                  <string>模块</string>
-                 </property>
-                </column>
-                <column>
-                 <property name="text">
-                  <string>图像源</string>
-                 </property>
-                </column>
-                <column>
-                 <property name="text">
-                  <string>结果数据</string>
-                 </property>
-                </column>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-            <widget class="QWidget" name="tab_help">
-             <attribute name="title">
-              <string>帮助</string>
-             </attribute>
-             <layout class="QVBoxLayout" name="verticalLayout_help">
-              <item>
-               <widget class="QLabel" name="lbl_help_title">
-                <property name="text">
-                 <string>帮助</string>
-                </property>
-                <property name="wordWrap">
-                 <bool>true</bool>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QTextEdit" name="text_help_body">
-                <property name="readOnly">
-                 <bool>true</bool>
-                </property>
-                <property name="plainText">
-                 <string>请选择节点</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </widget>
-           </widget>
-          </item>
-         </layout>
-        </item>
-       </layout>
+           </layout>
+          </widget>
+         <widget class="QTabWidget" name="result_tab">
+          <property name="currentIndex">
+           <number>0</number>
+          </property>
+          <widget class="QWidget" name="tab_2">
+           <attribute name="title">
+            <string>当前结果</string>
+           </attribute>
+           <layout class="QVBoxLayout" name="verticalLayout">
+            <item>
+             <widget class="QTableWidget" name="execution_log">
+              <property name="columnCount">
+               <number>5</number>
+              </property>
+              <column>
+               <property name="text">
+                <string>执行序号</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>执行时间</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>模块</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>图像源</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>结果数据</string>
+               </property>
+              </column>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+          <widget class="QWidget" name="tab_help">
+           <attribute name="title">
+            <string>帮助</string>
+           </attribute>
+           <layout class="QVBoxLayout" name="verticalLayout_help">
+            <item>
+             <widget class="QLabel" name="lbl_help_title">
+              <property name="text">
+               <string>帮助</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTextEdit" name="text_help_body">
+              <property name="readOnly">
+               <bool>true</bool>
+              </property>
+              <property name="plainText">
+               <string>请选择节点</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </widget>
+         </widget>
+        </widget>
       </item>
      </layout>
     </item>

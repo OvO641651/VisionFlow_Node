@@ -1145,3 +1145,34 @@
 [2026-10-18T16:33:33.734Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
 [2026-10-18T16:40:04.233Z] hit-chain pid=8004 sid=f9a751bd textLen=32 hit=null
 [2026-10-18T16:40:55.709Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T16:48:24.940Z] check sid=f9a751bd active=false idle=449s
+[2026-10-18T16:54:20.966Z] hit-chain pid=8004 sid=f9a751bd textLen=24 hit=null
+[2026-10-18T16:54:32.558Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T16:59:24.227Z] hit-chain pid=8004 sid=f9a751bd textLen=110 hit=null
+[2026-10-18T16:59:42.125Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T17:02:02.154Z] hit-chain pid=8004 sid=f9a751bd textLen=40 hit=yes
+[2026-10-18T17:02:19.918Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T17:03:24.942Z] check sid=f9a751bd active=false idle=65s
+[2026-10-18T17:12:16.166Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T17:15:19.055Z] hit-chain pid=8004 sid=f9a751bd textLen=12 hit=null
+[2026-10-18T17:15:28.956Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T17:18:24.943Z] check sid=f9a751bd active=false idle=176s
+[2026-10-18T17:32:31.387Z] hit-chain pid=8004 sid=f9a751bd textLen=89 hit=null
+[2026-10-18T17:33:24.945Z] check sid=f9a751bd active=false idle=18s
+[2026-10-18T17:34:06.390Z] turn-stopping pid=8004 sid=f9a751bd reason=none wasDream=false
+[2026-10-18T17:48:24.952Z] check sid=f9a751bd active=false idle=859s
+[2026-10-18T18:03:24.965Z] check sid=f9a751bd active=false idle=1759s
+[2026-10-18T18:18:24.973Z] check sid=f9a751bd active=false idle=2659s
+[2026-10-19T13:28:27.741Z] check sid=f9a751bd active=false idle=71661s
+[2026-10-19T13:28:27.747Z] check agent-missing sid=f9a751bd -> try resume
+[2026-10-19T13:28:28.184Z] check agent-resumed sid=f9a751bd
+[2026-10-19T13:28:28.220Z] dream start pid=4480 session=f9a751bd rounds=3 T=1792344846386
+[2026-10-19T13:43:27.740Z] check sid=f9a751bd active=true idle=900s
+[2026-10-19T13:58:27.747Z] check sid=f9a751bd active=true idle=1800s
+[2026-10-19T14:13:27.746Z] check sid=f9a751bd active=true idle=2700s
+[2026-10-19T14:28:27.749Z] check sid=f9a751bd active=true idle=3600s
+[2026-10-19T14:43:27.740Z] check sid=f9a751bd active=true idle=4500s
+[2026-10-19T14:58:27.757Z] check sid=f9a751bd active=true idle=5400s
+[2026-10-19T15:21:49.939Z] check sid=f9a751bd active=true idle=6802s
+[2026-10-19T15:36:49.947Z] check sid=f9a751bd active=true idle=7702s
+[2026-10-19T15:36:49.989Z] dream recovered session=f9a751bd stamped=29
