@@ -42,6 +42,19 @@ from services.gallery_service import GalleryMixin
 from services.undo_service import UndoMixin    # ★ 批次5 目标4：撤销 / 重做（第 7 个 Mixin）
 
 
+# ★ 批次6 目标5-M1：顶部按钮统一尺寸（用户 2026.10.27：把按钮调小；原 100x90 ⇒ 现 80x52）
+TOP_BUTTON_W, TOP_BUTTON_H = 80, 52
+
+def _apply_top_button_size(host):
+    """把顶部按钮统一设成 (TOP_BUTTON_W, TOP_BUTTON_H)；找不到的跳过。"""
+    names = ("menu_button", "open_button", "btn_step_execute", "btn_continuous_execute",
+             "save_project_button", "open_project_button", "btn_undo", "btn_redo")
+    for nm in names:
+        btn = host.main_window.findChild(QtWidgets.QPushButton, nm)
+        if btn is not None:
+            btn.setFixedSize(TOP_BUTTON_W, TOP_BUTTON_H)
+
+
 uiloader = QUiLoader()
 
 
@@ -201,9 +214,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
         # 通过 findChild 获取按钮控件名字Name
         # 打开摄像头
-        self.camera_button = self.main_window.findChild(QtWidgets.QPushButton, "camera_button")
         # 关闭摄像头 或者 关闭图片
-        self.close_button = self.main_window.findChild(QtWidgets.QPushButton, "close_button")
         # 打开图片
         self.open_button = self.main_window.findChild(QtWidgets.QPushButton, "open_button")
         # 顶部"菜单"按钮（main.ui 里一直有这个按钮，但从来没接过槽）
@@ -215,9 +226,8 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
 
         # 设置按钮的点击 clicked 槽事件
-        self.camera_button.clicked.connect(self.open_camera) # 开启摄像头按钮
-        self.close_button.clicked.connect(self.close_camera) # 关闭摄像头按钮
         self.open_button.clicked.connect(self.open_file) # 导入图片或者视频
+        _apply_top_button_size(self)  # ★ 目标5-M1：顶部按钮统一 80x52
         self.btn_step.clicked.connect(self.on_step_execute) # 单步执行
         self.btn_continuous.clicked.connect(self.on_continuous_execute) # 连续执行
         if self.menu_button:

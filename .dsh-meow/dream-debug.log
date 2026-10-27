@@ -1204,3 +1204,38 @@
 [2026-10-25T18:51:57.349Z] turn-stopping pid=6228 sid=f9a751bd reason=none wasDream=false
 [2026-10-25T18:55:43.471Z] hit-chain pid=6228 sid=f9a751bd textLen=32 hit=null
 [2026-10-25T18:57:37.077Z] turn-stopping pid=6228 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T05:57:08.653Z] pre-step first pid=19176 sid=f9a751bd priorUser=187 userMsgs=1
+[2026-10-26T05:57:08.682Z] hit-chain pid=19176 sid=f9a751bd textLen=39 hit=yes
+[2026-10-26T05:57:19.696Z] turn-stopping pid=19176 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T16:11:30.289Z] check sid=f9a751bd active=false idle=36851s
+[2026-10-26T16:11:30.359Z] dream start pid=16216 session=f9a751bd rounds=3 T=1792994239688
+[2026-10-26T16:12:20.648Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=true
+[2026-10-26T16:12:20.657Z] dream group 2/3 steered
+[2026-10-26T16:12:54.928Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=true
+[2026-10-26T16:12:54.937Z] dream group 3/3 steered
+[2026-10-26T16:13:36.313Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=true
+[2026-10-26T16:13:36.337Z] dream done session=f9a751bd groups=3 stamped=38
+[2026-10-26T17:11:48.858Z] pre-step first pid=16216 sid=f9a751bd priorUser=188 userMsgs=1
+[2026-10-26T17:11:48.866Z] hit-chain pid=16216 sid=f9a751bd textLen=214 hit=null
+[2026-10-26T17:12:46.345Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T17:15:55.913Z] hit-chain pid=16216 sid=f9a751bd textLen=72 hit=null
+[2026-10-26T17:18:10.317Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T17:21:50.027Z] hit-chain pid=16216 sid=f9a751bd textLen=34 hit=null
+[2026-10-26T17:22:44.624Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T17:55:20.899Z] hit-chain pid=16216 sid=f9a751bd textLen=237 hit=yes
+[2026-10-26T17:56:21.697Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T18:02:14.086Z] hit-chain pid=16216 sid=f9a751bd textLen=87 hit=null
+[2026-10-26T18:03:24.806Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T18:07:44.103Z] hit-chain pid=16216 sid=f9a751bd textLen=26 hit=null
+[2026-10-26T18:07:54.712Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T18:10:17.347Z] hit-chain pid=16216 sid=f9a751bd textLen=23 hit=null
+[2026-10-26T18:10:38.281Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T18:18:14.849Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-26T18:35:09.467Z] turn-stopping pid=16216 sid=f9a751bd reason=none wasDream=false
+[2026-10-27T12:53:06.241Z] pre-step first pid=19844 sid=f9a751bd priorUser=195 userMsgs=1
+[2026-10-27T12:53:06.277Z] hit-chain pid=19844 sid=f9a751bd textLen=631 hit=yes
+[2026-10-27T12:55:56.128Z] turn-stopping pid=19844 sid=f9a751bd reason=none wasDream=false
+[2026-10-27T13:01:26.163Z] hit-chain pid=19844 sid=f9a751bd textLen=155 hit=null
+[2026-10-27T13:02:15.016Z] turn-stopping pid=19844 sid=f9a751bd reason=none wasDream=false
+[2026-10-27T13:03:39.133Z] hit-chain pid=19844 sid=f9a751bd textLen=40 hit=null
+[2026-10-27T13:04:39.721Z] turn-stopping pid=19844 sid=f9a751bd reason=none wasDream=false

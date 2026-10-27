@@ -29,14 +29,14 @@
          <widget class="QPushButton" name="menu_button">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -45,59 +45,21 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="camera_button">
-          <property name="minimumSize">
-           <size>
-            <width>100</width>
-            <height>90</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>100</width>
-            <height>90</height>
-           </size>
-          </property>
-          <property name="text">
-           <string>启动</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="close_button">
-          <property name="minimumSize">
-           <size>
-            <width>100</width>
-            <height>90</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>100</width>
-            <height>90</height>
-           </size>
-          </property>
-          <property name="text">
-           <string>停止</string>
-          </property>
-         </widget>
-        </item>
-        <item>
          <widget class="QPushButton" name="open_button">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
-           <string>打开文件</string>
+           <string>导入图片</string>
           </property>
          </widget>
         </item>
@@ -105,14 +67,14 @@
          <widget class="QPushButton" name="btn_step_execute">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -124,14 +86,14 @@
          <widget class="QPushButton" name="btn_continuous_execute">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -143,14 +105,14 @@
          <widget class="QPushButton" name="save_project_button">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -162,14 +124,14 @@
          <widget class="QPushButton" name="open_project_button">
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -184,8 +146,14 @@
           </property>
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
@@ -200,8 +168,14 @@
           </property>
           <property name="minimumSize">
            <size>
-            <width>100</width>
-            <height>90</height>
+            <width>80</width>
+            <height>52</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>52</height>
            </size>
           </property>
           <property name="text">
