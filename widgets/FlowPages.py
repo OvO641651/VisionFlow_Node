@@ -893,6 +893,7 @@ if __name__ == '__main__':
 #   widgets/ 或 core/ 的模块级函数」；折叠逻辑 = 纯界面行为 ⇒ 落 widgets/。
 # ★ 信号接线用 QObject 子对象（parent=按钮）的绑定方法，**不用 lambda / 闭包**
 #   （2026.10.18 的教训：lambda/闭包在控件析构时会偶发崩 0xC0000409）。
+COLLAPSE_HANDLE_W = 14           # ▶ 折叠把手宽（px）—— 用户可调，判据引用此常量
 COLLAPSE_ARROW_OPEN = "<"
 COLLAPSE_ARROW_CLOSED = ">"
 
@@ -1288,7 +1289,7 @@ def install_toolbox_collapse(host):
         return None
     try:
         button.setAutoRaise(True)
-        button.setFixedWidth(14)
+        button.setFixedWidth(COLLAPSE_HANDLE_W)
         # ★ 把手一直可见（折叠后它就是唯一的"展开"入口）
         button.setVisible(True)
     except RuntimeError:

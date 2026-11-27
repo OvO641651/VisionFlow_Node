@@ -47,6 +47,18 @@ f = QFile(os.path.join(PROJ, "main.ui"))
 f.open(QFile.ReadOnly)
 ui = QUiLoader().load(f)
 
+# ★ 5.2.2：只加载 .ui 看到的是"文件里的旧值"（80×52 + 文字）
+#   ⇒ **必须跑一次产品的运行时入口**，才能验证"44×44 + 只图标 + tooltip"的最终效果。
+
+
+class _FakeHost(object):
+    main_window = ui
+
+
+import main as _m                                                    # noqa: E402
+
+_m._apply_top_button_size(_FakeHost())
+
 EIGHT = [("menu_button", "菜单"), ("open_button", "导入图片"),
          ("btn_step_execute", "单步执行"), ("btn_continuous_execute", "连续执行"),
          ("save_project_button", "保存项目"), ("open_project_button", "导入项目"),
@@ -60,10 +72,14 @@ check("① close_button（停止）已不存在", ui.findChild(QPushButton, "clo
 
 # ---------- ② 改名：导入图片 ----------
 ob = ui.findChild(QPushButton, "open_button")
-check("② 「导入图片」按钮存在且文本正确", ob is not None and ob.text() == "导入图片",
-      ob.text() if ob else None)
+# ★ 5.2.2 起按钮**只显示图标**（text 为空），原文字挪到 **tooltip** ⇒ 断言改看 tooltip
+check("② 「导入图片」按钮存在、只显示图标（text 空）、tooltip == 「导入图片」",
+      ob is not None and ob.text() == "" and ob.toolTip() == "导入图片",
+      (ob.text(), ob.toolTip()) if ob else None)
 all_texts = [b.text() for b in ui.findChildren(QPushButton)]
-check("② 界面上已无「打开文件」按钮", "打开文件" not in all_texts, all_texts)
+all_tips = [b.toolTip() for b in ui.findChildren(QPushButton)]
+check("② 界面上已无「打开文件」（文本与 tooltip 都没有）",
+      "打开文件" not in all_texts and "打开文件" not in all_tips, (all_texts, all_tips))
 
 # ---------- ③ 尺寸 == 常量 ----------
 bad = []
@@ -75,8 +91,8 @@ check("③ 8 个按钮尺寸都 == (TOP_BUTTON_W, TOP_BUTTON_H)", not bad, bad)
 
 # ---------- ④ 其余 8 个按钮仍在且文本正确 ----------
 missing = [(n, t) for n, t in EIGHT
-           if ui.findChild(QPushButton, n) is None or ui.findChild(QPushButton, n).text() != t]
-check("④ 其余 8 个按钮仍在且文本正确", not missing, missing)
+           if ui.findChild(QPushButton, n) is None or ui.findChild(QPushButton, n).toolTip() != t]
+check("④ 其余 8 个按钮仍在且 tooltip 文字正确（文字已挪进 tooltip）", not missing, missing)
 
 # ---------- ⑤ 顶部栏不裁切（1400 宽下右缘不超出容器）----------
 holder = ui.findChild(QPushButton, "menu_button").parentWidget()

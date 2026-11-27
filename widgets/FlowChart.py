@@ -7,7 +7,7 @@ from core.icon_keys import icon_key_for
 from core.NodeRegistry import get_spec
 # ★ 批次6 目标1-M4：右键画布「添加节点」两级菜单的清单（零 Qt；目标2 的树搜索以后共用这一份）
 from core import node_catalog
-from widgets.node_visuals import draw_icon
+from widgets.node_visuals import render_svg
 from PySide2.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem,
     QSplitter, QGraphicsRectItem, QGraphicsPathItem,
@@ -55,6 +55,7 @@ FOLLOW_MIN_STEP = 1       # 差距小于它就别动（防抖）
 #      旧实现用 `boundingRect().center()`，而 `boundingRect()` 是 `rect()` 外扩 8.5px（圆环 5 + 线宽 1.5 + 2）
 #      ⇒ 线偏了 8.5px（实测出现 178.5 这种半像素就是奇数宽 + 外扩造成的）。
 GRID_SIZE = 20                              # 网格间距（px）
+ICON_PX_MAX = 512                           # ▶ 节点图标位图渲染上限（px）—— 防缓存爆炸，用户可调
 GRID_COLOR_LIGHT = QColor(255, 255, 255)    # #FFFFFF 棋盘格亮格
 GRID_COLOR_DARK = QColor(230, 230, 230)     # #E6E6E6 棋盘格暗格（用户参考图观感）
 ALIGN_THRESHOLD = 30.0                       # 对齐吸附阈值（px）
@@ -598,12 +599,25 @@ class NodeItem(QObject, QGraphicsRectItem):
         painter.setBrush(QBrush(self._block_color()))
         painter.drawRoundedRect(block, self.BLOCK_RADIUS, self.BLOCK_RADIUS)
 
-        # ③ 图标（占位：代码自绘几何，白色）
+        # ③ 图标（★ 目标5-M2b：改用 SVG（染成白色），缺素材自动回退灰方块）
         #   ★ M2c：未运行（idle）时**图标半透明** —— 让"没跑过"显得弱，不像"坏了"
         if self._state == "idle":
             painter.setOpacity(0.55)
-        draw_icon(painter, icon_key_for(self.name),
-                  block.adjusted(6.0, 7.0, -6.0, -7.0), QColor("#FFFFFF"))
+        _ib = block.adjusted(6.0, 7.0, -6.0, -7.0)
+        # ★ 目标5-M2c（方案乙）：按"当前视图缩放 × 设备像素比"渲染**更高清**的 SVG 位图
+        #   根因：原来只按逻辑像素渲染 → 视图 scale() 放大时位图被拉伸 ⇒ 锯齿
+        #   上限 ICON_PX_MAX 防缓存爆炸；取不到缩放 / ≤0 时兜底 1.0
+        try:
+            _sc = abs(float(painter.worldTransform().m11())) or 1.0
+        except Exception:
+            _sc = 1.0
+        try:
+            _dpr = float(painter.device().devicePixelRatioF()) or 1.0
+        except Exception:
+            _dpr = 1.0
+        _px = int(max(16, min(ICON_PX_MAX, _ib.width() * _sc * _dpr)))
+        _pm = render_svg(icon_key_for(self.name), QColor("#FFFFFF"), _px)
+        painter.drawPixmap(_ib, _pm, QRectF(_pm.rect()))
         if self._state == "idle":
             painter.setOpacity(1.0)
 

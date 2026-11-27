@@ -59,7 +59,8 @@ for _ in range(3):
 # ① 尺寸与自适应宽度
 rect = n.rect()
 check("① 节点高 = 44", abs(rect.height() - 44.0) < 0.01, rect.height())
-check("② 节点宽 ≥ 140", rect.width() >= 140.0, rect.width())
+check("② 节点宽 ≥ 图标块宽×3（相对口径，不钉具体 px）",
+      rect.width() >= NodeItem.BLOCK_W * 3, (rect.width(), NodeItem.BLOCK_W))
 n_long = w.add_flow_node("边缘提取（长名字测试）", QPointF(300, 400))
 app.processEvents()
 check("③ 宽随名字自适应（长名字更宽）", n_long.rect().width() > n.rect().width(),

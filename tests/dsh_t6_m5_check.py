@@ -157,7 +157,7 @@ def anchor_y(node):
 # ================================================================ ① 棋盘格网格
 print("\n--- ① 棋盘格网格（20px，白/浅灰交替）---")
 win, view = fresh()
-check("★ grid_size == 20（用户口径）", float(view.grid_size) == 20.0, view.grid_size)
+check("★ grid_size == GRID_SIZE（引用常量，可调）", float(view.grid_size) == float(GRID_SIZE), view.grid_size)
 check("★ grid_enabled 默认 True（不加开关）", view.grid_enabled is True, view.grid_enabled)
 check("★ snap_enabled 默认 True（不加开关）", view.snap_enabled is True, view.snap_enabled)
 check("★ 两色不同（白/浅灰）", GRID_COLOR_LIGHT != GRID_COLOR_DARK,
@@ -188,7 +188,7 @@ check("★ 拖动中坐标 == 鼠标位置（4 组非 20 倍数都精确落位�
 # 松手后才吸附
 release(a)
 pos = a.pos()
-check("★ 松手后吸附到 20 的倍数", int(round(pos.x())) % 20 == 0 and int(round(pos.y())) % 20 == 0,
+check("★ 松手后吸附到 GRID_SIZE 的倍数", int(round(pos.x())) % int(GRID_SIZE) == 0 and int(round(pos.y())) % int(GRID_SIZE) == 0,
       (pos.x(), pos.y()))
 
 # ================================================================ ③ 松手吸附到网格
@@ -201,7 +201,10 @@ mid = a.pos()
 check("★ 拖动中不吸附（pos == (237,253)）", (mid.x(), mid.y()) == (237.0, 253.0), (mid.x(), mid.y()))
 release(a)
 end = a.pos()
-check("★ 松手后 pos == (240,260)", (end.x(), end.y()) == (240.0, 260.0), (end.x(), end.y()))
+check("★ 松手后吸附到 GRID_SIZE 的倍数（距原落点 ≤ 半格）",
+      int(round(end.x())) % int(GRID_SIZE) == 0 and int(round(end.y())) % int(GRID_SIZE) == 0
+      and abs(end.x() - 237.0) <= GRID_SIZE / 2.0 and abs(end.y() - 253.0) <= GRID_SIZE / 2.0,
+      (end.x(), end.y(), GRID_SIZE))
 
 # ================================================================ ④ 对齐：线按锚点 + 松手才吸
 print("\n--- ④ 对齐吸附（阈值 = 顶部常量，用户可自行调大调小）+ 线坐标 = 锚点坐标 ---")

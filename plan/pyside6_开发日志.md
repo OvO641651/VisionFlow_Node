@@ -12423,6 +12423,179 @@ B、**`dsh_t6_m7_check` ⑨ 偶发加固**：
 ### 七、结论
 **M1 的代码、判据、文档、截图证据均已完成**（1 次修改、11 项判据、门禁 1416 项全绿、方案 `v5.1.1`），**只剩用户实机验收**；通过后进入 **目标5-M2**。
 
+## 2026.10.27 批次6目标5-M2 21:29
+
+修改内容（方案 `5.1.1 → 5.2.1`，代码改动 1 次）：**顶部 8 个按钮 + 树节点接入 SVG 图标**（用户 2026.10.27 提供 `icons/` 素材；工具栏按用户要求留 M3）。
+
+一、用户口径
+  「我在工作目录下放了一个 icons/ 文件夹……node_icons 是 node_visuals.py 里代码实现的图标转成的 svg；button_icon 是按钮区的图片，相机的打开和关闭的图像还在，可以删除；撤销/重做有两种图案（黑色和灰色），如果需要使用则可以使用，如果不需要也可以不使用；toolbar_icons 是图像列表上方工具栏的。**这次是批次6目标5-M2 按钮区的图标添加，这次修改也可以把树控件中的图标换成svg图片格式。工具栏区先不用管，在M3再做。**」
+
+二、实测的图标清单（**扫描 icons/ 得到，不是猜的**）
+  · `icons/button_icons/`（12 张）：menu / import / open_file / save / step / run / undo / redo / undo_gray / redo_gray / start / stop
+    ⇒ 映射：menu_button→menu · open_button→import · btn_step_execute→step · btn_continuous_execute→run ·
+       save_project_button→save · open_project_button→open_file · btn_undo→undo · btn_redo→redo
+    ⇒ **不用**：start / stop（按钮已在目标5-M1 删除）· undo_gray / redo_gray（**撤销禁用态 Qt 自动置灰**）
+  · `icons/node_icons/`（21 张）⇒ 与 `core/icon_keys.py` 的 22 个键（14 算子 + 5 分组 + 测试 + generic）**逐一对上，零缺口**
+  · `icons/toolbar_icons/`（7 张）⇒ **本次不接**，留 M3
+
+三、改动
+  1、`widgets/node_visuals.py`：
+     · 新增 `_SVG_ROOT`（**按工程根定位** `os.path.dirname(os.path.dirname(abspath(__file__)))` ⇒ 不依赖工作目录）·
+       `SVG_BUTTON`（8 个按钮 key → 相对路径）· `SVG_NODE_DIR = "node_icons"` · `svg_path_for(key)`（文件不存在返回 None，**不抛异常**）；
+     · **`make_icon()` 改为「SVG 优先 → 回退 QPainter」**：先查 svg（`QIcon(path)`），`isNull()` 或异常 ⇒ 走原 `draw_icon` 自绘；
+       缓存键仍是 `(key, color, size)`，svg 分支也进缓存 ⇒ **缺文件绝不空白、绝不崩**。
+  2、`main.py`：新增 `TOP_BUTTON_ICONS`（8 个按钮名 → key）+ `TOP_ICON_SIZE = 24`；
+     `_apply_top_button_size()` 里补 `btn.setIcon(make_icon(key, size=24))` + `setIconSize(QSize(24,24))`（★ 按钮文字保留，QPushButton 图文共存，**不涉及 ToolButtonStyle**）；import 补 `QSize` 与 `make_icon`。行数 1270 → 1297（≤1400）。
+
+四、探针实测（改前 / 改后）
+  · **`QIcon(<svg 路径>)` 可直接渲染**：`isNull()=False`，24×24 下**非透明像素 176**（`PySide2.QtSvg` 也可 import，但不需要 QSvgRenderer）；
+  · 8 个按钮 svg 文件全部存在；22 个节点键全部存在，缺失列表 = `[]`；
+  · 图标非空抽查：menu 176 px · undo 135 px · redo 135 px · gray 376 px · group_source 194 px；**undo vs redo cacheKey 不同**（可区分）。
+
+五、判据：新建第 **61** 套 `tests/dsh_t6_g5m2_check.py` —— **11 项**
+  ① 8 个顶部按钮逐个非空图标且非空白图 ② 撤销/重做 cacheKey 不同 ③ 树里每项都有非空图标
+  ④ ★ **回退测试**（`_SVG_ROOT` 指向不存在的目录 ⇒ 仍返回 QPainter 图标、不抛异常）
+  ⑤ SVG_BUTTON 8 个文件都在 · node_icons 22 个键都有 · 映射不引用 start/stop/undo_gray/redo_gray
+  ⑥ 8 个按钮文字都在（图标没把文字挤掉）· 总宽 ≤1400 ⑦ `TOP_ICON_SIZE==24` + `iconSize` 已设
+
+六、★★ 本轮踩到并修掉的大坑：**套件退出码 `0xC0000409`**（实测 10 次里 9 次崩、1 次 0xC0000005）
+  · 现象：**11 项全部 PASS，但 exit≠0** ⇒ 门禁判 `BAD` ✗；
+  · 二分排查（全部 exit=0，**单项都查不出来**）：只加载 ui / +装按钮图标 / +装树图标 / +SVG 回退测试，每一步单独跑都正常 ✗；
+  · **根因**：退出时 **`QIcon` 仍挂在 `QPushButton` / `QTreeWidgetItem` 上**，Qt 析构顺序出问题（"整套跑 + 退出"才触发）；
+  · **修法**：套件末尾**显式清理** —— 清 `_ICON_CACHE` → 8 个按钮 `setIcon(QIcon())` → `ui.deleteLater()` + `app.processEvents()` ⇒ **连跑 10 次 exit=0** ✓；
+  · **教训**：涉 Qt 图标的用例，**退出前要把 QIcon 引用放掉**（这类崩溃单项二分查不出来，只能"整套 + 多次"复现）。
+
+七、产物
+  · 方案 `plan\VisionFlowNode_批次6技术方案_v5.2.1_2026.10.27.md`（1688 行；头部版号 = 文件名 = **5.2.1**；§3.2.5 **M2 行 ✅** + 「✅ M2 已完成」块；**§十三 第 74 条**；口径 55 处 `60 套 1416 项 → 61 套 1427 项`、旧口径残留 0）；旧版 v5.1.1 已留档 `backups\`，`plan\` 只剩 v5.2.1；
+  · 截图 3 张（真实界面）：`t6_g5m2_mainwindow.png`（1400×900 整窗）· `t6_g5m2_topbar.png`（760×90，8 按钮图文并存；★ 撤销/重做初始禁用态被 Qt 自动置灰）· `t6_g5m2_tree.png`（270×640，14 算子 + 5 分组 + 测试 + 新建项目 全是 svg），反引号登记《截图索引》「〇之三十九」；
+  · ★ 改前整包备份 `_backup_VisionFlowNoed_before_t6g5_m2`（181 文件，含 icons/）+ 方案/日志两份；
+  · 改动面：`widgets\node_visuals.py` · `main.py` · 新增 `tests\dsh_t6_g5m2_check.py`（`icons/` 只读未改）。
+
+验证：`py_compile`（node_visuals / main）· 第 61 套单跑 11/11 且**连跑 10 次 exit=0** · 全量门禁**连跑 2 次 61 套 1427 项 FAIL 0** · `dsh_m3_index_check` 无失败 · 台账登记后重跑门禁仍绿 · 四份冻结文档未动 · git 未动。
+
+遗留：① `icons/toolbar_icons/`（7 张）**留 M3 接**；② **画布节点仍用 QPainter 画**（`NodeItem.paint` 调 `draw_icon`，本次按要求**未动**；若想画布也用 svg，可后续单独做）；③ `undo_gray/redo_gray` 未使用（禁用态 Qt 自动置灰已够）；④ 目标6（活源与撤销生命周期）排在目标5 之后。
+
+## 2026.10.27 批次6目标5-M2b 21:53
+
+用户口径（2026.10.27）：「1、对于 node_visuals.py 文件中，**图片和代码的图标现在同时存在**，但是**代码只有树状图的图标**，没有按钮区和工作栏的，这样留作保险也没什么用处，可以**把代码部分注释掉或者删除，只使用 svg 图片**。2、对于按钮区的图标，我的想法是**只使用图标，不要文字，鼠标停留再使用文字显示**。3、对于上述的修改有什么问题，先讨论方案，不用修改。」
+拍板（全部按建议）：① 用**乙方案** —— 画布节点也换 SVG（**要染色**，保证在绿块上看得清、并保留“出错红/未运行灰”语义），之后**退役 `draw_icon`** 但**保留极简兜底（灰方块）**；② 按钮尺寸 **44×44**；③ tooltip 用**原文字**；④ `.ui` 里的 text **保留**（只在代码里 `setText("")`）。
+
+三块（按 C → A → B 顺序）：
+
+**C 顶部按钮只显示图标 + tooltip**
+  · `main.py`：`TOP_BUTTON_W, TOP_BUTTON_H` **80, 52 → 44, 44**；新增 `TOP_BUTTON_TEXTS`（8 个按钮原文字）；
+    `_apply_top_button_size()` 里加 `btn.setText("")` + `btn.setToolTip(<原文字>)`（`setIcon/setIconSize(24)` 不变）。
+  · ★★ **前置 grep（关键）**：`main.py` **没有**“按 text 找按钮”的写法 ⇒ 清空文本安全；
+    但 **第 60 套（M1 判据）有 3 处按 text 断言**（`ob.text()=="导入图片"` / `all_texts` 列表 / 8 按钮 text 比对）
+    ⇒ **同步改成 tooltip 断言**，并让它 **加载 .ui 后补跑一次 `_apply_top_button_size()`**（否则看到的是 `.ui` 里的旧值 80×52 + 文字）。
+
+**A 画布节点换 SVG（带染色）**
+  · `widgets/node_visuals.py` 新增 **`render_svg(key, color=None, size=32)`**：`QIcon(svg).pixmap(size)` →
+    **`QPainter.CompositionMode_SourceIn` 把非透明区域整体染成 `color`**（保留形状与抗锯齿）→ 缓存 `(key,color,size)`；
+    `color=None` 时保留 SVG 原色；失败/缺文件 ⇒ `_fallback_pixmap()`。
+  · `widgets/FlowChart.py::NodeItem.paint`：`draw_icon(...)` → **`painter.drawPixmap(块内矩形, render_svg(key, QColor("#FFFFFF"), 块宽), pix.rect())`**；
+    白色仍与绿块/红块高对比，`idle` 的 0.55 透明度保持不变。
+  · **实测截图**（`t6_g5m2b_canvas_icons.png`）：正常绿块 `#2e9e4f`、出错红块 `#c62828`，白图标**清晰可辨** ✓。
+
+**B 退役 `draw_icon`**
+  · 删除 `draw_icon()` + `_pen()`（共 **7103 字符**）及 `QPainterPath` / `QPen` / `QPointF` import；
+  · `make_icon()` 的回退分支改为 **`QIcon(_fallback_pixmap(size))`**；新增 **`_fallback_pixmap(size)`**（画**灰方块**，用 `_ICON_DEFAULT_COLOR`）⇒ **缺 SVG 绝不空白**；
+  · `draw_icon` 调用点全库仅 2 处（`FlowChart` import + `NodeItem.paint`）**均已改掉**，无其它引用（`hasattr(nv,"draw_icon") is False`）。
+
+判据：第 **61** 套 `tests/dsh_t6_g5m2_check.py` **11 → 18 项**（⑥ 三连：text 空 / tooltip 有原文字 / 尺寸 == 常量 ·
+⑧ 四连：`render_svg` 非空 / **染色生效（white 与 red 像素不同）** / `draw_icon` 已退役 / `FlowChart` 已改用 `render_svg` ·
+⑨ **SVG 全缺兜底**）；第 **60** 套 11 项（文本断言 → tooltip）。**门禁 `合计：61 套，PASS 1434，FAIL 0；不合格 0 套`**；
+第 61 套**连跑 5 次 exit=0**（退出前清 `_ICON_CACHE` / `_SVG_PIX_CACHE` 的护栏保留）。
+
+截图（真实界面，反引号登记「〇之四十」）：`t6_g5m2b_topbar.png`（**8 个纯图标按钮 44×44**，撤销/重做禁用态自动灰）·
+`t6_g5m2b_canvas_icons.png`（画布节点 SVG 染白：绿块 normal / 红块 error）· `t6_g5m2b_mainwindow.png`（整窗 1400×900）。
+
+★ 两个坑（本轮自身踩的）：
+  ① **只加载 `.ui` 的判据会看到“文件里的旧值”**（80×52 + 文字）⇒ 要验运行时效果必须**调一次产品入口函数**（第 60 套已补）；
+  ② 一批 `replace` 里只要有一条**锚点不唯一**（`nv._ICON_CACHE.clear()` 命中 5 次）⇒ 断言中止、**整批不写盘** —— 是安全网，但要多跑一轮（本轮重写了 patch2 → patch3）。
+
+改动面：`widgets/node_visuals.py` · `widgets/FlowChart.py` · `main.py`（1297 → **1316** 行 ≤1400）· `tests/dsh_t6_g5m1_check.py` · `tests/dsh_t6_g5m2_check.py`；`icons/` 只读未改；`main.ui` **未动**（text 保留在文件里）。
+
+遗留：`icons/toolbar_icons/`（7 张）留 **M3**；目标6（活源与撤销生命周期，A/B/C 同属 M1）排在目标5 之后。
+
+## 2026.11.27 批次6目标5-M2 22:23
+
+存在问题（用户 2026.11.27）：「**每次修改一个参数都会导致门禁变红**」+ 前一轮遗留「**画布放大后有锯齿**」。
+经体检扫描（49 条"与数字比较"的断言）确认：**红的原因是判据把"用户可调值"写死了**，不是门禁该不该管（对照：同一批里 `TOP_BUTTON_W/H = 55` 的改动**没红**，因为那条引用常量）。
+
+修改（方案 `v5.2.2 → v5.2.3`，代码改动 1 次）：
+  一、**修 8 条钉死判据 + 提常量**：`FlowPages.COLLAPSE_HANDLE_W = 14`、`FlowChart.ICON_PX_MAX = 512`；判据改引用常量/相对口径（TOP_ICON_SIZE `==24`→`>16`；把手宽→`FP.COLLAPSE_HANDLE_W`；`grid_size==20`→`GRID_SIZE`；吸附 `%20`→`%int(GRID_SIZE)`；m7 步长 `10`→`GRID_SIZE*0.5`、`==20`→`==GRID_SIZE`；信息条高→`ib.BAR_HEIGHT`（两处）；节点宽 `>=140`→`>=NodeItem.BLOCK_W*3`；主窗口宽→测试内 `MAIN_WIN_W+4`）。
+  二、**抗调参验证又暴露 4 处遗留并修掉**：m5 松手坐标 `==(240,260)`→GRID_SIZE 倍数+半格容差；m7 网格对齐 `20.0`→GRID_SIZE；g4m1 贴底 `vp.height()-24`→`-ib.BAR_HEIGHT`。
+  三、★ **抗调参实证**（脚本临时改常量→跑→自动复原）：`TOP_ICON_SIZE 30→26` ✓ · `GRID_SIZE 20→30`（m5 35 项 / m7 36 项）✓ · `COLLAPSE_HANDLE_W 14→18` ✓ · `BAR_HEIGHT 24→30` ✓ ⇒ **5 个组合全绿**，证明"以后调这些数不会再红"。
+  四、★ **修画布放大锯齿（方案乙，仍全走 SVG）**：`NodeItem.paint` 里 `_px = clamp(逻辑宽 × worldTransform().m11() × devicePixelRatioF(), 16, ICON_PX_MAX)` ⇒ `render_svg(..., _px)`；不再"按逻辑像素渲染后被拉伸"。实测 `scale 1/2/4/20 ⇒ 20/40/80/400 px`（512 封顶生效）。染色与 idle 半透明不变。
+  五、判据：第 61 套 **18 → 21 项**（⑩ 三连：1× 有渲染 · 4× ≈4 倍 · 上限生效）；门禁 **61 套 1437 项全绿**。
+
+验证：`py_compile` 全通过 · 第 61 套 21/21 · **全量门禁 61 套 1437 项 FAIL 0** · `dsh_m3_index_check` 绿（新截图登记后）· 四份冻结文档未动 · 截图 2 张「〇之四十一」（锯齿对比 / 画布放大 3×）。
+
+坑：
+  ① 第 61 套**不启动主窗口**（只加载 `.ui`）⇒ 验节点绘制只能 `NodeItem(name, QPointF(0,0))` 手动 `paint()`（顺带能精确控制 `worldTransform`）；
+  ② 锯齿对比截图**两边物理尺寸必须相等**（旧位图要拉伸到同尺寸），否则看不出差异；
+  ③ 抗调参验证是"临时改常量→跑→复原"的**脚本化**动作，别手改（容易忘复原）。
+
+## 总结：批次6 目标5-M2「SVG 图标体系（按钮 / 树 / 画布）」整体总结（2026.11.27 22:35）
+
+**一句话**：把整个界面的图标从「代码自绘」彻底切到「**SVG 素材**」—— 顶部 **8 个按钮**（只图标 + tooltip）· **树 21 项** · **画布节点**（染白）全部走 `icons/` 里的 svg；`make_icon()` 统一入口 **SVG 优先、缺文件回退灰方块**；并把 **8 条钉死可调值的判据改成引用常量**、**修掉画布放大锯齿**。经 **3 次修改**收敛到 **`v5.2.3`**，第 61 套 **21 项**判据，门禁 **61 套 1437 项全绿**。
+
+### 一、用户口径（原话要点）
+- 「我在工作目录下放了 `icons/` 文件夹…`node_icons` 是 `node_visuals.py` 代码实现的图标转换的 svg · `button_icon` 是按钮区的图片 · `toolbar_icons` 是图像列表上方工具栏的」；「**这次是目标5-M2 按钮区的图标添加，这次修改也可以把树控件中的图标换成 svg 图片格式。工具栏区先不用管，在 M3 再做**」。
+- 「对于这四个图片（start / stop / undo_gray / redo_gray）由于现在没有使用，我放到了其他地方保存」；「**如果效果不好再回退**」。
+- 「`node_visuals.py` 里图片和代码的图标现在同时存在…**可以把代码部分注释掉或者删除，只使用 svg**」⇒ 他选 **乙方案**（先让画布也换 SVG，再退役代码绘制）。
+- 「按钮区的图标，我的想法是**只使用图标，不要文字**，鼠标停留再使用文字显示」。
+- 「我放大后可以看到图片的**锯齿**…使用代码绘制的图像会出现这个情况吗」⇒ 引出 `5.2.3`。
+- 「对于门禁的范围，**每次修改一个参数都会导致门禁变红，这个范围是正常的吗**」⇒ 引出 8 条判据体检与整改。
+
+### 二、三次修改
+| 版 | 内容 | 关键数字 |
+|---|---|---|
+| **5.2.1** | `make_icon()` = **SVG 优先 → 缺文件回退 QPainter**；**8 按钮 24×24** + **树 21 键全 SVG**；路径按工程根定位 | ★ 探针：`QIcon(svg)` **可直接渲染**（`isNull()=False`，24×24 有 **176** 非透明像素），**不需要 QtSvg**；树 21 键 100% 覆盖；第 61 套 11 项 |
+| **5.2.2** | ① 按钮**只图标** + `setToolTip(原文字)` + **44×44**；② **画布换 SVG 染白**；③ **退役 `draw_icon`**（删 7103 字符）⇒ 回退**灰方块** | 8 按钮 text 空 / tooltip 原文字 / 44×44；画布 white≠red 像素不同 ✓；`hasattr(nv,"draw_icon")==False`；第 61 套 **18** 项 |
+| **5.2.3** | ① **8 条判据改引用常量**（+**抗调参验证又抓出 4 处漏改**）；② **修锯齿**（缩放×DPR 渲染，≤512） | 抗调参 4 组全绿；渲染尺寸 **scale 1/2/4/20 ⇒ 20/40/80/400 px**；第 61 套 **21** 项 |
+
+### 三、★ 实现要点
+1. **`make_icon()` 是唯一入口** ⇒ 一次改动同时服务**按钮 / 树 / 画布 / 窗口标题**四处；**缺文件永不空白**（灰方块兜底）✓
+2. **画布必须"矢量感"**：`render_svg()` 按 **当前缩放 × DPR** 渲染（不拉伸既有位图）⇒ 放大不糊；`ICON_PX_MAX=512` 防缓存爆炸 ✓
+3. **染色用 `CompositionMode_SourceIn`** ⇒ 保留形状/抗锯齿，可继续"状态变色"（画布白图标、绿块/红块都清晰）✓
+4. ★ **判据不能钉用户可调值**：同一轮里 `TOP_ICON_SIZE == 24`（红）vs `iconSize == (常量, 常量)`（绿）——**对称对照直接证明"红的是写法问题"** ✓
+
+### 四、★ 四条坑与处理（用户拍板 **A 方案：只归档、不改代码**）
+| # | 坑 | 性质 | 处理 |
+|---|---|---|---|
+| 1 | 第 61 套**不启动主窗口** ⇒ 验节点绘制要直接 `NodeItem(...).paint()`（能精确控 `worldTransform`） | 用例写法 | 只记录 |
+| 2 | **对比截图两边物理尺寸必须相等**，否则看不出差异（第一版白拍） | 取证方法 | 只记录 |
+| 3 | **抗调参验证必须脚本化"改→跑→复原"**（手改易忘复原） | 流程规范 | 只记录 |
+| 4 | ★ **`worldTransform().m11()` 有旋转时不准**（= 缩放×cos） | **潜在限制** | ★ **当前不命中**（画布不旋转）；即使将来命中，**只会让图标回退到模糊，不崩不错位**（16px 下限兜底）；将来加旋转时把 `_sc` 换成 `hypot(m11,m12)` 即可（**1 行，不旋转时完全等价**） |
+
+### 五、验证与产物
+- **门禁**：**61 套 1437 项全绿**（连跑 2 次）；第 61 套 **21 项**（含**回退测试 / 染色 / 放大 4 倍 / 上限**）、★ **连跑 5 次 exit=0**（`QIcon` 退出清理护栏）；
+- **改前/改后对照**：改前 `g5m2` PASS=17 FAIL=**2** + 口径不一致 ⇒ 改后全绿；
+- **截图**：「〇之三十九」（8 按钮图文 / 树全 svg / 整窗）·「〇之四十」（纯图标按钮 / 画布双态 / 整窗）·「〇之四十一」（锯齿对比 / 3× 放大特写），均为真实界面；
+- **冻结文档**：四份**逐字节未动**；★ **`main.py` / `main.ui` 在 5.2.3 里未动**（`TOP_ICON_SIZE=30`、`TOP_BUTTON_W/H=55,55` 是用户自己调的，原样保留）。
+
+### 六、可调参数（用户需知）
+| 想调什么 | 改哪 |
+|---|---|
+| 顶部按钮尺寸 | `main.py::TOP_BUTTON_W, TOP_BUTTON_H`（现 **55, 55**） |
+| 按钮图标大小 | `main.py::TOP_ICON_SIZE`（现 **30**） |
+| 画布图标清晰度上限 | `widgets/FlowChart.py::ICON_PX_MAX`（现 512） |
+| 折叠把手宽 | `widgets/FlowPages.py::COLLAPSE_HANDLE_W`（现 14） |
+| 信息条高 | `widgets/image_info_bar.py::BAR_HEIGHT`（现 24） |
+| 网格 | `widgets/FlowChart.py::GRID_SIZE`（现 20） |
+★ 以上**都已改成"判据引用常量"，随便调、门禁不会红** ✓
+
+### 七、遗留
+1. **目标5-M3**（图库工具栏 `toolbar_icons/` 7 张，16×16）—— 目标5 的最后一格；
+2. **目标6**（活源与撤销生命周期，A/B/C 同属 M1）；
+3. 顺手项：`tests/dsh_t6_m2_check.py:61`「节点高 = 44」仍写死（同类，未改）；
+4. 将来若加**画布/节点旋转** ⇒ 按坑 4 换 `hypot(m11,m12)`。
+
+### 八、结论
+**M2 的代码、判据、文档、截图证据均已完成**（3 次修改、21 项判据、门禁 1437 项全绿、方案 `v5.2.3`），**只剩用户实机验收**；通过后进入 **目标5-M3（工具栏图标）**。
+
 ## 全项目里程碑索引（2026.10.12 M3 收口时建立；2026.10.13 扩到全项目 + 定"新条目带批次号"约定 + 01:18 **挪到文件最后**）
 
 > **用法**：查某件事**先看这张表**，再到正文里按"可搜的关键日志条目"去找；**"现行口径"一列是唯一权威**

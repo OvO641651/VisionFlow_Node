@@ -24,6 +24,7 @@ from PySide2.QtGui import QDropEvent                                  # noqa: E4
 
 app = QApplication([])
 import main as m                                                      # noqa: E402
+import widgets.FlowPages as FP                                        # noqa: E402
 
 _pass = [0]
 _fails = []
@@ -56,7 +57,8 @@ live = w.flow_page_mgr.current_page.get("view")
 
 check("工具箱子控件存在（tool_tab_widget）", panel is not None, panel)
 check("折叠把手存在（btn_collapse_toolbox）", button is not None, button)
-check("折叠把手宽度 14px（细条）", button is not None and button.maximumWidth() == 14,
+check("折叠把手宽度 == COLLAPSE_HANDLE_W（细条，常量可调）",
+      button is not None and button.maximumWidth() == FP.COLLAPSE_HANDLE_W,
       button.maximumWidth() if button is not None else None)
 
 # ---------- ① 折叠 ----------

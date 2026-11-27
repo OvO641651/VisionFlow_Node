@@ -5,7 +5,7 @@ from PySide2.QtWidgets import (
 # 打开主窗口，显示小窗口，模体ui窗口，设置流程图画布，导入文件
 from PySide2.QtUiTools import QUiLoader # 导入ui
 from PySide2.QtGui import QIcon    # QIcon 设置图标、QImage 显示图像（QBrush/QColor 随"日志红字"搬去 core/flow_engine.py）
-from PySide2.QtCore import QTimer, Qt, QPointF, QObject # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死（QObject：批次6 目标2-M1 信号宿主用）
+from PySide2.QtCore import QTimer, Qt, QPointF, QObject, QSize # 图像显示需要设置线程，不然打开摄像头后ui界面会卡死（QObject：批次6 目标2-M1 信号宿主用）
 
 import cv2
 import os
@@ -13,6 +13,8 @@ import os
 from core.Detector import DetectorShape
 from widgets.FlowChart import NodeItem, EdgeItem, FlowchartView, node_topleft_for_center
 from widgets.FlowPages import FlowPageManager, block_group_drag
+# ★ 批次6 目标5-M2：顶部按钮图标（SVG 优先，缺文件自动回退 QPainter 图案）
+from widgets.node_visuals import make_icon
 # ★ 批次6 目标3-M2：帮助页（逻辑全在 widgets\help_panel.py，这里只 import 两个入口）
 from widgets.help_panel import install_help_panel, refresh_help
 from ui.LineParamsDialog import LineParamsDialog
@@ -42,17 +44,61 @@ from services.gallery_service import GalleryMixin
 from services.undo_service import UndoMixin    # ★ 批次5 目标4：撤销 / 重做（第 7 个 Mixin）
 
 
-# ★ 批次6 目标5-M1：顶部按钮统一尺寸（用户 2026.10.27：把按钮调小；原 100x90 ⇒ 现 80x52）
-TOP_BUTTON_W, TOP_BUTTON_H = 80, 52
+# ★ 批次6 目标5-M2b：顶部按钮**只显示图标**（文字进 tooltip）
+#   ⇒ 尺寸再收一档：80x52 → **55x55**（用户 2026.10.27 拍板）
+TOP_BUTTON_W, TOP_BUTTON_H = 55, 55
+
+# ★ 批次6 目标5-M2：顶部 8 个按钮 → 图标 key（用户 2026.10.27 提供的 icons/button_icons/）
+TOP_BUTTON_ICONS = {
+    "menu_button": "menu",
+    "open_button": "import_image",
+    "btn_step_execute": "step_run",
+    "btn_continuous_execute": "run_all",
+    "save_project_button": "save_project",
+    "open_project_button": "load_project",
+    "btn_undo": "undo",
+    "btn_redo": "redo",
+}
+TOP_ICON_SIZE = 30   # 按钮图标 30×30（方案 §8.2 的两档之一）
+
+# ★ 批次6 目标5-M2b：按钮**只显示图标**，原文字挪到 **tooltip**
+TOP_BUTTON_TEXTS = {
+    "menu_button": "菜单",
+    "open_button": "导入图片",
+    "btn_step_execute": "单步执行",
+    "btn_continuous_execute": "连续执行",
+    "save_project_button": "保存项目",
+    "open_project_button": "导入项目",
+    "btn_undo": "撤销",
+    "btn_redo": "重做",
+}
+
 
 def _apply_top_button_size(host):
-    """把顶部按钮统一设成 (TOP_BUTTON_W, TOP_BUTTON_H)；找不到的跳过。"""
+    """顶部按钮：统一尺寸 + 装图标 + **只显示图标（文字进 tooltip）**；找不到的跳过。
+
+    ★ 目标5-M1：尺寸 100x90 → 80x52；
+    ★ 目标5-M2：图标 24×24（SVG 优先、缺文件回退灰方块；失败只是没图标，不崩）；
+    ★ 目标5-M2b：**只显示图标**（`setText("")`）+ **tooltip = 原文字**；尺寸 80x52 → **44x44**。
+      （`.ui` 里的 text 保留不动，只在运行时清空 ⇒ 想看原文字改这里即可）
+    """
     names = ("menu_button", "open_button", "btn_step_execute", "btn_continuous_execute",
              "save_project_button", "open_project_button", "btn_undo", "btn_redo")
     for nm in names:
         btn = host.main_window.findChild(QtWidgets.QPushButton, nm)
         if btn is not None:
             btn.setFixedSize(TOP_BUTTON_W, TOP_BUTTON_H)
+            btn.setText("")                                    # ★ 只显示图标
+            _tip = TOP_BUTTON_TEXTS.get(nm)
+            if _tip:
+                btn.setToolTip(_tip)                           # ★ 原文字进 tooltip
+            try:
+                key = TOP_BUTTON_ICONS.get(nm)
+                if key:
+                    btn.setIcon(make_icon(key, size=TOP_ICON_SIZE))
+                    btn.setIconSize(QSize(TOP_ICON_SIZE, TOP_ICON_SIZE))
+            except Exception:
+                pass   # 图标失败不影响按钮功能
 
 
 uiloader = QUiLoader()
@@ -227,7 +273,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
 
         # 设置按钮的点击 clicked 槽事件
         self.open_button.clicked.connect(self.open_file) # 导入图片或者视频
-        _apply_top_button_size(self)  # ★ 目标5-M1：顶部按钮统一 80x52
+        _apply_top_button_size(self)  # ★ 目标5-M1/M2b：顶部按钮统一 44x44 + 只图标 + tooltip
         self.btn_step.clicked.connect(self.on_step_execute) # 单步执行
         self.btn_continuous.clicked.connect(self.on_continuous_execute) # 连续执行
         if self.menu_button:
@@ -839,7 +885,7 @@ class MainWindow(CameraMixin, VideoMixin, GalleryMixin, FlowEngineMixin, ParamSt
         before_key = self.current_image_key
         dialog = dialog_class(self.main_window, node=node, main_window=self)
         # ★ 批次6 目标2-M2 第 2 次修改（2.2.2）：参数窗口的标题栏左上角用**节点自己的图标**
-        #   （图案复用 widgets\node_visuals.py 的 draw_icon ⇒ 与画布/树同一图案源；
+        #   （图案复用 widgets/node_visuals.py 的 SVG（make_icon）⇒ 与画布/树同一图案源；
         #    窗口图标取画布节点绿块同色 #2E9D57、32×32 —— 嫌艳只改这一处颜色即可）
         try:
             from widgets import node_visuals as _nv

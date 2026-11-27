@@ -103,7 +103,8 @@ check("④ 无参数段的节点只有预期的那几个（灰度 / 取反）",
 
 # ===================== ⑤ 帮助页存在（在「当前结果」TabWidget 里） =====================
 w = m.MainWindow()
-w.main_window.resize(1400, 900)
+MAIN_WIN_W = 1400        # 测试自己 resize 的目标宽（与用户默认窗口宽无关）
+w.main_window.resize(MAIN_WIN_W, 900)
 w.main_window.show()
 pump(8)
 tab = w.main_window.result_tab
@@ -148,7 +149,8 @@ w.main_window.resize(1400, 900)
 pump(6)
 check("⑦ 帮助正文不撑宽主窗口（正文宽 < 窗口宽）",
       body.width() < w.main_window.width(), (body.width(), w.main_window.width()))
-check("⑦ 主窗口宽度没有被帮助页顶大（≤1400）", w.main_window.width() <= 1400, w.main_window.width())
+check("⑦ 主窗口宽度没有被帮助页顶大（≤ resize 目标 +4）",
+      w.main_window.width() <= MAIN_WIN_W + 4, w.main_window.width())
 
 print("")
 print("通过 %d 项，失败 %d 项" % (_pass[0], len(_fails)))

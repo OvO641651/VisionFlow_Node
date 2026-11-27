@@ -81,7 +81,8 @@ pump(8)
 bar = w.main_window.findChild(QWidget, "image_info_bar")
 label = w.main_window.findChild(QLabel, "lbl_image_info")
 check("⑤ 信息条控件存在", bar is not None, None)
-check("⑥ 信息条高度 = 24", bar is not None and bar.height() == 24,
+check("⑥ 信息条高度 == BAR_HEIGHT（引用常量，可调）",
+      bar is not None and bar.height() == ib.BAR_HEIGHT,
       None if bar is None else bar.height())
 check("⑦ 文本靠右（含 AlignRight）",
       label is not None and bool(int(label.alignment()) & int(Qt.AlignRight)),
@@ -197,8 +198,8 @@ check("⑲ 中键拖动平移 / 左键不平移 / 光标变抓手",
 # ⑳ 信息条是**画布内浮层**：挂在 viewport 上、贴底横满、半透明、鼠标穿透
 bar2 = vp.findChild(QWidget, "image_info_bar")
 geo_ok = (bar2 is not None and bar2.parent() is vp
-          and bar2.y() == vp.height() - 24 and bar2.width() == vp.width()
-          and bar2.height() == 24)
+          and bar2.y() == vp.height() - ib.BAR_HEIGHT and bar2.width() == vp.width()
+          and bar2.height() == ib.BAR_HEIGHT)
 check("⑳ 信息条嵌在画布内（贴底横满/半透明/鼠标穿透）",
       geo_ok
       and bar2 is not None

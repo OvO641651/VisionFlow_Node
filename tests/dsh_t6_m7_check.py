@@ -22,7 +22,7 @@ from PySide2.QtWidgets import (QApplication, QSlider, QLabel,            # noqa:
 
 app = QApplication([])
 import main as m                                                       # noqa: E402
-from widgets.FlowChart import NodeItem                                 # noqa: E402
+from widgets.FlowChart import NodeItem, GRID_SIZE                      # noqa: E402
 
 _pass = [0]
 _fails = []
@@ -229,10 +229,11 @@ def main():
     view.set_zoom(200)
     pump(2)
     step = view._grid_step_scene()
-    check("⑧ 200% 时网格场景步长 ≈ 10（屏幕上恒 20px）", abs(step - 10.0) <= 0.01, step)
+    check("⑧ 200% 时网格场景步长 ≈ GRID_SIZE*0.5（屏幕上恒定）",
+      abs(step - GRID_SIZE * 0.5) <= 0.01, step)
     view.set_zoom(100)
     pump(2)
-    check("⑧b 100% 时网格场景步长 = 20", abs(view._grid_step_scene() - 20.0) <= 0.01,
+    check("⑧b 100% 时网格场景步长 = GRID_SIZE", abs(view._grid_step_scene() - GRID_SIZE) <= 0.01,
           view._grid_step_scene())
 
     # ---------------- ⑨ 200 节点性能 ----------------
@@ -318,8 +319,8 @@ def main():
     pump(1)
     g1.mouseReleaseEvent(sev(QEvent.GraphicsSceneMouseRelease, QPointF(0, 0), Qt.LeftButton, Qt.NoButton, QPointF(0, 0)))
     pump(2)
-    on_grid = (abs(g1.pos().x() - round(g1.pos().x() / 20.0) * 20.0) < 0.6
-               and abs(g1.pos().y() - round(g1.pos().y() / 20.0) * 20.0) < 0.6)
+    on_grid = (abs(g1.pos().x() - round(g1.pos().x() / GRID_SIZE) * GRID_SIZE) < 0.6
+               and abs(g1.pos().y() - round(g1.pos().y() / GRID_SIZE) * GRID_SIZE) < 0.6)
     ra = (g2.pos().x() - g1.pos().x(), g2.pos().y() - g1.pos().y())
     check("⑫ 整组松手也吸附：整组落到 20px 网格上（≤0.6）", on_grid, (g1.pos().x(), g1.pos().y()))
     check("⑫b 整组吸附后组内相对位置不变（≤0.1px）",
